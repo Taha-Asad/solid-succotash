@@ -1,0 +1,50 @@
+{
+  "name": "ijazandcompany",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@mantine/carousel": "^9.4.2",
+    "@mantine/charts": "^9.4.2",
+    "@mantine/code-highlight": "^9.4.2",
+    "@mantine/core": "^9.4.2",
+    "@mantine/dates": "^9.4.2",
+    "@mantine/dropzone": "^9.4.2",
+    "@mantine/form": "^9.4.2",
+    "@mantine/hooks": "^9.4.2",
+    "@mantine/modals": "^9.4.2",
+    "@mantine/notifications": "^9.4.2",
+    "@mantine/nprogress": "^9.4.2",
+    "@mantine/spotlight": "^9.4.2",
+    "@mantine/tiptap": "^9.4.2",
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-opener": "^2",
+    "@tiptap/extension-link": "^3.29.0",
+    "@tiptap/pm": "^3.29.0",
+    "@tiptap/react": "^3.29.0",
+    "@tiptap/starter-kit": "^3.29.0",
+    "dayjs": "^1.11.21",
+    "embla-carousel": "^8.6.0",
+    "embla-carousel-react": "^8.6.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "recharts": "^3.10.1"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2",
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
+    "@vitejs/plugin-react": "^4.6.0",
+    "typescript": "~5.8.3",
+    "vite": "^7.0.4"
+  },
+  "allowScripts": {
+    "esbuild@0.28.1": true
+  }
+}
