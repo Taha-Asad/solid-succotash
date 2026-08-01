@@ -4,15 +4,8 @@ use tauri::State;
 use uuid::Uuid;
 
 use crate::commands::auth::{
-    hash_password,
-    map_user_write_error,
-    normalize_email,
-    require_current_user,
-    set_current_user,
-    validate_password,
-    validate_person_name,
-    PublicUser,
-    SessionState,
+    hash_password, map_user_write_error, normalize_email, require_current_user, set_current_user,
+    validate_password, validate_person_name, PublicUser, SessionState,
 };
 
 #[derive(Debug, Serialize, FromRow)]
@@ -42,15 +35,11 @@ fn validate_company_name(name: &str) -> Result<String, String> {
     let character_count = name.chars().count();
 
     if character_count < 2 {
-        return Err(
-            "Company name must contain at least 2 characters".to_string(),
-        );
+        return Err("Company name must contain at least 2 characters".to_string());
     }
 
     if character_count > 150 {
-        return Err(
-            "Company name cannot exceed 150 characters".to_string(),
-        );
+        return Err("Company name cannot exceed 150 characters".to_string());
     }
 
     Ok(name.to_string())
@@ -60,12 +49,11 @@ fn validate_currency_code(code: &str) -> Result<String, String> {
     let code = code.trim().to_uppercase();
 
     if code.len() != 3
-        || !code.chars().all(|character| character.is_ascii_alphabetic())
+        || !code
+            .chars()
+            .all(|character| character.is_ascii_alphabetic())
     {
-        return Err(
-            "Currency code must contain exactly 3 letters, for example PKR"
-                .to_string(),
-        );
+        return Err("Currency code must contain exactly 3 letters, for example PKR".to_string());
     }
 
     Ok(code)
@@ -95,21 +83,14 @@ fn clean_optional_text(
     Ok(Some(value.to_string()))
 }
 
-fn clean_optional_email(
-    email: Option<String>,
-) -> Result<Option<String>, String> {
+fn clean_optional_email(email: Option<String>) -> Result<Option<String>, String> {
     match email {
-        Some(email) if !email.trim().is_empty() => {
-            Ok(Some(normalize_email(&email)?))
-        }
+        Some(email) if !email.trim().is_empty() => Ok(Some(normalize_email(&email)?)),
         _ => Ok(None),
     }
 }
 
-async fn fetch_company(
-    pool: &SqlitePool,
-    company_id: &str,
-) -> Result<PublicCompany, String> {
+async fn fetch_company(pool: &SqlitePool, company_id: &str) -> Result<PublicCompany, String> {
     sqlx::query_as::<_, PublicCompany>(
         r#"
         SELECT
@@ -164,9 +145,7 @@ pub async fn register_company(
     let address = clean_optional_text(address, "Address", 500)?;
     let tax_number = clean_optional_text(tax_number, "Tax number", 100)?;
 
-    let currency_code = validate_currency_code(
-        currency_code.as_deref().unwrap_or("PKR"),
-    )?;
+    let currency_code = validate_currency_code(currency_code.as_deref().unwrap_or("PKR"))?;
 
     let password_hash = hash_password(&password).await?;
 
@@ -178,16 +157,14 @@ pub async fn register_company(
         .await
         .map_err(|error| format!("Could not start transaction: {error}"))?;
 
-    let company_count =
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM companies")
-            .fetch_one(&mut *transaction)
-            .await
-            .map_err(|error| format!("Database error: {error}"))?;
+    let company_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM companies")
+        .fetch_one(&mut *transaction)
+        .await
+        .map_err(|error| format!("Database error: {error}"))?;
 
     if company_count > 0 {
         return Err(
-            "Company setup has already been completed on this desktop installation"
-                .to_string(),
+            "Company setup has already been completed on this desktop installation".to_string(),
         );
     }
 
@@ -290,6 +267,19 @@ pub async fn register_company(
     Ok(RegisterCompanyResult { company, user })
 }
 
+// Checks whether the initial desktop company setup has been completed.
+//
+// This command does not require authentication because the application
+// needs it before showing either the setup screen or login screen.
+#[tauri::command]
+pub async fn is_company_setup(pool: State<'_, SqlitePool>) -> Result<bool, String> {
+    let company_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM companies")
+        .fetch_one(pool.inner())
+        .await
+        .map_err(|error| format!("Database error: {error}"))?;
+
+    Ok(company_count > 0)
+}
 // ==========================================
 // COMPANY PROFILE
 // ==========================================
@@ -299,8 +289,7 @@ pub async fn get_company(
     pool: State<'_, SqlitePool>,
     session: State<'_, SessionState>,
 ) -> Result<PublicCompany, String> {
-    let current_user =
-        require_current_user(pool.inner(), session.inner()).await?;
+    let current_user = require_current_user(pool.inner(), session.inner()).await?;
 
     let company_id = current_user
         .company_id
@@ -320,13 +309,11 @@ pub async fn update_company(
     tax_number: Option<String>,
     currency_code: String,
 ) -> Result<PublicCompany, String> {
-    let current_user =
-        require_current_user(pool.inner(), session.inner()).await?;
+    let current_user = require_current_user(pool.inner(), session.inner()).await?;
 
     if current_user.role != "owner" && current_user.role != "admin" {
         return Err(
-            "Only the company owner or an admin can update company information"
-                .to_string(),
+            "Only the company owner or an admin can update company information".to_string(),
         );
     }
 

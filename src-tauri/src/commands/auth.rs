@@ -1,8 +1,4 @@
-use bcrypt::{
-    hash as bcrypt_hash,
-    verify as bcrypt_verify,
-    DEFAULT_COST,
-};
+use bcrypt::{hash as bcrypt_hash, verify as bcrypt_verify, DEFAULT_COST};
 use serde::Serialize;
 use sqlx::{FromRow, SqlitePool};
 use tauri::State;
@@ -76,11 +72,7 @@ pub(crate) fn normalize_email(email: &str) -> Result<String, String> {
         return Err("Invalid email address".to_string());
     };
 
-    if local.is_empty()
-        || domain.is_empty()
-        || domain.contains('@')
-        || !domain.contains('.')
-    {
+    if local.is_empty() || domain.is_empty() || domain.contains('@') || !domain.contains('.') {
         return Err("Invalid email address".to_string());
     }
 
@@ -132,19 +124,14 @@ pub(crate) async fn hash_password(password: &str) -> Result<String, String> {
         .map_err(|error| format!("Failed to hash password: {error}"))
 }
 
-async fn verify_password(
-    password: &str,
-    password_hash: &str,
-) -> Result<bool, String> {
+async fn verify_password(password: &str, password_hash: &str) -> Result<bool, String> {
     let password = password.to_string();
     let password_hash = password_hash.to_string();
 
-    tokio::task::spawn_blocking(move || {
-        bcrypt_verify(password, &password_hash)
-    })
-    .await
-    .map_err(|error| format!("Password worker failed: {error}"))?
-    .map_err(|error| format!("Failed to verify password: {error}"))
+    tokio::task::spawn_blocking(move || bcrypt_verify(password, &password_hash))
+        .await
+        .map_err(|error| format!("Password worker failed: {error}"))?
+        .map_err(|error| format!("Failed to verify password: {error}"))
 }
 
 pub(crate) fn map_user_write_error(error: sqlx::Error) -> String {
@@ -161,10 +148,7 @@ pub(crate) fn map_user_write_error(error: sqlx::Error) -> String {
 // SESSION HELPERS
 // ==========================================
 
-pub(crate) async fn set_current_user(
-    session: &SessionState,
-    user: PublicUser,
-) {
+pub(crate) async fn set_current_user(session: &SessionState, user: PublicUser) {
     *session.current_user.write().await = Some(user);
 }
 
@@ -184,9 +168,7 @@ pub(crate) async fn require_current_user(
     let session_user_id = {
         let session_guard = session.current_user.read().await;
 
-        session_guard
-            .as_ref()
-            .map(|user| user.id.clone())
+        session_guard.as_ref().map(|user| user.id.clone())
     }
     .ok_or_else(|| "You must log in first".to_string())?;
 
@@ -221,10 +203,7 @@ pub(crate) async fn require_current_user(
         None => {
             *session.current_user.write().await = None;
 
-            Err(
-                "Your account or company is no longer active. Please log in again."
-                    .to_string(),
-            )
+            Err("Your account or company is no longer active. Please log in again.".to_string())
         }
     }
 }
@@ -271,8 +250,7 @@ pub async fn login_user(
         None => return Err("Invalid email or password".to_string()),
     };
 
-    let password_is_correct =
-        verify_password(&password, &user_row.password_hash).await?;
+    let password_is_correct = verify_password(&password, &user_row.password_hash).await?;
 
     if !password_is_correct {
         return Err("Invalid email or password".to_string());
@@ -298,9 +276,7 @@ pub async fn login_user(
 // ==========================================
 
 #[tauri::command]
-pub async fn logout_user(
-    session: State<'_, SessionState>,
-) -> Result<(), String> {
+pub async fn logout_user(session: State<'_, SessionState>) -> Result<(), String> {
     *session.current_user.write().await = None;
     Ok(())
 }
@@ -323,8 +299,7 @@ pub async fn update_my_profile(
     session: State<'_, SessionState>,
     full_name: String,
 ) -> Result<PublicUser, String> {
-    let current_user =
-        require_current_user(pool.inner(), session.inner()).await?;
+    let current_user = require_current_user(pool.inner(), session.inner()).await?;
 
     let full_name = validate_person_name(&full_name)?;
 
@@ -352,19 +327,16 @@ pub async fn change_my_password(
     current_password: String,
     new_password: String,
 ) -> Result<(), String> {
-    let current_user =
-        require_current_user(pool.inner(), session.inner()).await?;
+    let current_user = require_current_user(pool.inner(), session.inner()).await?;
 
     validate_password(&new_password)?;
 
     let stored_password_hash =
-        sqlx::query_scalar::<_, String>(
-            "SELECT password_hash FROM users WHERE id = ?",
-        )
-        .bind(&current_user.id)
-        .fetch_one(pool.inner())
-        .await
-        .map_err(|error| format!("Database error: {error}"))?;
+        sqlx::query_scalar::<_, String>("SELECT password_hash FROM users WHERE id = ?")
+            .bind(&current_user.id)
+            .fetch_one(pool.inner())
+            .await
+            .map_err(|error| format!("Database error: {error}"))?;
 
     let current_password_is_correct =
         verify_password(&current_password, &stored_password_hash).await?;
@@ -373,14 +345,10 @@ pub async fn change_my_password(
         return Err("Current password is incorrect".to_string());
     }
 
-    let same_as_old_password =
-        verify_password(&new_password, &stored_password_hash).await?;
+    let same_as_old_password = verify_password(&new_password, &stored_password_hash).await?;
 
     if same_as_old_password {
-        return Err(
-            "New password must be different from the current password"
-                .to_string(),
-        );
+        return Err("New password must be different from the current password".to_string());
     }
 
     let new_password_hash = hash_password(&new_password).await?;

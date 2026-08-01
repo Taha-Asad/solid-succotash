@@ -23,7 +23,7 @@
     "@mantine/nprogress": "^9.4.2",
     "@mantine/spotlight": "^9.4.2",
     "@mantine/tiptap": "^9.4.2",
-    "@tauri-apps/api": "^2",
+    "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-opener": "^2",
     "@tiptap/extension-link": "^3.29.0",
     "@tiptap/pm": "^3.29.0",
@@ -32,6 +32,7 @@
     "dayjs": "^1.11.21",
     "embla-carousel": "^8.6.0",
     "embla-carousel-react": "^8.6.0",
+    "lucide-react": "^1.28.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "recharts": "^3.10.1"

@@ -3,23 +3,15 @@ use tauri::State;
 use uuid::Uuid;
 
 use crate::commands::auth::{
-    hash_password,
-    map_user_write_error,
-    normalize_email,
-    require_current_user,
-    validate_password,
-    validate_person_name,
-    PublicUser,
-    SessionState,
+    hash_password, map_user_write_error, normalize_email, require_current_user, validate_password,
+    validate_person_name, PublicUser, SessionState,
 };
 
 fn validate_managed_role(role: &str) -> Result<String, String> {
     match role.trim().to_lowercase().as_str() {
         "admin" => Ok("admin".to_string()),
         "employee" => Ok("employee".to_string()),
-        _ => Err(
-            "Role must be either admin or employee".to_string(),
-        ),
+        _ => Err("Role must be either admin or employee".to_string()),
     }
 }
 
@@ -66,13 +58,10 @@ pub async fn list_company_users(
     pool: State<'_, SqlitePool>,
     session: State<'_, SessionState>,
 ) -> Result<Vec<PublicUser>, String> {
-    let current_user =
-        require_current_user(pool.inner(), session.inner()).await?;
+    let current_user = require_current_user(pool.inner(), session.inner()).await?;
 
     if current_user.role != "owner" && current_user.role != "admin" {
-        return Err(
-            "Only the owner or an admin can view company users".to_string(),
-        );
+        return Err("Only the owner or an admin can view company users".to_string());
     }
 
     let company_id = get_company_id(&current_user)?;
@@ -118,22 +107,17 @@ pub async fn create_company_user(
     full_name: String,
     role: String,
 ) -> Result<PublicUser, String> {
-    let current_user =
-        require_current_user(pool.inner(), session.inner()).await?;
+    let current_user = require_current_user(pool.inner(), session.inner()).await?;
 
     if current_user.role != "owner" && current_user.role != "admin" {
-        return Err(
-            "Only the owner or an admin can create users".to_string(),
-        );
+        return Err("Only the owner or an admin can create users".to_string());
     }
 
     let role = validate_managed_role(&role)?;
 
     // Admins may create employees, but only the owner may create admins.
     if current_user.role == "admin" && role != "employee" {
-        return Err(
-            "An admin may only create employee accounts".to_string(),
-        );
+        return Err("An admin may only create employee accounts".to_string());
     }
 
     let company_id = get_company_id(&current_user)?;
@@ -182,27 +166,20 @@ pub async fn update_company_user_role(
     user_id: String,
     role: String,
 ) -> Result<PublicUser, String> {
-    let current_user =
-        require_current_user(pool.inner(), session.inner()).await?;
+    let current_user = require_current_user(pool.inner(), session.inner()).await?;
 
     // Only the owner can promote/demote admins.
     if current_user.role != "owner" {
-        return Err(
-            "Only the company owner can change user roles".to_string(),
-        );
+        return Err("Only the company owner can change user roles".to_string());
     }
 
     let company_id = get_company_id(&current_user)?;
     let role = validate_managed_role(&role)?;
 
-    let target_user =
-        fetch_company_user(pool.inner(), &company_id, &user_id).await?;
+    let target_user = fetch_company_user(pool.inner(), &company_id, &user_id).await?;
 
     if target_user.role == "owner" {
-        return Err(
-            "The company owner role cannot be changed by this command"
-                .to_string(),
-        );
+        return Err("The company owner role cannot be changed by this command".to_string());
     }
 
     sqlx::query(
@@ -239,40 +216,27 @@ pub async fn set_company_user_active(
     user_id: String,
     active: bool,
 ) -> Result<PublicUser, String> {
-    let current_user =
-        require_current_user(pool.inner(), session.inner()).await?;
+    let current_user = require_current_user(pool.inner(), session.inner()).await?;
 
     if current_user.role != "owner" && current_user.role != "admin" {
-        return Err(
-            "Only the owner or an admin can activate or deactivate users"
-                .to_string(),
-        );
+        return Err("Only the owner or an admin can activate or deactivate users".to_string());
     }
 
     let company_id = get_company_id(&current_user)?;
 
-    let target_user =
-        fetch_company_user(pool.inner(), &company_id, &user_id).await?;
+    let target_user = fetch_company_user(pool.inner(), &company_id, &user_id).await?;
 
     if target_user.id == current_user.id {
-        return Err(
-            "You cannot deactivate your own currently logged-in account"
-                .to_string(),
-        );
+        return Err("You cannot deactivate your own currently logged-in account".to_string());
     }
 
     if target_user.role == "owner" {
-        return Err(
-            "The company owner cannot be deactivated".to_string(),
-        );
+        return Err("The company owner cannot be deactivated".to_string());
     }
 
     // Admins may manage employees, but not other admins.
     if current_user.role == "admin" && target_user.role != "employee" {
-        return Err(
-            "An admin may only activate or deactivate employees"
-                .to_string(),
-        );
+        return Err("An admin may only activate or deactivate employees".to_string());
     }
 
     let active_value = if active { 1_i64 } else { 0_i64 };

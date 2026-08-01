@@ -34,3 +34,7 @@ dotenv = "0.15.0"
 tauri-plugin-sql = { version = "2.4.0", features = ["sqlite", "postgres"] }
 bcrypt = "0.19.2"
 uuid = { version = "1.24.0", features = ["v4"] }
+calamine = { version = "0.36.1", features = ["chrono"] }
+csv = "1.4.0"
+zip = { version = "8.6.0", features = ["deflate"] }
+quick-xml = { version = "0.41.0", features = ["serialize"] }

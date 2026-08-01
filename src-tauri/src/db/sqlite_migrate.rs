@@ -18,13 +18,13 @@ pub async fn run_sqlite_migrations(db_path: &str) -> Result<(), String> {
     println!("[SQLite] Connecting to: {}", db_path);
 
     // Connect to SQLite
-let options = SqliteConnectOptions::from_str(db_path)
-    .map_err(|e| format!("Invalid SQLite URL: {}", e))?
-    .create_if_missing(true);
+    let options = SqliteConnectOptions::from_str(db_path)
+        .map_err(|e| format!("Invalid SQLite URL: {}", e))?
+        .create_if_missing(true);
 
-let pool = SqlitePool::connect_with(options)
-    .await
-    .map_err(|e| format!("Failed to connect to SQLite: {}", e))?;
+    let pool = SqlitePool::connect_with(options)
+        .await
+        .map_err(|e| format!("Failed to connect to SQLite: {}", e))?;
 
     // Create the _migrations table (if it doesn't exist)
     query(
@@ -65,13 +65,11 @@ let pool = SqlitePool::connect_with(options)
     migrations.sort_by_key(|(version, _)| *version);
 
     for (version, file_name) in migrations {
-        let already_applied = query(
-            "SELECT 1 FROM _migrations WHERE version = ? LIMIT 1",
-        )
-        .bind(version)
-        .fetch_optional(&pool)
-        .await
-        .map_err(|e| format!("Failed to check migration {}: {}", file_name, e))?;
+        let already_applied = query("SELECT 1 FROM _migrations WHERE version = ? LIMIT 1")
+            .bind(version)
+            .fetch_optional(&pool)
+            .await
+            .map_err(|e| format!("Failed to check migration {}: {}", file_name, e))?;
 
         if already_applied.is_some() {
             println!("[migrations] Skipping {} (already applied)", file_name);
@@ -90,14 +88,12 @@ let pool = SqlitePool::connect_with(options)
             .map_err(|e| format!("Failed to run migration {}: {}", file_name, e))?;
 
         // Record migration
-        query(
-            "INSERT INTO _migrations (version, name) VALUES (?, ?)",
-        )
-        .bind(version)
-        .bind(&file_name)
-        .execute(&pool)
-        .await
-        .map_err(|e| format!("Failed to record migration {}: {}", file_name, e))?;
+        query("INSERT INTO _migrations (version, name) VALUES (?, ?)")
+            .bind(version)
+            .bind(&file_name)
+            .execute(&pool)
+            .await
+            .map_err(|e| format!("Failed to record migration {}: {}", file_name, e))?;
 
         println!("[migrations] ✅ Applied {}", file_name);
     }
