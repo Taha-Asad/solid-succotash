@@ -18,11 +18,11 @@
 // The database schema NEVER changes. Only metadata changes.
 
 use crate::commands::auth::{require_current_user, SessionState};
-use calamine::{Data, Reader, open_workbook_auto_from_rs};
+use calamine::{open_workbook_auto_from_rs, Data, Reader};
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
-use tauri::State;
 use std::io::Cursor;
+use tauri::State;
 
 // ==========================================
 // TYPES
@@ -217,23 +217,22 @@ async fn analyze_csv(file_bytes: Vec<u8>) -> Result<FileAnalysis, String> {
 /// The main content lives in word/document.xml.
 /// Word tables use <w:tbl>, <w:tr> (row), <w:tc> (cell) tags.
 async fn analyze_docx(file_bytes: Vec<u8>) -> Result<FileAnalysis, String> {
-    use quick_xml::events::Event;
-    use quick_xml::Reader as XmlReader;
+    // Unused here — the XML parsing was extracted into parse_docx_table().
+    // use quick_xml::events::Event;
+    // use quick_xml::Reader as XmlReader;
     use std::io::Read;
 
     // 1. Open the .docx as a ZIP archive
     let cursor = Cursor::new(file_bytes);
-    let mut archive = zip::ZipArchive::new(cursor)
-        .map_err(|e| format!("Failed to open docx file: {e}"))?;
+    let mut archive =
+        zip::ZipArchive::new(cursor).map_err(|e| format!("Failed to open docx file: {e}"))?;
 
     // 2. Find and read word/document.xml
     let mut document_xml = String::new();
     {
-        let mut file = archive
-            .by_name("word/document.xml")
-            .map_err(|_| {
-                "This .docx file appears to be corrupted (no word/document.xml found)".to_string()
-            })?;
+        let mut file = archive.by_name("word/document.xml").map_err(|_| {
+            "This .docx file appears to be corrupted (no word/document.xml found)".to_string()
+        })?;
         file.read_to_string(&mut document_xml)
             .map_err(|e| format!("Failed to read document content: {e}"))?;
     }
@@ -452,8 +451,8 @@ fn cell_to_string(cell: &Data) -> String {
 /// Reads all rows from an Excel file (including header)
 fn read_excel_rows(file_bytes: &[u8]) -> Result<Vec<Vec<String>>, String> {
     let cursor = Cursor::new(file_bytes.to_vec());
-    let mut workbook = open_workbook_auto_from_rs(cursor)
-        .map_err(|e| format!("Failed to read Excel: {e}"))?;
+    let mut workbook =
+        open_workbook_auto_from_rs(cursor).map_err(|e| format!("Failed to read Excel: {e}"))?;
 
     let sheet_names = workbook.sheet_names().to_vec();
     if sheet_names.is_empty() {
@@ -587,7 +586,7 @@ fn parse_docx_table(document_xml: &str) -> Result<Vec<Vec<String>>, String> {
                     }
                     "w:tbl" => {
                         // End of table — we only take the FIRST table
-                        in_table = false;
+                        // in_table = false; // dead assignment — we break immediately after
                         break;
                     }
                     _ => {}
@@ -631,7 +630,13 @@ fn normalize_header(header: &str) -> String {
     header
         .to_lowercase()
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == ' ' { c } else { ' ' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == ' ' {
+                c
+            } else {
+                ' '
+            }
+        })
         .collect::<String>()
         .split_whitespace()
         .collect::<Vec<&str>>()
@@ -646,8 +651,19 @@ fn detect_field(normalized: &str) -> (String, String, String) {
     if matches_any(
         normalized,
         &[
-            "sku", "code", "item code", "product code", "barcode", "item no", "item number",
-            "product id", "item id", "article no", "article number", "hs code", "hscode",
+            "sku",
+            "code",
+            "item code",
+            "product code",
+            "barcode",
+            "item no",
+            "item number",
+            "product id",
+            "item id",
+            "article no",
+            "article number",
+            "hs code",
+            "hscode",
         ],
     ) {
         return ("sku".to_string(), "core".to_string(), "high".to_string());
@@ -657,8 +673,16 @@ fn detect_field(normalized: &str) -> (String, String, String) {
     if matches_any(
         normalized,
         &[
-            "product name", "item name", "name", "item", "product", "description",
-            "product description", "item description", "title", "product title",
+            "product name",
+            "item name",
+            "name",
+            "item",
+            "product",
+            "description",
+            "product description",
+            "item description",
+            "title",
+            "product title",
         ],
     ) {
         return ("name".to_string(), "core".to_string(), "high".to_string());
@@ -668,30 +692,67 @@ fn detect_field(normalized: &str) -> (String, String, String) {
     if matches_any(
         normalized,
         &[
-            "cost price", "buying price", "purchase price", "buy price", "buying rate",
-            "purchase rate", "cost rate", "landed cost", "unit cost", "base cost", "cost",
+            "cost price",
+            "buying price",
+            "purchase price",
+            "buy price",
+            "buying rate",
+            "purchase rate",
+            "cost rate",
+            "landed cost",
+            "unit cost",
+            "base cost",
+            "cost",
         ],
     ) {
-        return ("cost_price".to_string(), "core".to_string(), "high".to_string());
+        return (
+            "cost_price".to_string(),
+            "core".to_string(),
+            "high".to_string(),
+        );
     }
 
     // SELL PRICE
     if matches_any(
         normalized,
         &[
-            "sell price", "selling price", "sale price", "retail price", "mrp", "selling rate",
-            "sale rate", "unit price", "price", "rate", "amount",
+            "sell price",
+            "selling price",
+            "sale price",
+            "retail price",
+            "mrp",
+            "selling rate",
+            "sale rate",
+            "unit price",
+            "price",
+            "rate",
+            "amount",
         ],
     ) {
-        return ("sell_price".to_string(), "core".to_string(), "high".to_string());
+        return (
+            "sell_price".to_string(),
+            "core".to_string(),
+            "high".to_string(),
+        );
     }
 
     // QUANTITY
     if matches_any(
         normalized,
         &[
-            "qty", "quantity", "stock", "stock qty", "quantity in stock", "stock quantity",
-            "count", "on hand", "onhand", "available", "balance", "opening stock", "opening qty",
+            "qty",
+            "quantity",
+            "stock",
+            "stock qty",
+            "quantity in stock",
+            "stock quantity",
+            "count",
+            "on hand",
+            "onhand",
+            "available",
+            "balance",
+            "opening stock",
+            "opening qty",
         ],
     ) {
         return (
@@ -713,8 +774,15 @@ fn detect_field(normalized: &str) -> (String, String, String) {
     if matches_any(
         normalized,
         &[
-            "category", "group", "type", "product type", "item type", "classification", "class",
-            "product group", "item group",
+            "category",
+            "group",
+            "type",
+            "product type",
+            "item type",
+            "classification",
+            "class",
+            "product group",
+            "item group",
         ],
     ) {
         return (
@@ -728,7 +796,12 @@ fn detect_field(normalized: &str) -> (String, String, String) {
     if matches_any(
         normalized,
         &[
-            "supplier", "vendor", "brand", "manufacturer", "supplier name", "vendor name",
+            "supplier",
+            "vendor",
+            "brand",
+            "manufacturer",
+            "supplier name",
+            "vendor name",
             "brand name",
         ],
     ) {
@@ -742,7 +815,14 @@ fn detect_field(normalized: &str) -> (String, String, String) {
     // TAX
     if matches_any(
         normalized,
-        &["tax", "tax rate", "gst", "vat", "sales tax", "tax percentage"],
+        &[
+            "tax",
+            "tax rate",
+            "gst",
+            "vat",
+            "sales tax",
+            "tax percentage",
+        ],
     ) {
         return (
             "tax_rate".to_string(),
@@ -763,7 +843,9 @@ fn detect_field(normalized: &str) -> (String, String, String) {
 
 /// Check if a normalized header matches any of the patterns
 fn matches_any(normalized: &str, patterns: &[&str]) -> bool {
-    patterns.iter().any(|p| normalized == *p || normalized.contains(p))
+    patterns
+        .iter()
+        .any(|p| normalized == *p || normalized.contains(p))
 }
 
 /// Detect the data type of a custom field from sample data
@@ -828,10 +910,14 @@ fn detect_field_type(request: &ImportRequest, source_index: &usize) -> String {
 fn looks_like_date(value: &str) -> bool {
     let v = value.trim();
     // Common patterns: 2024-01-15, 15/01/2024, 01-15-2024
-    let has_dash =
-        v.len() >= 8 && v.len() <= 12 && v.contains('-') && v.chars().filter(|c| *c == '-').count() == 2;
-    let has_slash =
-        v.len() >= 8 && v.len() <= 12 && v.contains('/') && v.chars().filter(|c| *c == '/').count() == 2;
+    let has_dash = v.len() >= 8
+        && v.len() <= 12
+        && v.contains('-')
+        && v.chars().filter(|c| *c == '-').count() == 2;
+    let has_slash = v.len() >= 8
+        && v.len() <= 12
+        && v.contains('/')
+        && v.chars().filter(|c| *c == '/').count() == 2;
     has_dash || has_slash
 }
 

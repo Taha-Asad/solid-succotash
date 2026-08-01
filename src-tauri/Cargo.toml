@@ -38,3 +38,4 @@ calamine = { version = "0.36.1", features = ["chrono"] }
 csv = "1.4.0"
 zip = { version = "8.6.0", features = ["deflate"] }
 quick-xml = { version = "0.41.0", features = ["serialize"] }
+chrono = "0.4.45"

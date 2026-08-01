@@ -70,6 +70,25 @@ pub async fn run() {
             // ---- Import Wizard ----
             commands::import_wizard::analyze_import_file,
             commands::import_wizard::execute_import,
+            // ---- Invoices ----
+            commands::invoices::list_invoices,
+            commands::invoices::get_invoice,
+            commands::invoices::create_invoice,
+            commands::invoices::add_invoice_item,
+            commands::invoices::remove_invoice_item,
+            commands::invoices::finalize_invoice,
+            commands::invoices::record_payment,
+            commands::invoices::create_customer,
+            commands::invoices::list_customers,
+            // ---- Invoice Settings ----
+            commands::invoices::get_invoice_settings,
+            commands::invoices::update_invoice_settings,
+            // ---- PDF Generation ----
+            commands::invoices::generate_invoice_html,
+            // ---- Session Persistence ----
+            commands::auth::save_session,
+            commands::auth::load_saved_session,
+            commands::auth::clear_saved_session
         ])
         .run(tauri::generate_context!())
         .expect("Error while running Tauri application");

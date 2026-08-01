@@ -25,15 +25,15 @@ pub struct PublicUser {
 // Internal database structure.
 // This is never returned to React because it contains password_hash.
 #[derive(Debug, FromRow)]
-struct UserWithPassword {
-    id: String,
-    email: String,
-    password_hash: String,
-    full_name: String,
-    role: String,
-    company_id: Option<String>,
-    is_active: bool,
-    created_at: String,
+pub struct UserWithPassword {
+    pub id: String,
+    pub email: String,
+    pub password_hash: String,
+    pub full_name: String,
+    pub role: String,
+    pub company_id: Option<String>,
+    pub is_active: bool,
+    pub created_at: String,
 }
 
 // ==========================================
@@ -367,6 +367,120 @@ pub async fn change_my_password(
     .execute(pool.inner())
     .await
     .map_err(|error| format!("Database error: {error}"))?;
+
+    Ok(())
+}
+
+// ==========================================
+// SESSION PERSISTENCE COMMANDS
+// ==========================================
+//
+// These commands save/load the login session to SQLite
+// so the user doesn't have to log in again after restarting.
+//
+// ADD THESE FUNCTIONS TO YOUR auth.rs FILE
+// (at the bottom, after the existing commands)
+//
+// Then register them in lib.rs:
+//   commands::auth::save_session,
+//   commands::auth::load_saved_session,
+//   commands::auth::clear_saved_session,
+
+// ---- Add this function to auth.rs ----
+
+/// Saves the current user's ID to the database so the session
+/// persists across app restarts.
+#[tauri::command]
+pub async fn save_session(
+    pool: State<'_, SqlitePool>,
+    session: State<'_, SessionState>,
+) -> Result<(), String> {
+    let current_user = require_current_user(pool.inner(), session.inner()).await?;
+
+    sqlx::query(
+        r#"
+        INSERT INTO app_session (id, user_id, saved_at)
+        VALUES ('current', ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(id) DO UPDATE SET
+            user_id = excluded.user_id,
+            saved_at = CURRENT_TIMESTAMP
+        "#,
+    )
+    .bind(&current_user.id)
+    .execute(pool.inner())
+    .await
+    .map_err(|e| format!("Failed to save session: {e}"))?;
+
+    Ok(())
+}
+
+/// Attempts to restore a saved session from the database.
+/// Called on app startup before showing the login screen.
+/// Returns the user if a valid session exists, or error if not.
+#[tauri::command]
+pub async fn load_saved_session(
+    pool: State<'_, SqlitePool>,
+    session: State<'_, SessionState>,
+) -> Result<PublicUser, String> {
+    // 1. Check if there's a saved session
+    let saved_user_id =
+        sqlx::query_scalar::<_, String>("SELECT user_id FROM app_session WHERE id = 'current'")
+            .fetch_optional(pool.inner())
+            .await
+            .map_err(|e| format!("Session lookup error: {e}"))?;
+
+    let user_id = match saved_user_id {
+        Some(id) => id,
+        None => return Err("No saved session".to_string()),
+    };
+
+    // 2. Load the user from the database
+    let user_row = sqlx::query_as::<_, UserWithPassword>(
+        r#"
+        SELECT id, email, password_hash, full_name, role, company_id, is_active, created_at
+        FROM users
+        WHERE id = ? AND is_active = 1
+        "#,
+    )
+    .bind(&user_id)
+    .fetch_optional(pool.inner())
+    .await
+    .map_err(|e| format!("User lookup error: {e}"))?;
+
+    let user = match user_row {
+        Some(u) => u,
+        None => {
+            // User was deactivated or deleted — clear the stale session
+            let _ = sqlx::query("DELETE FROM app_session WHERE id = 'current'")
+                .execute(pool.inner())
+                .await;
+            return Err("Saved user no longer active".to_string());
+        }
+    };
+
+    // 3. Restore the in-memory session
+    let public_user = PublicUser {
+        id: user.id,
+        email: user.email,
+        full_name: user.full_name,
+        role: user.role,
+        company_id: user.company_id,
+        is_active: user.is_active,
+        created_at: user.created_at,
+    };
+
+    set_current_user(&session, public_user.clone()).await;
+
+    Ok(public_user)
+}
+
+/// Clears the saved session (called on logout).
+#[tauri::command]
+pub async fn clear_saved_session(pool: State<'_, SqlitePool>) -> Result<(), String> {
+    sqlx::query("DELETE FROM app_session WHERE id = 'current'")
+        .execute(pool.inner())
+        .await
+        .map_err(|e| format!("Failed to clear session: {e}"))?;
 
     Ok(())
 }
