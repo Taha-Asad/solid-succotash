@@ -11,18 +11,34 @@ fn greet(name: &str) -> String {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 #[tokio::main]
 pub async fn run() {
-    let sqlite_url = "sqlite:ijazandcompany.db";
 
-    // Apply all unapplied migrations, including 002.
-    db::sqlite_migrate::run_sqlite_migrations(sqlite_url)
+    // Local
+    // let sqlite_url = "sqlite:ijazandcompany.db";
+
+    // // Apply all unapplied migrations, including 002.
+    // db::sqlite_migrate::run_sqlite_migrations(sqlite_url)
+    //     .await
+    //     .expect("Failed to run SQLite migrations");
+
+    // // The pool allows Rust commands to reuse database connections.
+    // let sqlite_pool = SqlitePool::connect(sqlite_url)
+    //     .await
+    //     .expect("Failed to create SQLite pool");
+
+    // Build: For Application 
+        // Get the correct database path for dev vs production
+    let sqlite_url = db::sqlite_migrate::get_database_path();
+    println!("Database: {sqlite_url}");
+
+    // Apply all unapplied migrations
+    db::sqlite_migrate::run_sqlite_migrations(&sqlite_url)
         .await
         .expect("Failed to run SQLite migrations");
 
-    // The pool allows Rust commands to reuse database connections.
-    let sqlite_pool = SqlitePool::connect(sqlite_url)
+    // Create the connection pool
+    let sqlite_pool = SqlitePool::connect(&sqlite_url)
         .await
         .expect("Failed to create SQLite pool");
-
     tauri::Builder::default()
         // Make the database pool available through State<SqlitePool>.
         .manage(sqlite_pool)
