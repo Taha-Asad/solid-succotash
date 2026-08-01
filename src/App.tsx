@@ -25,7 +25,6 @@ import {
   Text,
   Title,
   Button,
-  // Container,
 } from "@mantine/core";
 
 import {
@@ -33,12 +32,15 @@ import {
   getErrorMessage,
   isCompanySetup,
   logoutUser,
+  loadSavedSession,
+  saveSession,
+  clearSavedSession,
 } from "./api/backend";
 
+import LoginPage from "./features/auth/LoginPage";
 import SetupPage from "./features/auth/SetupPage";
 import DashboardPage from "./features/dashboard/DashboardPage";
 
-import LoginPage from "./features/auth/LoginPage";
 import type { PublicUser, RegisterCompanyResult } from "./types/backend";
 
 // ==========================================
@@ -76,16 +78,27 @@ function App() {
         }
 
         // Question 2: Is someone already logged in?
-        // (In desktop mode, the session lives in Rust's memory.
-        //  If the app was restarted, no one is logged in.)
+        // First try the in-memory session (fast)
         try {
           const currentUser = await getCurrentUser();
           setUser(currentUser);
           setScreen("dashboard");
+          return;
         } catch {
-          // Not logged in — that's normal, not an error
-          setScreen("login");
+          // No in-memory session — that's normal after restart
         }
+
+        // Question 3: Try to restore saved session from SQLite
+        try {
+          const savedUser = await loadSavedSession();
+          setUser(savedUser);
+          setScreen("dashboard");
+          return;
+        } catch {
+          // No saved session — show login
+        }
+
+        setScreen("login");
       } catch (error) {
         setErrorMessage(getErrorMessage(error));
         setScreen("fatal-error");
@@ -97,6 +110,17 @@ function App() {
 
   // ---- HANDLERS PASSED TO CHILDREN ----
 
+  async function handleLogin(loggedInUser: PublicUser) {
+    setUser(loggedInUser);
+    setScreen("dashboard");
+    // Save session to SQLite so it survives restart
+    try {
+      await saveSession();
+    } catch {
+      // Non-critical — user just has to log in again next time
+    }
+  }
+
   function handleSetupComplete(
     newUser: PublicUser,
     _result: RegisterCompanyResult,
@@ -104,15 +128,13 @@ function App() {
     // Company was just created and owner is auto-logged in
     setUser(newUser);
     setScreen("dashboard");
-  }
-
-  function handleLogin(loggedInUser: PublicUser) {
-    setUser(loggedInUser);
-    setScreen("dashboard");
+    // Save session after first setup
+    saveSession().catch(() => {});
   }
 
   async function handleLogout() {
     try {
+      await clearSavedSession();
       await logoutUser();
     } catch {
       // Even if logout fails, clear local state

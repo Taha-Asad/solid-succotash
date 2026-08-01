@@ -68,6 +68,8 @@ import {
   getErrorMessage,
 } from "../../api/backend";
 
+import { notifications } from "@mantine/notifications";
+
 import type {
   FieldMapping,
   FileAnalysis,
@@ -381,8 +383,20 @@ export default function ImportWizard({
 
       setImportResult(result);
       setActiveStep(4);
+      notifications.show({
+        title: "Import complete",
+        message: `${result.productsImported} product(s) imported`,
+        color: "green",
+      });
     } catch (err) {
-      setError(getErrorMessage(err));
+      const message = getErrorMessage(err);
+      console.error("execute_import failed:", message);
+      setError(message);
+      notifications.show({
+        title: "Import failed",
+        message,
+        color: "red",
+      });
     } finally {
       setImporting(false);
     }
