@@ -253,6 +253,7 @@
 // }
 
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool};
+use sqlx::Row;
 use std::path::PathBuf;
 use std::str::FromStr;
 
@@ -301,6 +302,11 @@ fn get_embedded_migrations() -> Vec<(i64, &'static str, &'static str)> {
             5,
             "005_persistent_session",
             include_str!("../../migrations/sqlite/005_persistent_session.sql"),
+        ),
+        (
+            6,
+            "006_expiry_batches",
+            include_str!("../../migrations/sqlite/006_expiry_batches.sql"),
         ),
     ]
 }
@@ -360,9 +366,56 @@ pub async fn run_sqlite_migrations(
         println!("Migration {version} applied successfully.");
     }
 
+    ensure_category_columns(&pool).await?;
+    ensure_invoice_item_columns(&pool).await?;
+
     let _ = applied;
 
     pool.close().await;
+
+    Ok(())
+}
+
+/// Adds columns that were introduced after the original CREATE TABLE.
+/// The migration runner re-executes every file on startup, so plain
+/// `ALTER TABLE ... ADD COLUMN` cannot live in a .sql file (it would
+/// fail on the second run). Instead we check the live table once and
+/// add any missing column here.
+async fn ensure_category_columns(
+    pool: &SqlitePool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let columns: Vec<String> = sqlx::query("PRAGMA table_info(categories)")
+        .map(|row: sqlx::sqlite::SqliteRow| row.get::<String, _>(1))
+        .fetch_all(pool)
+        .await?;
+
+    if !columns.iter().any(|c| c == "sku_prefix") {
+        println!("Adding categories.sku_prefix column (old database)");
+        sqlx::raw_sql("ALTER TABLE categories ADD COLUMN sku_prefix TEXT")
+            .execute(pool)
+            .await?;
+    }
+
+    Ok(())
+}
+
+/// Adds columns introduced after the original invoice_items CREATE TABLE.
+async fn ensure_invoice_item_columns(
+    pool: &SqlitePool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let columns: Vec<String> = sqlx::query("PRAGMA table_info(invoice_items)")
+        .map(|row: sqlx::sqlite::SqliteRow| row.get::<String, _>(1))
+        .fetch_all(pool)
+        .await?;
+
+    if !columns.iter().any(|c| c == "discount_type") {
+        println!("Adding invoice_items.discount_type column (old database)");
+        sqlx::raw_sql(
+            "ALTER TABLE invoice_items ADD COLUMN discount_type TEXT NOT NULL DEFAULT 'percent'",
+        )
+        .execute(pool)
+        .await?;
+    }
 
     Ok(())
 }

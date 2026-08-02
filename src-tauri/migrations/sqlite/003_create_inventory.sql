@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS categories (
     company_id  TEXT NOT NULL,
     name        TEXT NOT NULL,
     description TEXT,
+    sku_prefix  TEXT,
     is_active   INTEGER NOT NULL DEFAULT 1
                     CHECK (is_active IN (0, 1)),
     created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,

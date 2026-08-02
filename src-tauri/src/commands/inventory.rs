@@ -34,6 +34,7 @@ pub struct PublicCategory {
     pub company_id: String,
     pub name: String,
     pub description: Option<String>,
+    pub sku_prefix: Option<String>,
     pub is_active: bool,
     pub created_at: String,
     pub updated_at: String,
@@ -70,6 +71,10 @@ pub struct PublicProduct {
     pub quantity_in_stock: i64,
     pub unit: String,
     pub custom_fields: Option<String>, // JSON blob for company-specific fields
+    /// Expiry date of the soonest-expiring live batch (if any).
+    /// None = this product has no expiry batches.
+    #[sqlx(default)]
+    pub next_expiry_date: Option<String>,
     pub is_active: bool,
     pub created_at: String,
     pub updated_at: String,
@@ -101,6 +106,101 @@ fn clean_optional(input: &str) -> Option<String> {
     }
 }
 
+/// Builds a short, uppercase, alphanumeric SKU prefix from a category name.
+/// "Electronics" → "ELEC", "Mobile Phones" → "MOBI".
+fn derive_sku_prefix(name: &str) -> String {
+    let cleaned: String = name
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .collect::<String>()
+        .to_ascii_uppercase();
+    let prefix: String = cleaned.chars().take(6).collect();
+    if prefix.is_empty() {
+        "CAT".to_string()
+    } else {
+        prefix
+    }
+}
+
+/// Normalizes a user-supplied SKU prefix: uppercase, alphanumeric only.
+/// Falls back to deriving one from the category name when blank.
+fn normalize_sku_prefix(input: &str, category_name: &str) -> String {
+    let cleaned: String = input
+        .trim()
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .collect::<String>()
+        .to_ascii_uppercase();
+    let prefix: String = cleaned.chars().take(6).collect();
+    if prefix.is_empty() {
+        derive_sku_prefix(category_name)
+    } else {
+        prefix
+    }
+}
+
+/// Builds the next automatic SKU for a company.
+/// Uses the category's SKU prefix (or one derived from the product name)
+/// and increments the highest existing number: ELEC-001, ELEC-002, ...
+async fn generate_sku(
+    pool: &SqlitePool,
+    company_id: &str,
+    cat_id: &Option<String>,
+    product_name: &str,
+) -> Result<String, String> {
+    let prefix = match cat_id {
+        Some(cid) => {
+            let stored: Option<String> = sqlx::query_scalar(
+                "SELECT sku_prefix FROM categories WHERE id = ? AND company_id = ?",
+            )
+            .bind(cid)
+            .bind(company_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| format!("Database error: {e}"))?;
+            match stored {
+                Some(p) if !p.trim().is_empty() => {
+                    p.trim().chars().filter(|c| c.is_ascii_alphanumeric()).collect::<String>()
+                }
+                _ => derive_sku_prefix(product_name),
+            }
+        }
+        None => derive_sku_prefix(product_name),
+    };
+
+    // Highest number already used for this prefix (suffix after "PREFIX-").
+    let start: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COALESCE(MAX(CAST(SUBSTR(sku, ?) AS INTEGER)), 0)
+        FROM products
+        WHERE company_id = ? AND sku LIKE ? || '-%'
+        "#,
+    )
+    .bind((prefix.len() + 2) as i64)
+    .bind(company_id)
+    .bind(&prefix)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| format!("Database error: {e}"))?;
+
+    let mut next = start;
+    loop {
+        next += 1;
+        let candidate = format!("{}-{:03}", prefix, next);
+        let exists: Option<i64> = sqlx::query_scalar(
+            "SELECT 1 FROM products WHERE company_id = ? AND sku = ? COLLATE NOCASE",
+        )
+        .bind(company_id)
+        .bind(&candidate)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| format!("Database error: {e}"))?;
+        if exists.is_none() {
+            return Ok(candidate);
+        }
+    }
+}
+
 // ==========================================
 // CATEGORY COMMANDS
 // ==========================================
@@ -115,7 +215,7 @@ pub async fn list_categories(
 
     let categories = sqlx::query_as::<_, PublicCategory>(
         r#"
-        SELECT id, company_id, name, description, is_active,
+        SELECT id, company_id, name, description, sku_prefix, is_active,
                created_at, updated_at
         FROM categories
         WHERE company_id = ?
@@ -137,6 +237,7 @@ pub async fn create_category(
     session: State<'_, SessionState>,
     name: String,
     description: String,
+    sku_prefix: String,
 ) -> Result<PublicCategory, String> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
 
@@ -155,19 +256,22 @@ pub async fn create_category(
         return Err("Category name cannot be empty".to_string());
     }
 
+    let prefix = normalize_sku_prefix(&sku_prefix, &trimmed_name);
+
     let id = uuid::Uuid::new_v4().to_string();
     let desc = clean_optional(&description);
 
     sqlx::query(
         r#"
-        INSERT INTO categories (id, company_id, name, description)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO categories (id, company_id, name, description, sku_prefix)
+        VALUES (?, ?, ?, ?, ?)
         "#,
     )
     .bind(&id)
     .bind(company_id)
     .bind(&trimmed_name)
     .bind(&desc)
+    .bind(&prefix)
     .execute(pool.inner())
     .await
     .map_err(|e| {
@@ -189,7 +293,7 @@ pub async fn create_category(
     Ok(category)
 }
 
-/// Updates a category's name and description. Owner and admin only.
+/// Updates a category's name, description and SKU prefix. Owner and admin only.
 #[tauri::command]
 pub async fn update_category(
     pool: State<'_, SqlitePool>,
@@ -197,6 +301,7 @@ pub async fn update_category(
     category_id: String,
     name: String,
     description: String,
+    sku_prefix: String,
 ) -> Result<PublicCategory, String> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
 
@@ -216,15 +321,35 @@ pub async fn update_category(
 
     let desc = clean_optional(&description);
 
+    // If the user cleared the prefix, keep whatever it was before
+    // (falling back to one derived from the new name for old records).
+    let existing_prefix: Option<String> =
+        sqlx::query_scalar("SELECT sku_prefix FROM categories WHERE id = ? AND company_id = ?")
+            .bind(&category_id)
+            .bind(company_id)
+            .fetch_optional(pool.inner())
+            .await
+            .map_err(|e| format!("Database error: {e}"))?;
+
+    let prefix = if sku_prefix.trim().is_empty() {
+        match existing_prefix {
+            Some(p) if !p.is_empty() => p,
+            _ => derive_sku_prefix(&trimmed_name),
+        }
+    } else {
+        normalize_sku_prefix(&sku_prefix, &trimmed_name)
+    };
+
     let rows = sqlx::query(
         r#"
         UPDATE categories
-        SET name = ?, description = ?, updated_at = CURRENT_TIMESTAMP
+        SET name = ?, description = ?, sku_prefix = ?, updated_at = CURRENT_TIMESTAMP
         WHERE id = ? AND company_id = ?
         "#,
     )
     .bind(&trimmed_name)
     .bind(&desc)
+    .bind(&prefix)
     .bind(&category_id)
     .bind(company_id)
     .execute(pool.inner())
@@ -514,7 +639,10 @@ pub async fn list_products(
         r#"
         SELECT id, company_id, sku, name, category_id, supplier_id,
                cost_price, sell_price, tax_rate, quantity_in_stock,
-               unit, custom_fields, is_active, created_at, updated_at
+               unit, custom_fields, is_active, created_at, updated_at,
+               (SELECT expiry_date FROM stock_batches b
+                WHERE b.product_id = products.id AND b.quantity > 0
+                ORDER BY b.expiry_date ASC LIMIT 1) AS next_expiry_date
         FROM products
         WHERE company_id = ?
         ORDER BY name COLLATE NOCASE
@@ -559,10 +687,7 @@ pub async fn create_product(
         .ok_or("You are not assigned to a company")?;
 
     // ---- Validation ----
-    let trimmed_sku = sku.trim().to_string();
-    if trimmed_sku.is_empty() {
-        return Err("SKU cannot be empty".to_string());
-    }
+    let mut final_sku = sku.trim().to_string();
 
     let trimmed_name = name.trim().to_string();
     if trimmed_name.is_empty() {
@@ -590,6 +715,12 @@ pub async fn create_product(
     let cat_id = clean_optional(&category_id);
     let sup_id = clean_optional(&supplier_id);
 
+    // If the user left SKU blank, generate one from the category's
+    // SKU prefix plus the next sequential number (ELEC-001, ELEC-002, ...).
+    if final_sku.is_empty() {
+        final_sku = generate_sku(pool.inner(), company_id, &cat_id, &trimmed_name).await?;
+    }
+
     let id = uuid::Uuid::new_v4().to_string();
 
     // ---- Insert product ----
@@ -603,7 +734,7 @@ pub async fn create_product(
     )
     .bind(&id)
     .bind(company_id)
-    .bind(&trimmed_sku)
+    .bind(&final_sku)
     .bind(&trimmed_name)
     .bind(&cat_id)
     .bind(&sup_id)
@@ -617,7 +748,7 @@ pub async fn create_product(
     .map_err(|e| {
         let msg = e.to_string();
         if msg.contains("UNIQUE") {
-            format!("SKU '{}' already exists", trimmed_sku)
+            format!("SKU '{}' already exists", final_sku)
         } else {
             format!("Database error: {msg}")
         }
@@ -681,9 +812,19 @@ pub async fn update_product(
         .as_ref()
         .ok_or("You are not assigned to a company")?;
 
-    let trimmed_sku = sku.trim().to_string();
-    if trimmed_sku.is_empty() {
-        return Err("SKU cannot be empty".to_string());
+    let mut final_sku = sku.trim().to_string();
+
+    // If the user left SKU blank on edit, keep the current value.
+    if final_sku.is_empty() {
+        let existing_sku: Option<String> = sqlx::query_scalar(
+            "SELECT sku FROM products WHERE id = ? AND company_id = ?",
+        )
+        .bind(&product_id)
+        .bind(company_id)
+        .fetch_optional(pool.inner())
+        .await
+        .map_err(|e| format!("Database error: {e}"))?;
+        final_sku = existing_sku.ok_or("Product not found")?;
     }
 
     let trimmed_name = name.trim().to_string();
@@ -713,7 +854,7 @@ pub async fn update_product(
         WHERE id = ? AND company_id = ?
         "#,
     )
-    .bind(&trimmed_sku)
+    .bind(&final_sku)
     .bind(&trimmed_name)
     .bind(&cat_id)
     .bind(&sup_id)
@@ -728,7 +869,7 @@ pub async fn update_product(
     .map_err(|e| {
         let msg = e.to_string();
         if msg.contains("UNIQUE") {
-            format!("SKU '{}' already exists", trimmed_sku)
+            format!("SKU '{}' already exists", final_sku)
         } else {
             format!("Database error: {msg}")
         }
@@ -760,6 +901,12 @@ pub async fn update_product(
 ///
 /// Example: Sold 5 units to customer
 ///   movement_type = "sale", quantity = -5
+///
+/// expiry_date (optional, stock IN only):
+///   When provided, the incoming stock becomes an expiry batch.
+///   This makes the product "expiry-tracked". Subsequent stock OUT
+///   is deducted FIFO (soonest-expiring batch first).
+///   Never defaulted — leave null when you don't track expiry.
 #[tauri::command]
 pub async fn adjust_stock(
     pool: State<'_, SqlitePool>,
@@ -768,6 +915,7 @@ pub async fn adjust_stock(
     movement_type: String,
     quantity: i64,
     reference_note: String,
+    expiry_date: Option<String>,
 ) -> Result<PublicProduct, String> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
 
@@ -821,6 +969,15 @@ pub async fn adjust_stock(
 
     let note = clean_optional(&reference_note);
 
+    // Parse expiry date up front (if provided) so we never create a
+    // partial transaction on bad input.
+    let normalized_expiry: Option<String> = match &expiry_date {
+        Some(value) if !value.trim().is_empty() => {
+            Some(crate::commands::expiry::parse_expiry_date(value)?)
+        }
+        _ => None,
+    };
+
     // Use a transaction so both the movement record and stock update
     // succeed or fail together
     let mut tx = pool
@@ -870,7 +1027,45 @@ pub async fn adjust_stock(
         return Err("Product not found".to_string());
     }
 
-    // 3. Commit the transaction
+    // 3a. Stock IN with an expiry date → create an expiry batch.
+    //     This makes the product expiry-tracked.
+    if quantity > 0 {
+        if let Some(expiry) = &normalized_expiry {
+            let unit_cost: i64 = sqlx::query_scalar(
+                "SELECT cost_price FROM products WHERE id = ? AND company_id = ?",
+            )
+            .bind(&product_id)
+            .bind(company_id)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|e| format!("Product lookup error: {e}"))?;
+
+            crate::commands::expiry::add_batch(
+                &mut tx,
+                company_id,
+                &product_id,
+                quantity,
+                unit_cost,
+                expiry,
+                &movement_type,
+            )
+            .await?;
+        }
+    }
+
+    // 3b. Stock OUT → deduct FIFO from the soonest-expiring batches
+    //     first (only matters for expiry-tracked products).
+    if quantity < 0 {
+        crate::commands::expiry::deduct_fifo(
+            &mut tx,
+            company_id,
+            &product_id,
+            -quantity,
+        )
+        .await?;
+    }
+
+    // 4. Commit the transaction
     tx.commit()
         .await
         .map_err(|e| format!("Failed to commit transaction: {e}"))?;

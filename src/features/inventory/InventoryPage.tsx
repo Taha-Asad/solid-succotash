@@ -66,6 +66,9 @@ import {
   Wallet,
   AlertTriangle,
   Info,
+  CalendarClock,
+  CalendarDays,
+  Trash2,
 } from "lucide-react";
 
 import {
@@ -82,12 +85,16 @@ import {
   updateProduct,
   adjustStock,
   listStockMovements,
+  listProductBatches,
+  listExpiringBatches,
+  writeOffBatch,
   getErrorMessage,
 } from "../../api/backend";
 
 import type {
   PublicCategory,
   PublicProduct,
+  PublicStockBatch,
   PublicStockMovement,
   PublicSupplier,
   PublicUser,
@@ -140,6 +147,23 @@ function formatDate(dateStr: string): string {
   } catch {
     return dateStr;
   }
+}
+
+// Parse a "YYYY-MM-DD" date as LOCAL midnight (avoids the UTC day-shift
+// that `new Date("YYYY-MM-DD")` causes in negative timezones).
+function parseDateOnly(dateStr: string): Date {
+  const parts = dateStr.split("-").map(Number);
+  if (parts.length !== 3 || parts.some((n) => isNaN(n))) {
+    return new Date(dateStr);
+  }
+  return new Date(parts[0], parts[1] - 1, parts[2]);
+}
+
+// Days from today until the given date-only string (negative = already past).
+function daysUntil(dateStr: string): number {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return Math.round((parseDateOnly(dateStr).getTime() - today.getTime()) / 86400000);
 }
 
 // Small reusable "eyebrow" label — used above section titles to give
@@ -349,7 +373,11 @@ function CategoriesTab({ canManage }: { canManage: boolean }) {
     }
   }
 
-  async function handleSave(values: { name: string; description: string }) {
+  async function handleSave(values: {
+    name: string;
+    description: string;
+    skuPrefix: string;
+  }) {
     try {
       if (editingCategory) {
         await updateCategory({
@@ -430,6 +458,7 @@ function CategoriesTab({ canManage }: { canManage: boolean }) {
               <Table.Thead>
                 <Table.Tr>
                   <Table.Th>Name</Table.Th>
+                  <Table.Th>SKU Prefix</Table.Th>
                   <Table.Th>Description</Table.Th>
                   <Table.Th>Status</Table.Th>
                   <Table.Th>Created</Table.Th>
@@ -443,6 +472,17 @@ function CategoriesTab({ canManage }: { canManage: boolean }) {
                       <Text fw={600} size="sm" style={{ color: INK.navy }}>
                         {cat.name}
                       </Text>
+                    </Table.Td>
+                    <Table.Td>
+                      {cat.skuPrefix ? (
+                        <Badge variant="light" color="violet" radius="sm">
+                          {cat.skuPrefix}
+                        </Badge>
+                      ) : (
+                        <Text size="sm" c="dimmed">
+                          —
+                        </Text>
+                      )}
                     </Table.Td>
                     <Table.Td>
                       <Text size="sm" c="dimmed">
@@ -512,7 +552,11 @@ function CategoryModal({
 }: {
   opened: boolean;
   onClose: () => void;
-  onSave: (values: { name: string; description: string }) => Promise<void>;
+  onSave: (values: {
+    name: string;
+    description: string;
+    skuPrefix: string;
+  }) => Promise<void>;
   initial: PublicCategory | null;
 }) {
   const [loading, setLoading] = useState(false);
@@ -522,9 +566,12 @@ function CategoryModal({
     initialValues: {
       name: initial?.name ?? "",
       description: initial?.description ?? "",
+      skuPrefix: initial?.skuPrefix ?? "",
     },
     validate: {
       name: (v) => (v.trim().length < 1 ? "Name is required" : null),
+      skuPrefix: (v) =>
+        v.trim().length > 6 ? "Keep it to 6 characters" : null,
     },
   });
 
@@ -533,9 +580,25 @@ function CategoryModal({
     form.setValues({
       name: initial?.name ?? "",
       description: initial?.description ?? "",
+      skuPrefix: initial?.skuPrefix ?? "",
     });
     setError(null);
   }, [initial]);
+
+  // Suggest a SKU prefix from the category name while typing
+  // (only on new categories, and only if the user hasn't typed one).
+  function handleNameChange(value: string) {
+    form.setFieldValue("name", value);
+    if (!initial && !form.values.skuPrefix.trim()) {
+      const prefix = value
+        .toUpperCase()
+        .replace(/[^A-Z0-9]/g, "")
+        .slice(0, 6);
+      if (prefix) {
+        form.setFieldValue("skuPrefix", prefix);
+      }
+    }
+  }
 
   async function handleSubmit(values: typeof form.values) {
     setLoading(true);
@@ -572,6 +635,14 @@ function CategoryModal({
             placeholder="e.g. Electronics, Stationery"
             required
             {...form.getInputProps("name")}
+            onChange={(e) => handleNameChange(e.currentTarget.value)}
+          />
+          <TextInput
+            label="SKU Prefix"
+            placeholder="e.g. ELEC"
+            description="Used to auto-generate SKUs: ELEC-001, ELEC-002, ..."
+            maxLength={6}
+            {...form.getInputProps("skuPrefix")}
           />
           <Textarea
             label="Description"
@@ -980,6 +1051,23 @@ function SupplierModal({
 // PRODUCTS TAB
 // ==========================================
 
+// Colored badge for a product's soonest expiry date (based on its live batches).
+function ExpiryBadge({ date }: { date: string }) {
+  const days = daysUntil(date);
+  const color = days < 0 ? "red" : days <= 30 ? "yellow" : "teal";
+  const label =
+    days < 0
+      ? "Expired"
+      : days <= 30
+        ? `Expires in ${days} ${days === 1 ? "day" : "days"}`
+        : `Expires ${formatDate(date)}`;
+  return (
+    <Badge color={color} variant="light" radius="sm" size="sm">
+      {label}
+    </Badge>
+  );
+}
+
 function ProductsTab({ canManage }: { canManage: boolean }) {
   const [products, setProducts] = useState<PublicProduct[]>([]);
   const [categories, setCategories] = useState<PublicCategory[]>([]);
@@ -998,6 +1086,10 @@ function ProductsTab({ canManage }: { canManage: boolean }) {
   const [movementsModalOpen, setMovementsModalOpen] = useState(false);
   const [movementsProduct, setMovementsProduct] =
     useState<PublicProduct | null>(null);
+  const [expiringBatches, setExpiringBatches] = useState<PublicStockBatch[]>([]);
+  const [batchesModalOpen, setBatchesModalOpen] = useState(false);
+  const [batchesProduct, setBatchesProduct] = useState<PublicProduct | null>(null);
+  const [writeOffTarget, setWriteOffTarget] = useState<PublicStockBatch | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1015,6 +1107,14 @@ function ProductsTab({ canManage }: { canManage: boolean }) {
       setError(getErrorMessage(err));
     } finally {
       setLoading(false);
+    }
+
+    // Expiry warning feed (best-effort — never blocks the products list)
+    try {
+      const batches = await listExpiringBatches(30);
+      setExpiringBatches(batches);
+    } catch {
+      setExpiringBatches([]);
     }
   }, []);
 
@@ -1053,6 +1153,11 @@ function ProductsTab({ canManage }: { canManage: boolean }) {
   function openStock(prod: PublicProduct) {
     setStockProduct(prod);
     setStockModalOpen(true);
+  }
+
+  function openBatches(prod: PublicProduct) {
+    setBatchesProduct(prod);
+    setBatchesModalOpen(true);
   }
 
   function openMovements(prod: PublicProduct) {
@@ -1113,6 +1218,7 @@ function ProductsTab({ canManage }: { canManage: boolean }) {
     movementType: string;
     quantity: number;
     referenceNote: string;
+    expiryDate?: string;
   }) {
     if (!stockProduct) return;
     try {
@@ -1121,6 +1227,7 @@ function ProductsTab({ canManage }: { canManage: boolean }) {
         movementType: values.movementType,
         quantity: values.quantity,
         referenceNote: values.referenceNote,
+        expiryDate: values.expiryDate?.trim() ? values.expiryDate.trim() : null,
       });
       setStockModalOpen(false);
       await load();
@@ -1183,6 +1290,100 @@ function ProductsTab({ canManage }: { canManage: boolean }) {
           }
         />
       </SimpleGrid>
+
+      {/* ---- Expiry warning feed ---- */}
+      {expiringBatches.length > 0 && (
+        <Card
+          withBorder
+          radius="md"
+          padding="lg"
+          style={{ borderColor: INK.border }}
+        >
+          <Stack>
+            <Group justify="space-between" wrap="wrap">
+              <Group gap={8}>
+                <CalendarClock size={18} color={INK.warning} />
+                <Text fw={700} style={{ color: INK.navy }}>
+                  Expiring Stock
+                </Text>
+              </Group>
+              <Text size="sm" c="dimmed">
+                {expiringBatches.length}{" "}
+                {expiringBatches.length === 1 ? "batch" : "batches"} expiring
+                within 30 days
+              </Text>
+            </Group>
+            <ScrollArea>
+              <Table
+                striped
+                highlightOnHover
+                withTableBorder
+                verticalSpacing="xs"
+              >
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>Product</Table.Th>
+                    <Table.Th>Expiry Date</Table.Th>
+                    <Table.Th ta="right">Qty</Table.Th>
+                    <Table.Th>Status</Table.Th>
+                    <Table.Th>Source</Table.Th>
+                    <Table.Th ta="right">Action</Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {expiringBatches.map((b) => (
+                    <Table.Tr key={b.id}>
+                      <Table.Td>
+                        <Text size="sm" fw={600} style={{ color: INK.navy }}>
+                          {b.productName}
+                        </Text>
+                        <Text size="xs" c="dimmed">
+                          {b.productSku}
+                        </Text>
+                      </Table.Td>
+                      <Table.Td>
+                        <Text size="sm" style={LEDGER_NUM}>
+                          {formatDate(b.expiryDate)}
+                        </Text>
+                      </Table.Td>
+                      <Table.Td ta="right">
+                        <Text size="sm" fw={700} style={LEDGER_NUM}>
+                          {b.quantity}
+                        </Text>
+                      </Table.Td>
+                      <Table.Td>
+                        <Badge
+                          color={b.status === "expired" ? "red" : "yellow"}
+                          variant="light"
+                          radius="sm"
+                        >
+                          {b.status === "expired" ? "Expired" : "Expiring"}
+                        </Badge>
+                      </Table.Td>
+                      <Table.Td>
+                        <Text size="sm" c="dimmed">
+                          {b.source}
+                        </Text>
+                      </Table.Td>
+                      <Table.Td ta="right">
+                        <Button
+                          size="xs"
+                          color="red"
+                          variant="light"
+                          leftSection={<Trash2 size={13} />}
+                          onClick={() => setWriteOffTarget(b)}
+                        >
+                          Write off
+                        </Button>
+                      </Table.Td>
+                    </Table.Tr>
+                  ))}
+                </Table.Tbody>
+              </Table>
+            </ScrollArea>
+          </Stack>
+        </Card>
+      )}
 
       {/* ---- List card ---- */}
       <Card
@@ -1260,6 +1461,7 @@ function ProductsTab({ canManage }: { canManage: boolean }) {
                     <Table.Th ta="right">Sell</Table.Th>
                     <Table.Th ta="right">Stock</Table.Th>
                     <Table.Th>Unit</Table.Th>
+                    <Table.Th>Expiry</Table.Th>
                     {canManage && <Table.Th>Actions</Table.Th>}
                   </Table.Tr>
                 </Table.Thead>
@@ -1330,6 +1532,15 @@ function ProductsTab({ canManage }: { canManage: boolean }) {
                         <Table.Td>
                           <Text size="sm">{prod.unit}</Text>
                         </Table.Td>
+                        <Table.Td>
+                          {prod.nextExpiryDate ? (
+                            <ExpiryBadge date={prod.nextExpiryDate} />
+                          ) : (
+                            <Text size="sm" c="dimmed">
+                              —
+                            </Text>
+                          )}
+                        </Table.Td>
                         {canManage && (
                           <Table.Td>
                             <Group gap="xs">
@@ -1351,6 +1562,17 @@ function ProductsTab({ canManage }: { canManage: boolean }) {
                                   <PackagePlus size={15} />
                                 </ActionIcon>
                               </Tooltip>
+                              {prod.nextExpiryDate && (
+                                <Tooltip label="Batches / expiry">
+                                  <ActionIcon
+                                    variant="subtle"
+                                    color="orange"
+                                    onClick={() => openBatches(prod)}
+                                  >
+                                    <CalendarDays size={15} />
+                                  </ActionIcon>
+                                </Tooltip>
+                              )}
                               <Tooltip label="Stock history">
                                 <ActionIcon
                                   variant="subtle"
@@ -1381,6 +1603,7 @@ function ProductsTab({ canManage }: { canManage: boolean }) {
         initial={editingProduct}
         categories={categories}
         suppliers={suppliers}
+        products={products}
       />
 
       {/* ---- Stock Adjustment Modal ---- */}
@@ -1396,6 +1619,24 @@ function ProductsTab({ canManage }: { canManage: boolean }) {
         opened={movementsModalOpen}
         onClose={() => setMovementsModalOpen(false)}
         product={movementsProduct}
+      />
+
+      {/* ---- Batches / Expiry Modal ---- */}
+      <BatchesModal
+        opened={batchesModalOpen}
+        onClose={() => setBatchesModalOpen(false)}
+        product={batchesProduct}
+        onChanged={load}
+      />
+
+      {/* ---- Write-off confirm modal ---- */}
+      <WriteOffModal
+        batch={writeOffTarget}
+        onClose={() => setWriteOffTarget(null)}
+        onWrittenOff={async () => {
+          setWriteOffTarget(null);
+          await load();
+        }}
       />
     </Stack>
   );
@@ -1493,6 +1734,7 @@ function ProductModal({
   initial,
   categories,
   suppliers,
+  products,
 }: {
   opened: boolean;
   onClose: () => void;
@@ -1510,6 +1752,7 @@ function ProductModal({
   initial: PublicProduct | null;
   categories: PublicCategory[];
   suppliers: PublicSupplier[];
+  products: PublicProduct[];
 }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1529,7 +1772,6 @@ function ProductModal({
       unit: initial?.unit ?? "pcs",
     },
     validate: {
-      sku: (v) => (v.trim().length < 1 ? "SKU is required" : null),
       name: (v) => (v.trim().length < 1 ? "Name is required" : null),
     },
   });
@@ -1590,6 +1832,26 @@ function ProductModal({
     "set",
   ];
 
+  // Preview the SKU that will be auto-generated for the selected category.
+  const selectedCategory = categories.find(
+    (c) => c.id === form.values.categoryId,
+  );
+  const previewSku = useMemo(() => {
+    if (isEdit) return null;
+    if (form.values.sku.trim()) return null;
+    const prefix = (selectedCategory?.skuPrefix ?? "").trim();
+    if (!prefix) return null;
+    const used = selectedCategory
+      ? products.filter((p) => p.categoryId === selectedCategory.id)
+      : [];
+    const next = used.length + 1;
+    return `${prefix}-${String(next).padStart(3, "0")}`;
+  }, [isEdit, form.values.sku, form.values.categoryId, selectedCategory, products]);
+
+  function handleNameChange(value: string) {
+    form.setFieldValue("name", value);
+  }
+
   return (
     <Modal
       opened={opened}
@@ -1611,8 +1873,12 @@ function ProductModal({
           <SimpleGrid cols={2}>
             <TextInput
               label="SKU"
-              placeholder="ELEC-001"
-              required
+              placeholder={previewSku ?? "Auto-generated"}
+              description={
+                previewSku
+                  ? `Next automatic SKU: ${previewSku}`
+                  : "Leave blank to auto-generate from category"
+              }
               {...form.getInputProps("sku")}
             />
             <TextInput
@@ -1620,6 +1886,7 @@ function ProductModal({
               placeholder="Wireless Mouse"
               required
               {...form.getInputProps("name")}
+              onChange={(e) => handleNameChange(e.currentTarget.value)}
             />
           </SimpleGrid>
 
@@ -1739,6 +2006,7 @@ function StockAdjustModal({
     movementType: string;
     quantity: number;
     referenceNote: string;
+    expiryDate?: string;
   }) => Promise<void>;
   product: PublicProduct | null;
 }) {
@@ -1750,6 +2018,7 @@ function StockAdjustModal({
       movementType: "purchase",
       quantity: 1,
       referenceNote: "",
+      expiryDate: "",
     },
     validate: {
       quantity: (v) => (v === 0 ? "Quantity cannot be zero" : null),
@@ -1777,6 +2046,7 @@ function StockAdjustModal({
         movementType: values.movementType,
         quantity: qty,
         referenceNote: values.referenceNote,
+        expiryDate: values.expiryDate || undefined,
       });
       form.reset();
     } catch (err) {
@@ -1840,6 +2110,23 @@ function StockAdjustModal({
             required
             {...form.getInputProps("quantity")}
           />
+
+          {(form.values.movementType === "purchase" ||
+            form.values.movementType === "return" ||
+            form.values.movementType === "adjustment") && (
+            <>
+              <TextInput
+                type="date"
+                label="Expiry Date (optional)"
+                description="Set to make this stock an expiry-tracked batch. Blank = unbatched stock."
+                {...form.getInputProps("expiryDate")}
+              />
+              <Text size="xs" c="dimmed">
+                Once a product has any batch with an expiry, all outgoing stock
+                (sales, damage) is deducted FIFO — soonest expiry first.
+              </Text>
+            </>
+          )}
 
           <TextInput
             label="Reference Note"
@@ -1995,6 +2282,279 @@ function MovementsModal({
           </Table>
         </ScrollArea>
       )}
+    </Modal>
+  );
+}
+
+// ---- Batches / Expiry Detail Modal ----
+
+function BatchesModal({
+  opened,
+  onClose,
+  product,
+  onChanged,
+}: {
+  opened: boolean;
+  onClose: () => void;
+  product: PublicProduct | null;
+  onChanged: () => Promise<void>;
+}) {
+  const [batches, setBatches] = useState<PublicStockBatch[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [writeOffTarget, setWriteOffTarget] =
+    useState<PublicStockBatch | null>(null);
+
+  useEffect(() => {
+    if (opened && product) {
+      setLoading(true);
+      setError(null);
+      listProductBatches(product.id)
+        .then(setBatches)
+        .catch((err) => setError(getErrorMessage(err)))
+        .finally(() => setLoading(false));
+    }
+  }, [opened, product]);
+
+  return (
+    <>
+      <Modal
+        opened={opened}
+        onClose={onClose}
+        title={
+          <Group gap={8}>
+            <CalendarDays size={16} color={INK.gold} />
+            <Text fw={700} style={{ color: INK.navy }}>
+              Expiry Batches: {product?.name ?? ""}
+            </Text>
+          </Group>
+        }
+        size="lg"
+        centered
+        radius="md"
+      >
+        {loading ? (
+          <Text c="dimmed" size="sm">
+            Loading batches…
+          </Text>
+        ) : error ? (
+          <Alert color="red" variant="light" icon={<AlertTriangle size={16} />}>
+            {error}
+          </Alert>
+        ) : batches.length === 0 ? (
+          <EmptyState
+            icon={<CalendarDays size={20} />}
+            title="No expiry batches"
+            description="Stock received with an expiry date shows up here, in FIFO order (soonest expiry first)."
+          />
+        ) : (
+          <ScrollArea h={400}>
+            <Table striped highlightOnHover withTableBorder verticalSpacing="sm">
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>Expiry Date</Table.Th>
+                  <Table.Th ta="right">Qty</Table.Th>
+                  <Table.Th ta="right">Unit Cost</Table.Th>
+                  <Table.Th>Status</Table.Th>
+                  <Table.Th>Source</Table.Th>
+                  <Table.Th ta="right">Action</Table.Th>
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {batches.map((b) => (
+                  <Table.Tr key={b.id}>
+                    <Table.Td>
+                      <Text size="sm" style={LEDGER_NUM}>
+                        {formatDate(b.expiryDate)}
+                      </Text>
+                    </Table.Td>
+                    <Table.Td ta="right">
+                      <Text size="sm" fw={700} style={LEDGER_NUM}>
+                        {b.quantity}
+                      </Text>
+                    </Table.Td>
+                    <Table.Td ta="right">
+                      <Text size="sm" style={LEDGER_NUM}>
+                        {b.unitCost != null ? paisaToDisplay(b.unitCost) : "—"}
+                      </Text>
+                    </Table.Td>
+                    <Table.Td>
+                      <Badge
+                        color={
+                          b.status === "expired"
+                            ? "red"
+                            : b.status === "depleted"
+                              ? "gray"
+                              : b.status === "expiring"
+                                ? "yellow"
+                                : "teal"
+                        }
+                        variant="light"
+                        radius="sm"
+                      >
+                        {b.status}
+                      </Badge>
+                    </Table.Td>
+                    <Table.Td>
+                      <Text size="sm" c="dimmed">
+                        {b.source}
+                      </Text>
+                    </Table.Td>
+                    <Table.Td ta="right">
+                      {b.quantity > 0 && b.status !== "depleted" && (
+                        <Button
+                          size="xs"
+                          color="red"
+                          variant="light"
+                          leftSection={<Trash2 size={13} />}
+                          onClick={() => setWriteOffTarget(b)}
+                        >
+                          Write off
+                        </Button>
+                      )}
+                    </Table.Td>
+                  </Table.Tr>
+                ))}
+              </Table.Tbody>
+            </Table>
+          </ScrollArea>
+        )}
+      </Modal>
+
+      <WriteOffModal
+        batch={writeOffTarget}
+        onClose={() => setWriteOffTarget(null)}
+        onWrittenOff={async () => {
+          setWriteOffTarget(null);
+          await onChanged();
+        }}
+      />
+    </>
+  );
+}
+
+// ---- Write-off confirm modal ----
+
+function WriteOffModal({
+  batch,
+  onClose,
+  onWrittenOff,
+}: {
+  batch: PublicStockBatch | null;
+  onClose: () => void;
+  onWrittenOff: () => Promise<void>;
+}) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [quantity, setQuantity] = useState<number>(1);
+  const [reason, setReason] = useState("expiry write-off");
+
+  useEffect(() => {
+    if (batch) {
+      setQuantity(batch.quantity);
+      setError(null);
+    }
+  }, [batch]);
+
+  async function handleWriteOff() {
+    if (!batch) return;
+    setLoading(true);
+    setError(null);
+    try {
+      await writeOffBatch({
+        batchId: batch.id,
+        quantity,
+        reason: reason.trim() || "expiry write-off",
+      });
+      await onWrittenOff();
+    } catch (err) {
+      setError(getErrorMessage(err));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <Modal
+      opened={!!batch}
+      onClose={onClose}
+      title={
+        <Group gap={8}>
+          <Trash2 size={16} color="red" />
+          <Text fw={700} style={{ color: INK.navy }}>
+            Write off batch
+          </Text>
+        </Group>
+      }
+      centered
+      radius="md"
+    >
+      <Stack gap="md">
+        {batch && (
+          <Card
+            padding="sm"
+            radius="sm"
+            style={{ background: INK.paper, border: `1px solid ${INK.border}` }}
+          >
+            <Group justify="space-between" wrap="wrap">
+              <Text size="sm" c="dimmed">
+                Expiry {formatDate(batch.expiryDate)} · {batch.productName}
+              </Text>
+              <Text fw={700} style={{ ...LEDGER_NUM, color: INK.navy }}>
+                {batch.quantity} available
+              </Text>
+            </Group>
+          </Card>
+        )}
+
+        <NumberInput
+          label="Quantity to write off"
+          min={1}
+          max={batch?.quantity ?? 1}
+          value={quantity}
+          onChange={(v) => setQuantity(Number(v) || 1)}
+          required
+        />
+
+        <TextInput
+          label="Reason"
+          placeholder="e.g. expired, damaged"
+          value={reason}
+          onChange={(e) => setReason(e.currentTarget.value)}
+        />
+
+        <Text size="xs" c="dimmed">
+          Writing off removes this quantity from both the batch and the
+          product's stock on hand. It is recorded as an adjustment in stock
+          history.
+        </Text>
+
+        {error && (
+          <Alert
+            color="red"
+            variant="light"
+            icon={<AlertTriangle size={16} />}
+          >
+            {error}
+          </Alert>
+        )}
+
+        <Divider />
+
+        <Group justify="flex-end">
+          <Button variant="subtle" color="gray" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            color="red"
+            loading={loading}
+            leftSection={<Trash2 size={14} />}
+            onClick={handleWriteOff}
+          >
+            Write Off
+          </Button>
+        </Group>
+      </Stack>
     </Modal>
   );
 }

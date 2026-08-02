@@ -97,6 +97,7 @@ export type PublicCategory = {
   companyId: string;
   name: string;
   description: string | null;
+  skuPrefix: string | null;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
@@ -133,6 +134,8 @@ export type PublicProduct = {
   quantityInStock: number;
   unit: string;
   customFields: string | null; // JSON blob for company-specific fields
+  /** Expiry date of the soonest-expiring live batch (if any). */
+  nextExpiryDate: string | null;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
@@ -150,9 +153,11 @@ export type PublicStockMovement = {
   createdAt: string;
 };
 
-// Input for creating/updating a product
+// Input for creating/updating a product.
+// SKU is optional — when left blank the backend auto-generates it
+// from the category's SKU prefix (e.g. ELEC-001, ELEC-002, ...).
 export type ProductInput = {
-  sku: string;
+  sku?: string;
   name: string;
   categoryId: string;
   supplierId: string;
@@ -163,10 +168,11 @@ export type ProductInput = {
   unit: string;
 };
 
-// Input for updating a product (no quantity change)
+// Input for updating a product (no quantity change).
+// SKU is optional — when left blank the existing value is kept.
 export type UpdateProductInput = {
   productId: string;
-  sku: string;
+  sku?: string;
   name: string;
   categoryId: string;
   supplierId: string;
@@ -176,12 +182,32 @@ export type UpdateProductInput = {
   unit: string;
 };
 
-// Input for stock adjustment
+// Input for stock adjustment.
+// expiryDate applies to stock IN only: when provided, the incoming
+// stock becomes an expiry batch (the product becomes expiry-tracked
+// and stock OUT is then deducted FIFO). Never auto-filled.
 export type StockAdjustmentInput = {
   productId: string;
   movementType: string;
   quantity: number;
   referenceNote: string;
+  expiryDate?: string | null;
+};
+
+// One expiry batch of a product (from stock_batches)
+export type PublicStockBatch = {
+  id: string;
+  companyId: string;
+  productId: string;
+  productName: string;
+  productSku: string;
+  quantity: number;
+  unitCost: number;
+  expiryDate: string;
+  source: string;
+  /** "ok" | "expiring" | "expired" | "depleted" */
+  status: string;
+  createdAt: string;
 };
 
 // ==========================================
@@ -299,6 +325,7 @@ export type PublicInvoiceItem = {
   taxAmount: number;
   discountRate: number;
   discountAmount: number;
+  discountType: string;
   lineTotal: number;
   createdAt: string;
 };

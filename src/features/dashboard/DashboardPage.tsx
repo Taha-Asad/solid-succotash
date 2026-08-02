@@ -48,15 +48,13 @@ import {
   updateCompanyUserRole,
   setCompanyUserActive,
   createBackup,
-  checkForUpdates,
-  installUpdate,
 } from "../../api/backend";
 
 import InventoryPage from "../inventory/InventoryPage";
 import InvoicePage from "../invoices/InvoicePage";
+import ReportsPage from "../reports/ReportsPage";
 
 import type { PublicCompany, PublicUser, UserRole } from "../../types/backend";
-import type { UpdateResult } from "../../api/backend";
 
 // ==========================================
 // PROPS
@@ -97,7 +95,7 @@ const ROLE_COLORS: Record<UserRole, string> = {
 // DASHBOARD VIEWS (local "tabs" without a router)
 // ==========================================
 
-type DashboardView = "home" | "users" | "inventory" | "invoices";
+type DashboardView = "home" | "users" | "inventory" | "invoices" | "reports";
 
 // ==========================================
 // MAIN COMPONENT
@@ -109,8 +107,6 @@ export default function DashboardPage({ user, onLogout }: DashboardPageProps) {
   const [companyError, setCompanyError] = useState<string | null>(null);
   const [backing, setBacking] = useState(false);
   const [backupMsg, setBackupMsg] = useState<string | null>(null);
-  const [updateInfo, setUpdateInfo] = useState<UpdateResult | null>(null);
-  const [updating, setUpdating] = useState(false);
 
   async function handleBackup() {
     setBacking(true);
@@ -132,24 +128,7 @@ export default function DashboardPage({ user, onLogout }: DashboardPageProps) {
     getCompany()
       .then(setCompany)
       .catch((err) => setCompanyError(getErrorMessage(err)));
-
-    // Check GitHub Releases for a new version
-    checkForUpdates()
-      .then(setUpdateInfo)
-      .catch(() => setUpdateInfo(null));
   }, []);
-
-  async function handleUpdate() {
-    setUpdating(true);
-    try {
-      await installUpdate();
-    } catch (err) {
-      setBackupMsg(`Update error: ${getErrorMessage(err)}`);
-      setTimeout(() => setBackupMsg(null), 5000);
-    } finally {
-      setUpdating(false);
-    }
-  }
 
   // Can this user see the "Company Users" management section?
   const canManageUsers = user.role === "owner" || user.role === "admin";
@@ -185,18 +164,6 @@ export default function DashboardPage({ user, onLogout }: DashboardPageProps) {
               💾 Backup
             </Button>
           </Tooltip>
-          {updateInfo?.available && updateInfo.update && (
-            <Tooltip label={`New version ${updateInfo.update.version} available`}>
-              <Button
-                variant="filled"
-                color="green"
-                onClick={handleUpdate}
-                loading={updating}
-              >
-                Update to {updateInfo.update.version}
-              </Button>
-            </Tooltip>
-          )}
           {backupMsg && (
             <Text size="xs" c={backupMsg.startsWith("Error") ? "red" : "green"}>
               {backupMsg}
@@ -230,6 +197,12 @@ export default function DashboardPage({ user, onLogout }: DashboardPageProps) {
         >
           Invoices
         </Button>
+        <Button
+          variant={view === "reports" ? "filled" : "subtle"}
+          onClick={() => setView("reports")}
+        >
+          Reports
+        </Button>
         {canManageUsers && (
           <Button
             variant={view === "users" ? "filled" : "subtle"}
@@ -255,6 +228,9 @@ export default function DashboardPage({ user, onLogout }: DashboardPageProps) {
 
       {/* ---- INVOICES VIEW ---- */}
       {view === "invoices" && <InvoicePage user={user} />}
+
+      {/* ---- REPORTS VIEW ---- */}
+      {view === "reports" && <ReportsPage />}
 
       {/* ---- USER MANAGEMENT VIEW ---- */}
       {view === "users" && canManageUsers && (

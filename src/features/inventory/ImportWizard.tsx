@@ -179,6 +179,7 @@ const CORE_FIELD_OPTIONS = [
   { value: "sell_price", label: "Sell Price (core)" },
   { value: "quantity_in_stock", label: "Quantity / Stock (core)" },
   { value: "unit", label: "Unit of Measure (core)" },
+  { value: "expiry_date", label: "Expiry Date (core)" },
   { value: "category", label: "Category (core)" },
   { value: "supplier", label: "Supplier (core)" },
   { value: "tax_rate", label: "Tax Rate (core)" },
@@ -411,6 +412,11 @@ export default function ImportWizard({
   ).length;
   const skippedCount = mappings.filter((m) => m.targetField === "skip").length;
 
+  const mappedTargets = mappings.map((m) => m.targetField);
+  const hasName = mappedTargets.includes("name");
+  const hasSku = mappedTargets.includes("sku");
+  const hasExpiry = mappedTargets.includes("expiry_date");
+
   return (
     <Stack>
       <WizardStyles />
@@ -615,6 +621,17 @@ export default function ImportWizard({
                   </Text>
                 </Alert>
 
+                <Alert color="yellow" variant="light" icon={<Info size={16} />}>
+                  <Text size="xs">
+                    <strong>Fully file-driven:</strong> every field comes from
+                    your file. A <strong>Product Name</strong> and an{" "}
+                    <strong>SKU</strong> column are required — they are never
+                    auto-generated. A column that looks like an expiry date
+                    (expiry, best before, use by…) is auto-mapped to Expiry
+                    Date, which enables FIFO batch tracking.
+                  </Text>
+                </Alert>
+
                 <Group>
                   <Badge color="green" variant="light" radius="sm">
                     {coreCount} core fields
@@ -788,6 +805,38 @@ export default function ImportWizard({
             </SimpleGrid>
 
             <Divider />
+
+            {(!hasName || !hasSku) && (
+              <Alert
+                color="yellow"
+                variant="light"
+                icon={<AlertTriangle size={16} />}
+              >
+                <Text fw={600} size="sm" mb={4}>
+                  Required fields are not mapped
+                </Text>
+                <Text size="sm">
+                  Every row must supply a <strong>Product Name</strong> and an{" "}
+                  <strong>SKU</strong> directly from your file — the system
+                  never auto-generates them.{" "}
+                  {!hasName && "Map a column to Product Name. "}
+                  {!hasSku && "Map a column to SKU / Item Code. "}
+                  Rows without them will fail with a descriptive error (no
+                  partial imports).
+                </Text>
+              </Alert>
+            )}
+
+            {hasExpiry && (
+              <Alert color="teal" variant="light" icon={<Info size={16} />}>
+                <Text size="sm">
+                  <strong>Expiry tracking is on:</strong> imported stock will be
+                  held as expiry batches. Sales drain them FIFO (soonest expiry
+                  first). Blank expiry cells stay unbatched; unreadable dates
+                  fail loudly rather than being guessed.
+                </Text>
+              </Alert>
+            )}
 
             <Text fw={700} size="sm" style={{ color: INK.navy }}>
               Field Mapping

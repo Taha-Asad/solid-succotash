@@ -128,8 +128,9 @@ CREATE TABLE IF NOT EXISTS invoice_items (
     unit_price      INTEGER NOT NULL,        -- Price per unit in paisa
     tax_rate        INTEGER NOT NULL DEFAULT 0,  -- Tax rate in basis points (1700 = 17%)
     tax_amount      INTEGER NOT NULL DEFAULT 0,  -- Calculated tax in paisa
-    discount_rate   INTEGER NOT NULL DEFAULT 0,  -- Discount % * 100 (500 = 5%)
+    discount_rate   INTEGER NOT NULL DEFAULT 0,  -- Discount % * 100 (500 = 5%); 0 when type is 'amount'
     discount_amount INTEGER NOT NULL DEFAULT 0,  -- Calculated discount in paisa
+    discount_type   TEXT NOT NULL DEFAULT 'percent', -- 'percent' or 'amount' (fixed cash discount)
     line_total      INTEGER NOT NULL DEFAULT 0,  -- (quantity * unit_price) - discount + tax
 
     -- Audit

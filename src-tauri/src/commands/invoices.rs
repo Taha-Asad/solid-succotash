@@ -79,6 +79,7 @@ pub struct PublicInvoiceItem {
     pub tax_amount: i64,
     pub discount_rate: i64,
     pub discount_amount: i64,
+    pub discount_type: String,
     pub line_total: i64,
     pub created_at: String,
 }
@@ -131,6 +132,42 @@ fn clean_optional(input: &str) -> Option<String> {
     } else {
         Some(trimmed.to_string())
     }
+}
+
+/// Rounds a paisa amount to the nearest whole rupee (100 paisa).
+fn round_to_rupee(paisa: i64) -> i64 {
+    let rem = paisa.rem_euclid(100);
+    if rem >= 50 {
+        paisa - rem + 100
+    } else {
+        paisa - rem
+    }
+}
+
+/// Computes a line item's tax/discount/total from its inputs.
+/// Returns (discount_rate_stored, tax_amount, discount_amount, line_total).
+///
+/// discount_type:
+///   "percent" -> discount_value is the percentage * 100 (500 = 5%)
+///   "amount"  -> discount_value is a fixed cash amount in paisa
+fn compute_line_amounts(
+    quantity: i64,
+    unit_price: i64,
+    tax_rate: i64,
+    discount_type: &str,
+    discount_value: i64,
+) -> (i64, i64, i64, i64) {
+    let line_subtotal = quantity * unit_price;
+    let (discount_rate, discount_amount) = if discount_type == "amount" {
+        (0, discount_value.clamp(0, line_subtotal))
+    } else {
+        let rate = discount_value.max(0);
+        (rate, (line_subtotal * rate) / 10000)
+    };
+    let after_discount = line_subtotal - discount_amount;
+    let tax_amount = (after_discount * tax_rate) / 10000;
+    let line_total = round_to_rupee(after_discount + tax_amount);
+    (discount_rate, tax_amount, discount_amount, line_total)
 }
 
 /// Gets or creates invoice settings for a company
@@ -482,7 +519,8 @@ pub async fn add_invoice_item(
     quantity: i64,
     unit_price: i64,
     tax_rate: i64,
-    discount_rate: i64,
+    discount_type: String,
+    discount_value: i64,
 ) -> Result<Vec<PublicInvoiceItem>, String> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
 
@@ -517,6 +555,10 @@ pub async fn add_invoice_item(
         return Err("Unit price cannot be negative".to_string());
     }
 
+    if discount_value < 0 {
+        return Err("Discount cannot be negative".to_string());
+    }
+
     // Get product details (snapshot)
     let product = sqlx::query_as::<_, (String, String, String)>(
         "SELECT id, name, sku FROM products WHERE id = ? AND company_id = ?",
@@ -529,11 +571,13 @@ pub async fn add_invoice_item(
     .ok_or("Product not found")?;
 
     // Calculate amounts
-    let line_subtotal = quantity * unit_price;
-    let discount_amount = (line_subtotal * discount_rate) / 10000;
-    let after_discount = line_subtotal - discount_amount;
-    let tax_amount = (after_discount * tax_rate) / 10000;
-    let line_total = after_discount + tax_amount;
+    let (discount_rate, tax_amount, discount_amount, line_total) = compute_line_amounts(
+        quantity,
+        unit_price,
+        tax_rate,
+        &discount_type,
+        discount_value,
+    );
 
     let id = uuid::Uuid::new_v4().to_string();
 
@@ -542,8 +586,8 @@ pub async fn add_invoice_item(
         INSERT INTO invoice_items
             (id, invoice_id, company_id, product_id, product_name, product_sku,
              quantity, unit_price, tax_rate, tax_amount,
-             discount_rate, discount_amount, line_total)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             discount_rate, discount_amount, discount_type, line_total)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#,
     )
     .bind(&id)
@@ -558,7 +602,119 @@ pub async fn add_invoice_item(
     .bind(tax_amount)
     .bind(discount_rate)
     .bind(discount_amount)
+    .bind(&discount_type)
     .bind(line_total)
+    .execute(pool.inner())
+    .await
+    .map_err(|e| format!("Database error: {e}"))?;
+
+    // Recalculate invoice totals
+    recalculate_invoice_totals(pool.inner(), &invoice_id, company_id).await?;
+
+    // Return all items for this invoice
+    let items = sqlx::query_as::<_, PublicInvoiceItem>(
+        "SELECT * FROM invoice_items WHERE invoice_id = ? ORDER BY created_at",
+    )
+    .bind(&invoice_id)
+    .fetch_all(pool.inner())
+    .await
+    .map_err(|e| format!("Database error: {e}"))?;
+
+    Ok(items)
+}
+
+/// Updates a line item on a draft invoice (quantity, price, tax, discount)
+#[tauri::command]
+pub async fn update_invoice_item(
+    pool: State<'_, SqlitePool>,
+    session: State<'_, SessionState>,
+    invoice_id: String,
+    item_id: String,
+    quantity: i64,
+    unit_price: i64,
+    tax_rate: i64,
+    discount_type: String,
+    discount_value: i64,
+) -> Result<Vec<PublicInvoiceItem>, String> {
+    let current_user = require_current_user(pool.inner(), session.inner()).await?;
+
+    if current_user.role == "employee" {
+        return Err("Employees cannot modify invoices".to_string());
+    }
+
+    let company_id = current_user
+        .company_id
+        .as_ref()
+        .ok_or("You are not assigned to a company")?;
+
+    // Validate invoice is draft
+    let invoice_status = sqlx::query_scalar::<_, String>(
+        "SELECT status FROM invoices WHERE id = ? AND company_id = ?",
+    )
+    .bind(&invoice_id)
+    .bind(company_id)
+    .fetch_one(pool.inner())
+    .await
+    .map_err(|_| "Invoice not found".to_string())?;
+
+    if invoice_status != "draft" {
+        return Err("Can only modify items on draft invoices".to_string());
+    }
+
+    if quantity <= 0 {
+        return Err("Quantity must be positive".to_string());
+    }
+
+    if unit_price < 0 {
+        return Err("Unit price cannot be negative".to_string());
+    }
+
+    if discount_value < 0 {
+        return Err("Discount cannot be negative".to_string());
+    }
+
+    // Validate the item belongs to this invoice
+    let belongs = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM invoice_items WHERE id = ? AND invoice_id = ? AND company_id = ?",
+    )
+    .bind(&item_id)
+    .bind(&invoice_id)
+    .bind(company_id)
+    .fetch_one(pool.inner())
+    .await
+    .map_err(|e| format!("Item lookup error: {e}"))?;
+
+    if belongs == 0 {
+        return Err("Item not found on this invoice".to_string());
+    }
+
+    // Calculate amounts
+    let (discount_rate, tax_amount, discount_amount, line_total) = compute_line_amounts(
+        quantity,
+        unit_price,
+        tax_rate,
+        &discount_type,
+        discount_value,
+    );
+
+    sqlx::query(
+        r#"
+        UPDATE invoice_items
+        SET quantity = ?, unit_price = ?, tax_rate = ?, tax_amount = ?,
+            discount_rate = ?, discount_amount = ?, discount_type = ?, line_total = ?
+        WHERE id = ? AND invoice_id = ?
+        "#,
+    )
+    .bind(quantity)
+    .bind(unit_price)
+    .bind(tax_rate)
+    .bind(tax_amount)
+    .bind(discount_rate)
+    .bind(discount_amount)
+    .bind(&discount_type)
+    .bind(line_total)
+    .bind(&item_id)
+    .bind(&invoice_id)
     .execute(pool.inner())
     .await
     .map_err(|e| format!("Database error: {e}"))?;
@@ -736,6 +892,11 @@ pub async fn finalize_invoice(
         .execute(&mut *tx)
         .await
         .map_err(|e| format!("Movement record error: {e}"))?;
+
+        // Deduct FIFO from expiry batches (soonest-expiring first).
+        // No-op for products that have no batches.
+        crate::commands::expiry::deduct_fifo(&mut tx, company_id, product_id, *quantity)
+            .await?;
     }
 
     // Mark invoice as finalized
@@ -999,7 +1160,7 @@ async fn recalculate_invoice_totals(
     let subtotal = totals.0;
     let tax_total = totals.1;
     let discount_total = totals.2;
-    let grand_total = subtotal - discount_total + tax_total;
+    let grand_total = round_to_rupee(subtotal - discount_total + tax_total);
 
     sqlx::query(
         r#"

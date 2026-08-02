@@ -440,7 +440,12 @@ fn cell_to_string(cell: &Data) -> String {
         }
         Data::Int(i) => i.to_string(),
         Data::Bool(b) => b.to_string(),
-        Data::DateTime(dt) => dt.is_datetime().to_string(),
+        // Format Excel date cells as YYYY-MM-DD (the previous code
+        // emitted "true"/"false", which corrupted date columns).
+        Data::DateTime(dt) => match dt.as_datetime() {
+            Some(d) => d.format("%Y-%m-%d").to_string(),
+            None => String::new(),
+        },
         Data::DateTimeIso(b) => b.to_string(),
         Data::DurationIso(b) => b.to_string(),
         Data::Error(_) => String::new(),
@@ -831,6 +836,32 @@ fn detect_field(normalized: &str) -> (String, String, String) {
         );
     }
 
+    // EXPIRY DATE
+    // When a column matches, the imported stock is tracked as an
+    // expiry batch and sold FIFO. Dates always come from the file —
+    // never defaulted.
+    if matches_any(
+        normalized,
+        &[
+            "expiry date",
+            "expiration date",
+            "exp date",
+            "expiry",
+            "expiration",
+            "exp",
+            "best before",
+            "best by",
+            "use by",
+            "sell by",
+        ],
+    ) {
+        return (
+            "expiry_date".to_string(),
+            "core".to_string(),
+            "high".to_string(),
+        );
+    }
+
     // ---- Everything else = CUSTOM FIELD ----
     // Use the normalized header as the field name
     let custom_name = normalized.replace(' ', "_");
@@ -928,16 +959,19 @@ async fn import_one_row(
     mappings: &[FieldMapping],
     row: &[String],
 ) -> Result<(), String> {
-    // Extract values from the row using the mapping
+    // Extract values from the row using the mapping.
+    // EVERY field comes from the uploaded file — nothing is defaulted,
+    // fabricated, or auto-generated.
     let mut name = String::new();
     let mut sku = String::new();
     let mut cost_price: i64 = 0;
     let mut sell_price: i64 = 0;
     let mut quantity: i64 = 0;
-    let mut unit = "pcs".to_string();
+    let mut unit = String::new();
     let mut tax_rate: i64 = 0;
     let mut category_name = String::new();
     let mut supplier_name = String::new();
+    let mut expiry_raw = String::new();
     let mut custom_fields = serde_json::Map::new();
 
     for mapping in mappings {
@@ -969,6 +1003,9 @@ async fn import_one_row(
             "unit" => {
                 unit = value;
             }
+            "expiry_date" => {
+                expiry_raw = value;
+            }
             "tax_rate" => {
                 // Convert percentage to basis points: 17.00 → 1700
                 tax_rate = (value.parse::<f64>().unwrap_or(0.0) * 100.0) as i64;
@@ -990,9 +1027,10 @@ async fn import_one_row(
         }
     }
 
-    // Validate required fields
-    // Build a helpful debug message showing what was actually mapped
-    if name.is_empty() && sku.is_empty() {
+    // ---- Required fields: name and SKU must come from the file ----
+    // We never default or auto-generate them. If the file lacks a
+    // column, every row fails here so the user maps the right column.
+    if name.is_empty() {
         let mapped_fields: Vec<String> = mappings
             .iter()
             .filter(|m| m.target_field != "skip" && m.source_index < row.len())
@@ -1004,20 +1042,39 @@ async fn import_one_row(
             })
             .collect();
         return Err(format!(
-            "Row has no product name or SKU. Check your field mapping. Columns: [{}]",
+            "Row has no product NAME. Map a 'Product Name' column in your file — it is never auto-generated. Columns: [{}]",
             mapped_fields.join(", ")
         ));
     }
 
-    // If name is empty, use SKU as name
-    if name.is_empty() {
-        name = sku.clone();
+    if sku.is_empty() {
+        let mapped_fields: Vec<String> = mappings
+            .iter()
+            .filter(|m| m.target_field != "skip" && m.source_index < row.len())
+            .map(|m| {
+                format!(
+                    "'{}' → {} = '{}'",
+                    m.source_column, m.target_field, &row[m.source_index]
+                )
+            })
+            .collect();
+        return Err(format!(
+            "Row has no SKU. Map a 'SKU / Code' column in your file — SKUs are never auto-generated. Columns: [{}]",
+            mapped_fields.join(", ")
+        ));
     }
 
-    // If SKU is empty, generate one from the row position
-    if sku.is_empty() {
-        sku = format!("AUTO-{}", uuid::Uuid::new_v4().to_string()[..8].to_string());
-    }
+    // ---- Expiry date (only when the file provides one) ----
+    // Empty cell → the row simply has no expiry (stock stays unbatched).
+    // Non-empty but unreadable → loud error, nothing is guessed.
+    let parsed_expiry: Option<String> = if expiry_raw.trim().is_empty() {
+        None
+    } else {
+        match crate::commands::expiry::parse_expiry_date(&expiry_raw) {
+            Ok(d) => Some(d),
+            Err(e) => return Err(e),
+        }
+    };
 
     // ---- Resolve category_id ----
     let category_id = if !category_name.is_empty() {
@@ -1092,6 +1149,30 @@ async fn import_one_row(
         .bind(quantity)
         .execute(pool)
         .await;
+    }
+
+    // Create an expiry batch when the file provides an expiry date.
+    // This is what makes the product "expiry-tracked" (FIFO on sale).
+    if quantity > 0 {
+        if let Some(expiry) = &parsed_expiry {
+            let batch_id = uuid::Uuid::new_v4().to_string();
+            sqlx::query(
+                r#"
+                INSERT INTO stock_batches
+                    (id, company_id, product_id, quantity, unit_cost, expiry_date, source)
+                VALUES (?, ?, ?, ?, ?, ?, 'import')
+                "#,
+            )
+            .bind(&batch_id)
+            .bind(company_id)
+            .bind(&id)
+            .bind(quantity)
+            .bind(cost_price)
+            .bind(expiry)
+            .execute(pool)
+            .await
+            .map_err(|e| format!("Failed to create expiry batch: {e}"))?;
+        }
     }
 
     Ok(())

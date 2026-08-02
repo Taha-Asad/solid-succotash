@@ -40,6 +40,7 @@ import type {
   SalesSummary,
   SetActiveInput,
   StockAdjustmentInput,
+  PublicStockBatch,
   StockSummary,
   TopCustomer,
   TopProduct,
@@ -148,6 +149,7 @@ export function listCategories(): Promise<PublicCategory[]> {
 export function createCategory(input: {
   name: string;
   description: string;
+  skuPrefix: string;
 }): Promise<PublicCategory> {
   return invoke<PublicCategory>("create_category", input);
 }
@@ -156,6 +158,7 @@ export function updateCategory(input: {
   categoryId: string;
   name: string;
   description: string;
+  skuPrefix: string;
 }): Promise<PublicCategory> {
   return invoke<PublicCategory>("update_category", input);
 }
@@ -233,6 +236,33 @@ export function listStockMovements(
   productId: string,
 ): Promise<PublicStockMovement[]> {
   return invoke<PublicStockMovement[]>("list_stock_movements", { productId });
+}
+
+// ==========================================
+// INVENTORY: EXPIRY TRACKING (stock_batches + FIFO)
+// ==========================================
+
+// All batches of one product (live + depleted), soonest expiry first
+export function listProductBatches(
+  productId: string,
+): Promise<PublicStockBatch[]> {
+  return invoke<PublicStockBatch[]>("list_product_batches", { productId });
+}
+
+// Expiry warning feed: batches that have expired or expire within warnDays
+export function listExpiringBatches(
+  warnDays: number,
+): Promise<PublicStockBatch[]> {
+  return invoke<PublicStockBatch[]>("list_expiring_batches", { warnDays });
+}
+
+// Write off expired stock from a batch
+export function writeOffBatch(input: {
+  batchId: string;
+  quantity: number;
+  reason: string;
+}): Promise<PublicStockBatch> {
+  return invoke<PublicStockBatch>("write_off_batch", input);
 }
 
 // List the company's custom field definitions
@@ -317,9 +347,22 @@ export function addInvoiceItem(input: {
   quantity: number;
   unitPrice: number;
   taxRate: number;
-  discountRate: number;
+  discountType: string;
+  discountValue: number;
 }): Promise<PublicInvoiceItem[]> {
   return invoke<PublicInvoiceItem[]>("add_invoice_item", input);
+}
+
+export function updateInvoiceItem(input: {
+  invoiceId: string;
+  itemId: string;
+  quantity: number;
+  unitPrice: number;
+  taxRate: number;
+  discountType: string;
+  discountValue: number;
+}): Promise<PublicInvoiceItem[]> {
+  return invoke<PublicInvoiceItem[]>("update_invoice_item", input);
 }
 
 export function removeInvoiceItem(input: {
