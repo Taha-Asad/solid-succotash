@@ -15,7 +15,6 @@ import { useCallback, useEffect, useState } from "react";
 
 import {
   Badge,
-  Button,
   Card,
   Divider,
   Grid,
@@ -43,7 +42,6 @@ import {
 } from "../../api/backend";
 
 import type {
-  PublicUser,
   SalesSummary,
   SalesByPeriod,
   TopProduct,
@@ -73,11 +71,7 @@ function pct(value: number): string {
 // PROPS & MAIN COMPONENT
 // ==========================================
 
-interface ReportsPageProps {
-  user: PublicUser;
-}
-
-export default function ReportsPage({ user }: ReportsPageProps) {
+export default function ReportsPage() {
   return (
     <Stack>
       <Title order={3}>Reports & Analytics</Title>

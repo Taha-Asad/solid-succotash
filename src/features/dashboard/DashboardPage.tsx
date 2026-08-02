@@ -48,12 +48,15 @@ import {
   updateCompanyUserRole,
   setCompanyUserActive,
   createBackup,
+  checkForUpdates,
+  installUpdate,
 } from "../../api/backend";
 
 import InventoryPage from "../inventory/InventoryPage";
 import InvoicePage from "../invoices/InvoicePage";
 
 import type { PublicCompany, PublicUser, UserRole } from "../../types/backend";
+import type { UpdateResult } from "../../api/backend";
 
 // ==========================================
 // PROPS
@@ -106,6 +109,8 @@ export default function DashboardPage({ user, onLogout }: DashboardPageProps) {
   const [companyError, setCompanyError] = useState<string | null>(null);
   const [backing, setBacking] = useState(false);
   const [backupMsg, setBackupMsg] = useState<string | null>(null);
+  const [updateInfo, setUpdateInfo] = useState<UpdateResult | null>(null);
+  const [updating, setUpdating] = useState(false);
 
   async function handleBackup() {
     setBacking(true);
@@ -127,7 +132,24 @@ export default function DashboardPage({ user, onLogout }: DashboardPageProps) {
     getCompany()
       .then(setCompany)
       .catch((err) => setCompanyError(getErrorMessage(err)));
+
+    // Check GitHub Releases for a new version
+    checkForUpdates()
+      .then(setUpdateInfo)
+      .catch(() => setUpdateInfo(null));
   }, []);
+
+  async function handleUpdate() {
+    setUpdating(true);
+    try {
+      await installUpdate();
+    } catch (err) {
+      setBackupMsg(`Update error: ${getErrorMessage(err)}`);
+      setTimeout(() => setBackupMsg(null), 5000);
+    } finally {
+      setUpdating(false);
+    }
+  }
 
   // Can this user see the "Company Users" management section?
   const canManageUsers = user.role === "owner" || user.role === "admin";
@@ -163,6 +185,18 @@ export default function DashboardPage({ user, onLogout }: DashboardPageProps) {
               💾 Backup
             </Button>
           </Tooltip>
+          {updateInfo?.available && updateInfo.update && (
+            <Tooltip label={`New version ${updateInfo.update.version} available`}>
+              <Button
+                variant="filled"
+                color="green"
+                onClick={handleUpdate}
+                loading={updating}
+              >
+                Update to {updateInfo.update.version}
+              </Button>
+            </Tooltip>
+          )}
           {backupMsg && (
             <Text size="xs" c={backupMsg.startsWith("Error") ? "red" : "green"}>
               {backupMsg}

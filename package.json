@@ -1,7 +1,7 @@
 {
   "name": "ijazandcompany",
   "private": true,
-  "version": "0.1.02",
+  "version": "0.1.2",
   "type": "module",
   "scripts": {
     "dev": "vite",
