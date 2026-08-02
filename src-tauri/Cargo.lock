@@ -2272,7 +2272,7 @@ dependencies = [
 
 [[package]]
 name = "ijazandcompany"
-version = "0.1.0"
+version = "0.1.02"
 dependencies = [
  "bcrypt",
  "calamine",
