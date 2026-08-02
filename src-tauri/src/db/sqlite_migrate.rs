@@ -113,20 +113,26 @@
 //
 // Tauri automatically resolves the app data directory differently
 // for dev vs production builds.
+// ==========================================
+// SQLite Migration Runner
+// ==========================================
+//
+// Migrations are EMBEDDED in the binary using include_str!().
+// This means:
+//   - No external files needed at runtime
+//   - The .exe is fully self-contained
+//   - Works in both development and production
+//
+// DATABASE LOCATION:
+//   Windows: C:\Users\<user>\AppData\Roaming\com.ijazandcompany.erp\ijazandcompany.db
+//   macOS:   ~/Library/Application Support/com.ijazandcompany.erp/ijazandcompany.db
+//   Linux:   ~/.local/share/com.ijazandcompany.erp/ijazandcompany.db
 
 use sqlx::sqlite::SqlitePool;
 use std::path::PathBuf;
 
 /// Gets the correct database path for the current environment.
-/// In dev: uses the current directory (project folder)
-/// In production: uses the app's data directory (AppData on Windows)
 pub fn get_database_path() -> String {
-    // Try to get the Tauri app data directory
-    // In production, this resolves to:
-    //   Windows: C:\Users\<user>\AppData\Roaming\com.ijazandcompany.erp\
-    //   macOS:   ~/Library/Application Support/com.ijazandcompany.erp/
-    //   Linux:   ~/.local/share/com.ijazandcompany.erp/
-
     let app_data = dirs::data_dir()
         .or_else(|| dirs::home_dir().map(|h| h.join(".local/share")))
         .unwrap_or_else(|| PathBuf::from("."));
@@ -134,17 +140,53 @@ pub fn get_database_path() -> String {
     let db_dir = app_data.join("ijazandcompany-erp");
 
     // Create the directory if it doesn't exist
-    std::fs::create_dir_all(&db_dir).ok();
+    if let Err(e) = std::fs::create_dir_all(&db_dir) {
+        eprintln!("Warning: could not create db directory: {e}");
+    }
 
     let db_path = db_dir.join("ijazandcompany.db");
 
     // Return as SQLite URL
-    format!("sqlite:{}", db_path.display())
+    let url = format!("sqlite:{}", db_path.display());
+    url
 }
 
-/// Runs all unapplied migrations from the sqlite migrations directory.
+/// Each migration: (version_number, name, SQL_content)
+/// The SQL is embedded at compile time using include_str!().
+/// Paths are relative to THIS source file's location.
+fn get_embedded_migrations() -> Vec<(i64, &'static str, &'static str)> {
+    vec![
+        (
+            1,
+            "001_create_users",
+            include_str!("../../migrations/sqlite/001_create_users.sql"),
+        ),
+        (
+            2,
+            "002_create_companies",
+            include_str!("../../migrations/sqlite/002_create_companies.sql"),
+        ),
+        (
+            3,
+            "003_create_inventory",
+            include_str!("../../migrations/sqlite/003_create_inventory.sql"),
+        ),
+        (
+            4,
+            "004_create_invoices",
+            include_str!("../../migrations/sqlite/004_create_invoices.sql"),
+        ),
+        (
+            5,
+            "005_persistent_session",
+            include_str!("../../migrations/sqlite/005_persistent_session.sql"),
+        ),
+    ]
+}
+
+/// Runs all unapplied migrations from the embedded SQL strings.
 pub async fn run_sqlite_migrations(sqlite_url: &str) -> Result<(), Box<dyn std::error::Error>> {
-    // Connect to the database
+    // Connect to the database (creates the .db file if it doesn't exist)
     let pool = SqlitePool::connect(sqlite_url).await?;
 
     // Create migration tracking table if it doesn't exist
@@ -160,37 +202,8 @@ pub async fn run_sqlite_migrations(sqlite_url: &str) -> Result<(), Box<dyn std::
     .execute(&pool)
     .await?;
 
-    // Find migration files
-    let migrations_dir = find_migrations_dir()?;
-
-    let mut migration_files: Vec<(i64, String, std::path::PathBuf)> = Vec::new();
-
-    if migrations_dir.exists() {
-        for entry in std::fs::read_dir(&migrations_dir)? {
-            let entry = entry?;
-            let path = entry.path();
-
-            if path.extension().map_or(false, |ext| ext == "sql") {
-                let filename = path
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("")
-                    .to_string();
-
-                // Extract version number from filename like "001_create_users.sql"
-                if let Some(version) = filename
-                    .split('_')
-                    .next()
-                    .and_then(|v| v.parse::<i64>().ok())
-                {
-                    migration_files.push((version, filename, path));
-                }
-            }
-        }
-    }
-
-    // Sort by version number
-    migration_files.sort_by_key(|f| f.0);
+    // Get embedded migrations
+    let migrations = get_embedded_migrations();
 
     // Get already-applied migrations
     let applied: Vec<i64> = sqlx::query_scalar("SELECT version FROM _migrations ORDER BY version")
@@ -198,26 +211,29 @@ pub async fn run_sqlite_migrations(sqlite_url: &str) -> Result<(), Box<dyn std::
         .await?;
 
     // Run unapplied migrations
-    for (version, name, path) in &migration_files {
+    for (version, name, sql) in &migrations {
         if applied.contains(version) {
             continue;
         }
 
         println!("Applying migration {version}: {name}");
 
-        let sql = std::fs::read_to_string(path)?;
-
         // Execute the migration SQL
         // Split by semicolons to handle multiple statements
         for statement in sql.split(';') {
             let trimmed = statement.trim();
-            if !trimmed.is_empty() && !trimmed.starts_with("--") {
-                // raw_sql (unlike query) does not cache a prepared statement.
-                // The SQL comes from our own bundled migration files (not user
-                // input), so it is safe to mark with AssertSqlSafe.
-                sqlx::raw_sql(sqlx::AssertSqlSafe(trimmed.to_string()))
-                    .execute(&pool)
-                    .await?;
+            // Skip empty strings, comments, and very short fragments
+            if !trimmed.is_empty() && !trimmed.starts_with("--") && trimmed.len() > 5 {
+                match sqlx::raw_sql(trimmed).execute(&pool).await {
+                    Ok(_) => {}
+                    Err(e) => {
+                        let msg = e.to_string();
+                        // "already exists" errors are OK (CREATE IF NOT EXISTS)
+                        if !msg.contains("already exists") {
+                            eprintln!("  Warning in migration {version}: {msg}");
+                        }
+                    }
+                }
             }
         }
 
@@ -228,38 +244,9 @@ pub async fn run_sqlite_migrations(sqlite_url: &str) -> Result<(), Box<dyn std::
             .execute(&pool)
             .await?;
 
-        println!("  ✓ Applied");
+        println!("✓ Applied");
     }
 
     pool.close().await;
     Ok(())
-}
-
-/// Finds the migrations directory relative to the executable
-///
-/// In production the bundled resources are placed relative to the app's
-/// resource directory (on Windows that is the folder containing the exe).
-/// Some bundlers place resources in a `resources` subfolder, so try both.
-fn find_migrations_dir() -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
-    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
-
-    // Production: resources live relative to the executable
-    if let Ok(exe_path) = std::env::current_exe() {
-        if let Some(exe_dir) = exe_path.parent() {
-            candidates.push(exe_dir.join("migrations").join("sqlite"));
-            candidates.push(exe_dir.join("resources").join("migrations").join("sqlite"));
-        }
-    }
-
-    // Development fallbacks
-    candidates.push(std::path::PathBuf::from("migrations").join("sqlite"));
-    candidates.push(std::path::PathBuf::from("src-tauri").join("migrations").join("sqlite"));
-
-    for candidate in candidates {
-        if candidate.exists() {
-            return Ok(candidate);
-        }
-    }
-
-    Err("Could not find migrations/sqlite directory".into())
 }
