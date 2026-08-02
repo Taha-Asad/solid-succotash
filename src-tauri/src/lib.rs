@@ -245,7 +245,13 @@ pub async fn run() {
                 commands::invoices::generate_invoice_html,
                 commands::auth::save_session,
                 commands::auth::load_saved_session,
-                commands::auth::clear_saved_session
+                commands::auth::clear_saved_session,
+                commands::updater::check_for_updates,
+                commands::updater::install_update,
+
+                // ---- Backup ----
+                commands::backup::create_backup,
+                commands::backup::list_backups,
             ]
         )
         .run(tauri::generate_context!())

@@ -7,7 +7,7 @@
 
 use serde::Serialize;
 use tauri::AppHandle;
-use tauri_plugin_updater::UpdaterExt;
+use tauri_plugin_updater::{Error as UpdaterError, UpdaterExt};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -23,6 +23,7 @@ pub struct UpdateResult {
     pub available: bool,
     pub current_version: String,
     pub update: Option<UpdateInfo>,
+    pub error: Option<String>,
 }
 
 /// Checks if a new version is available from GitHub Releases.
@@ -42,6 +43,7 @@ pub async fn check_for_updates(app: AppHandle) -> Result<UpdateResult, String> {
                     date: update.date.map(|d| d.to_string()),
                     body: update.body.clone(),
                 }),
+                error: None,
             })
         }
         Ok(None) => {
@@ -49,14 +51,26 @@ pub async fn check_for_updates(app: AppHandle) -> Result<UpdateResult, String> {
                 available: false,
                 current_version,
                 update: None,
+                error: None,
             })
         }
         Err(e) => {
-            // Network error or updater not configured — not a critical failure
+            // Not a critical failure — but classify the cause so the frontend
+            // can react differently to a network error vs. a missing config.
+            let error = match &e {
+                UpdaterError::EmptyEndpoints => {
+                    "Updater is not configured (no update endpoints set).".to_string()
+                }
+                UpdaterError::Reqwest(_) | UpdaterError::Network(_) => {
+                    format!("Network error while checking for updates: {e}")
+                }
+                _ => format!("Update check failed: {e}"),
+            };
             Ok(UpdateResult {
                 available: false,
                 current_version,
                 update: None,
+                error: Some(error),
             })
         }
     }

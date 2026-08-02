@@ -18,6 +18,7 @@ export type UpdateResult = {
   available: boolean;
   currentVersion: string;
   update: UpdateInfo | null;
+  error: string | null;
 };
 
 /// Checks if a new version is available
@@ -31,6 +32,7 @@ export async function checkForUpdates(): Promise<UpdateResult> {
       available: false,
       currentVersion: "unknown",
       update: null,
+      error: "Unknown update error",
     };
   }
 }

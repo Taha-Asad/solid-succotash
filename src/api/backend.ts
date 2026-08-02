@@ -404,6 +404,7 @@ export type UpdateResult = {
     date: string | null;
     body: string | null;
   } | null;
+  error: string | null;
 };
 
 export function checkForUpdates(): Promise<UpdateResult> {
