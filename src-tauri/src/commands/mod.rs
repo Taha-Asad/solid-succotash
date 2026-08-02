@@ -6,3 +6,4 @@ pub mod invoices;
 pub mod users;
 pub mod updater;
 pub mod backup;
+pub mod reports;

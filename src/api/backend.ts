@@ -16,6 +16,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   CompanySetupInput,
   CreateUserInput,
+  CustomerLedgerEntry,
   FileAnalysis,
   ImportRequest,
   ImportResult,
@@ -23,6 +24,8 @@ import type {
   InvoiceWithDetails,
   LoginInput,
   ProductInput,
+  ProductMovement,
+  ProfitLossSummary,
   PublicCategory,
   PublicCompany,
   PublicCustomer,
@@ -33,8 +36,13 @@ import type {
   PublicSupplier,
   PublicUser,
   RegisterCompanyResult,
+  SalesByPeriod,
+  SalesSummary,
   SetActiveInput,
   StockAdjustmentInput,
+  StockSummary,
+  TopCustomer,
+  TopProduct,
   UpdateProductInput,
   UpdateRoleInput,
 } from "../types/backend";
@@ -257,7 +265,7 @@ export function analyzeImportFile(input: {
 
 // Step 2: Send confirmed mapping + file bytes, Rust imports everything
 export function executeImport(input: ImportRequest): Promise<ImportResult> {
-  return invoke<ImportResult>("execute_import", input);
+  return invoke<ImportResult>("execute_import", { request: input });
 }
 
 // ==========================================
@@ -381,6 +389,42 @@ export function generateInvoiceHtml(invoiceId: string): Promise<string> {
 }
 
 // ==========================================
+// REPORTS
+// ==========================================
+
+export function reportSalesSummary(): Promise<SalesSummary> {
+  return invoke<SalesSummary>("report_sales_summary");
+}
+
+export function reportSalesByMonth(): Promise<SalesByPeriod[]> {
+  return invoke<SalesByPeriod[]>("report_sales_by_month");
+}
+
+export function reportTopProducts(): Promise<TopProduct[]> {
+  return invoke<TopProduct[]>("report_top_products");
+}
+
+export function reportTopCustomers(): Promise<TopCustomer[]> {
+  return invoke<TopCustomer[]>("report_top_customers");
+}
+
+export function reportStock(lowStockThreshold: number): Promise<StockSummary> {
+  return invoke<StockSummary>("report_stock", { lowStockThreshold });
+}
+
+export function reportProfitLoss(): Promise<ProfitLossSummary> {
+  return invoke<ProfitLossSummary>("report_profit_loss");
+}
+
+export function reportCustomerLedger(): Promise<CustomerLedgerEntry[]> {
+  return invoke<CustomerLedgerEntry[]>("report_customer_ledger");
+}
+
+export function reportProductMovements(): Promise<ProductMovement[]> {
+  return invoke<ProductMovement[]>("report_product_movements");
+}
+
+// ==========================================
 // BACKUP
 // ==========================================
 
@@ -404,7 +448,6 @@ export type UpdateResult = {
     date: string | null;
     body: string | null;
   } | null;
-  error: string | null;
 };
 
 export function checkForUpdates(): Promise<UpdateResult> {

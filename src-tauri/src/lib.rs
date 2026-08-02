@@ -252,6 +252,15 @@ pub async fn run() {
                 // ---- Backup ----
                 commands::backup::create_backup,
                 commands::backup::list_backups,
+
+                commands::reports::report_sales_summary,
+                commands::reports::report_sales_by_month,
+                commands::reports::report_top_products,
+                commands::reports::report_top_customers,
+                commands::reports::report_stock,
+                commands::reports::report_profit_loss,
+                commands::reports::report_customer_ledger,
+                commands::reports::report_product_movements
             ]
         )
         .run(tauri::generate_context!())
