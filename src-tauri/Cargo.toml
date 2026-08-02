@@ -41,3 +41,4 @@ quick-xml = { version = "0.41.0", features = ["serialize"] }
 chrono = "0.4.45"
 dirs = "6.0.0"
 windows-sys = { version = "0.61.2", features = ["Win32_System_Console"] }
+tauri-plugin-updater = "2.10.1"

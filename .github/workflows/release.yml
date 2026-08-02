@@ -1,0 +1,69 @@
+# ==========================================
+# GitHub Actions — Auto-build and Release
+# ==========================================
+#
+# When you push a version tag (v0.1.0, v0.2.0, etc.),
+# this workflow automatically:
+#   1. Builds the Windows .exe installer
+#   2. Creates a GitHub Release
+#   3. Uploads the installer as a release asset
+#
+# Your app's updater checks GitHub Releases for new versions.
+#
+# TRIGGER: Push a tag like "v0.1.0"
+#   git tag v0.1.0
+#   git push origin v0.1.0
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build and release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: v__VERSION__
+          releaseName: "Ijaz & Company ERP v__VERSION__"
+          releaseBody: |
+            ## What's New
+            - See the changelog for details
+
+            ## Installation
+            Download the `.exe` installer below and run it.
+            Your data is preserved — no need to uninstall the previous version.
+          releaseDraft: false
+          prerelease: false

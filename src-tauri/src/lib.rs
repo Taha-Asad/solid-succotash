@@ -111,7 +111,6 @@
 // }
 mod commands;
 mod db;
-
 use sqlx::sqlite::{ SqliteConnectOptions, SqlitePool };
 use std::str::FromStr;
 #[tauri::command]
@@ -199,6 +198,7 @@ pub async fn run() {
         .manage(sqlite_pool)
         .manage(commands::auth::SessionState::new())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(
             tauri::generate_handler![
                 greet,

@@ -47,6 +47,7 @@ import {
   createCompanyUser,
   updateCompanyUserRole,
   setCompanyUserActive,
+  createBackup,
 } from "../../api/backend";
 
 import InventoryPage from "../inventory/InventoryPage";
@@ -103,6 +104,23 @@ export default function DashboardPage({ user, onLogout }: DashboardPageProps) {
   const [company, setCompany] = useState<PublicCompany | null>(null);
   const [view, setView] = useState<DashboardView>("home");
   const [companyError, setCompanyError] = useState<string | null>(null);
+  const [backing, setBacking] = useState(false);
+  const [backupMsg, setBackupMsg] = useState<string | null>(null);
+
+  async function handleBackup() {
+    setBacking(true);
+    setBackupMsg(null);
+    try {
+      const path = await createBackup();
+      setBackupMsg(`Backup saved: ${path}`);
+    } catch (err) {
+      setBackupMsg(`Error: ${getErrorMessage(err)}`);
+    } finally {
+      setBacking(false);
+      // Clear message after 5 seconds
+      setTimeout(() => setBackupMsg(null), 5000);
+    }
+  }
 
   // Load company info on mount
   useEffect(() => {
@@ -140,6 +158,16 @@ export default function DashboardPage({ user, onLogout }: DashboardPageProps) {
               {user.email}
             </Text>
           </Stack>
+          <Tooltip label="Backup database">
+            <Button variant="subtle" onClick={handleBackup} loading={backing}>
+              💾 Backup
+            </Button>
+          </Tooltip>
+          {backupMsg && (
+            <Text size="xs" c={backupMsg.startsWith("Error") ? "red" : "green"}>
+              {backupMsg}
+            </Text>
+          )}
           <Button variant="outline" color="red" onClick={onLogout}>
             Logout
           </Button>
