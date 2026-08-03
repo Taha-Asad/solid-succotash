@@ -1,16 +1,15 @@
 /* ==========================================
-   GLOBAL BASE STYLES — Ijaz & Company
-   Brand colors live in src/theme.ts; these just
-   set the page-level canvas to match.
+   GLOBAL BASE STYLES — Ijaz & Company ERP
+   Modern, clean, data-first canvas.
    ========================================== */
 
 :root {
   font-family: Inter, "Segoe UI", Roboto, -apple-system, BlinkMacSystemFont,
     "Helvetica Neue", Arial, sans-serif;
-  font-size: 16px;
-  line-height: 1.5;
-  color: #1f3053;
-  background-color: #fbfaf6;
+  font-size: 15px;
+  line-height: 1.55;
+  color: #1d2b54;
+  background-color: #f6f8fc;
 
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -24,8 +23,8 @@ body {
   margin: 0;
   padding: 0;
   min-height: 100%;
-  background-color: #fbfaf6;
-  color: #1f3053;
+  background-color: #f6f8fc;
+  color: #1d2b54;
 }
 
 a {
@@ -36,6 +35,74 @@ a {
 h1,
 h2,
 h3,
-h4 {
+h4,
+h5,
+h6 {
   margin: 0;
+}
+
+/* ---- Scrollbars ---- */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #cdd6e6;
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #a9b8d4;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+/* ---- Reusable utility classes ---- */
+
+.mono {
+  font-family: ui-monospace, "SF Mono", "Roboto Mono", "JetBrains Mono", Menlo,
+    monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Subtle animated gradient used behind login/setup hero panels */
+.hero-gradient {
+  background: linear-gradient(
+    135deg,
+    #131c39 0%,
+    #1d2b54 45%,
+    #2e4178 100%
+  );
+}
+
+.hero-gradient-gold {
+  background: linear-gradient(
+    135deg,
+    #8c611c 0%,
+    #c9952a 55%,
+    #e6c965 100%
+  );
+}
+
+/* Card hover lift */
+.lift {
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+.lift:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 30px -12px rgba(29, 43, 84, 0.25);
+}
+
+/* Focus ring color matches brand */
+:focus-visible {
+  outline: 2px solid rgba(201, 149, 42, 0.6);
+  outline-offset: 2px;
 }

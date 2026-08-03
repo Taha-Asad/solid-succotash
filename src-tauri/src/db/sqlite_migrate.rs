@@ -308,6 +308,11 @@ fn get_embedded_migrations() -> Vec<(i64, &'static str, &'static str)> {
             "006_expiry_batches",
             include_str!("../../migrations/sqlite/006_expiry_batches.sql"),
         ),
+        (
+            7,
+            "007_purchase_orders",
+            include_str!("../../migrations/sqlite/007_purchase_orders.sql"),
+        ),
     ]
 }
 

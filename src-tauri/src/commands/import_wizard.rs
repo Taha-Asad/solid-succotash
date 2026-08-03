@@ -1070,7 +1070,7 @@ async fn import_one_row(
     let parsed_expiry: Option<String> = if expiry_raw.trim().is_empty() {
         None
     } else {
-        match crate::commands::expiry::parse_expiry_date(&expiry_raw) {
+        match crate::commands::inventory::parse_expiry_date(&expiry_raw) {
             Ok(d) => Some(d),
             Err(e) => return Err(e),
         }

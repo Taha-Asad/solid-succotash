@@ -10,7 +10,7 @@
 //
 //   2. Is a user currently logged in?
 //      No  → show LoginPage
-//      Yes → show DashboardPage
+//      Yes → show the main AppShell (dashboard)
 //
 // This file does NOT contain any UI for those screens.
 // It only decides WHICH screen to show, then renders it.
@@ -39,7 +39,7 @@ import {
 
 import LoginPage from "./features/auth/LoginPage";
 import SetupPage from "./features/auth/SetupPage";
-import DashboardPage from "./features/dashboard/DashboardPage";
+import AppShell from "./components/AppShell";
 
 import type { PublicUser, RegisterCompanyResult } from "./types/backend";
 
@@ -182,7 +182,7 @@ function App() {
 
   // screen === "dashboard"
   if (user) {
-    return <DashboardPage user={user} onLogout={handleLogout} />;
+    return <AppShell user={user} onLogout={handleLogout} />;
   }
 
   // Should never reach here, but just in case

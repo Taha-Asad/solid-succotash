@@ -229,9 +229,9 @@ pub async fn run() {
                 commands::inventory::adjust_stock,
                 commands::inventory::list_stock_movements,
                 commands::inventory::list_custom_fields,
-                commands::expiry::list_product_batches,
-                commands::expiry::list_expiring_batches,
-                commands::expiry::write_off_batch,
+                commands::inventory::list_product_batches,
+                commands::inventory::list_expiring_batches,
+                commands::inventory::write_off_batch,
                 commands::import_wizard::analyze_import_file,
                 commands::import_wizard::execute_import,
                 commands::invoices::list_customers,
@@ -264,7 +264,15 @@ pub async fn run() {
                 commands::reports::report_stock,
                 commands::reports::report_profit_loss,
                 commands::reports::report_customer_ledger,
-                commands::reports::report_product_movements
+                commands::reports::report_product_movements,
+                commands::purchase_orders::list_purchase_orders,
+                commands::purchase_orders::get_purchase_order,
+                commands::purchase_orders::create_purchase_order,
+                commands::purchase_orders::add_po_item,
+                commands::purchase_orders::remove_po_item,
+                commands::purchase_orders::submit_purchase_order,
+                commands::purchase_orders::receive_po_items,
+                commands::purchase_orders::record_po_payment
             ]
         )
         .run(tauri::generate_context!())

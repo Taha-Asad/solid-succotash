@@ -8,3 +8,4 @@ pub mod users;
 pub mod updater;
 pub mod backup;
 pub mod reports;
+pub mod purchase_orders;

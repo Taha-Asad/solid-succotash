@@ -61,6 +61,9 @@ import type {
   InvoiceWithDetails,
 } from "../../types/backend";
 
+import { INK } from "../../theme";
+import { ReceiptText, Plus } from "lucide-react";
+
 // ==========================================
 // HELPERS
 // ==========================================
@@ -220,37 +223,65 @@ function InvoiceListView({
   }
 
   return (
-    <Stack>
-      <Group justify="space-between">
-        <Title order={3}>Invoices</Title>
+    <Stack gap="lg">
+      <Group justify="space-between" align="flex-end" wrap="wrap">
+        <Stack gap={2}>
+          <Text
+            size="xs"
+            fw={700}
+            style={{ color: INK.gold, letterSpacing: 1.4, textTransform: "uppercase" }}
+          >
+            Billing
+          </Text>
+          <Title order={2} style={{ color: INK.navy, letterSpacing: -0.3 }}>
+            Invoices
+          </Title>
+          <Text size="sm" c="dimmed">
+            Create, finalize and collect payments on your sales invoices.
+          </Text>
+        </Stack>
         {canManage && (
-          <Button onClick={() => setCreateModalOpen(true)}>
-            + New Invoice
+          <Button
+            leftSection={<Plus size={16} />}
+            onClick={() => setCreateModalOpen(true)}
+            styles={{
+              root: {
+                background: "linear-gradient(135deg, #C9952A 0%, #E6C965 100%)",
+                color: "#131C39",
+                fontWeight: 700,
+                "&:hover": { filter: "brightness(1.05)" },
+              },
+            }}
+          >
+            New Invoice
           </Button>
         )}
       </Group>
 
       {/* Summary cards */}
-      <SimpleGrid cols={3}>
-        <Card withBorder padding="md">
-          <Text size="xs" c="dimmed">
+      <SimpleGrid cols={{ base: 1, sm: 3 }}>
+        <Card withBorder shadow="sm" padding="lg">
+          <Text size="xs" fw={600} style={{ color: "#5C6B84", textTransform: "uppercase", letterSpacing: 0.4 }}>
             Total Invoices
           </Text>
-          <Title order={3}>{totalInvoices}</Title>
+          <Title order={2} className="tabular" style={{ color: INK.navy }}>{totalInvoices}</Title>
+          <Text size="xs" c="dimmed" mt={4}>across all statuses</Text>
         </Card>
-        <Card withBorder padding="md">
-          <Text size="xs" c="dimmed">
+        <Card withBorder shadow="sm" padding="lg">
+          <Text size="xs" fw={600} style={{ color: "#5C6B84", textTransform: "uppercase", letterSpacing: 0.4 }}>
             Total Revenue
           </Text>
-          <Title order={3}>{paisaToDisplay(totalRevenue)}</Title>
+          <Title order={2} className="tabular" style={{ color: INK.chart.navy }}>{paisaToDisplay(totalRevenue)}</Title>
+          <Text size="xs" c="dimmed" mt={4}>from finalized invoices</Text>
         </Card>
-        <Card withBorder padding="md">
-          <Text size="xs" c="dimmed">
+        <Card withBorder shadow="sm" padding="lg">
+          <Text size="xs" fw={600} style={{ color: "#5C6B84", textTransform: "uppercase", letterSpacing: 0.4 }}>
             Outstanding
           </Text>
-          <Title order={3} c={totalOutstanding > 0 ? "orange" : "green"}>
+          <Title order={2} className="tabular" c={totalOutstanding > 0 ? "orange" : "green"}>
             {paisaToDisplay(totalOutstanding)}
           </Title>
+          <Text size="xs" c="dimmed" mt={4}>balance due from customers</Text>
         </Card>
       </SimpleGrid>
 
@@ -263,73 +294,97 @@ function InvoiceListView({
       {loading ? (
         <Text c="dimmed">Loading invoices...</Text>
       ) : invoices.length === 0 ? (
-        <Text c="dimmed" ta="center" py="xl">
-          No invoices yet. Create your first invoice.
-        </Text>
+        <Card withBorder padding="xl" ta="center">
+          <Stack align="center" gap="xs" py="lg">
+            <div
+              style={{
+                width: 48,
+                height: 48,
+                borderRadius: 999,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                background: `${INK.gold}18`,
+                color: INK.gold,
+              }}
+            >
+              <ReceiptText size={22} />
+            </div>
+            <Text fw={600} style={{ color: INK.navy }}>
+              No invoices yet
+            </Text>
+            <Text size="sm" c="dimmed" maw={320}>
+              Create your first invoice to start billing customers.
+            </Text>
+          </Stack>
+        </Card>
       ) : (
-        <ScrollArea>
-          <Table striped highlightOnHover withTableBorder>
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th>Invoice #</Table.Th>
-                <Table.Th>Customer</Table.Th>
-                <Table.Th>Date</Table.Th>
-                <Table.Th>Status</Table.Th>
-                <Table.Th>Total</Table.Th>
-                <Table.Th>Paid</Table.Th>
-                <Table.Th>Balance</Table.Th>
-              </Table.Tr>
-            </Table.Thead>
-            <Table.Tbody>
-              {invoices.map((inv) => (
-                <Table.Tr
-                  key={inv.id}
-                  style={{ cursor: "pointer" }}
-                  onClick={() => onOpenInvoice(inv.id)}
-                >
-                  <Table.Td>
-                    <Text fw={500} size="sm">
-                      {inv.invoiceNumber}
-                    </Text>
-                  </Table.Td>
-                  <Table.Td>
-                    <Text size="sm">
-                      {customerMap.get(inv.customerId) ?? "Unknown"}
-                    </Text>
-                  </Table.Td>
-                  <Table.Td>
-                    <Text size="sm">{inv.invoiceDate}</Text>
-                  </Table.Td>
-                  <Table.Td>
-                    <Badge
-                      color={STATUS_COLORS[inv.status] ?? "gray"}
-                      variant="light"
-                    >
-                      {inv.status}
-                    </Badge>
-                  </Table.Td>
-                  <Table.Td>
-                    <Text size="sm" fw={500}>
-                      {paisaToDisplay(inv.grandTotal)}
-                    </Text>
-                  </Table.Td>
-                  <Table.Td>
-                    <Text size="sm">{paisaToDisplay(inv.amountPaid)}</Text>
-                  </Table.Td>
-                  <Table.Td>
-                    <Text
-                      size="sm"
-                      fw={500}
-                      c={inv.balanceDue > 0 ? "orange" : "green"}
-                    >
-                      {paisaToDisplay(inv.balanceDue)}
-                    </Text>
-                  </Table.Td>
+        <Card withBorder shadow="sm" padding="lg">
+          <ScrollArea>
+            <Table highlightOnHover verticalSpacing="sm">
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>Invoice #</Table.Th>
+                  <Table.Th>Customer</Table.Th>
+                  <Table.Th>Date</Table.Th>
+                  <Table.Th>Status</Table.Th>
+                  <Table.Th ta="right">Total</Table.Th>
+                  <Table.Th ta="right">Paid</Table.Th>
+                  <Table.Th ta="right">Balance</Table.Th>
                 </Table.Tr>
-              ))}
-            </Table.Tbody>
-          </Table>
-        </ScrollArea>
+              </Table.Thead>
+              <Table.Tbody>
+                {invoices.map((inv) => (
+                  <Table.Tr
+                    key={inv.id}
+                    style={{ cursor: "pointer" }}
+                    onClick={() => onOpenInvoice(inv.id)}
+                  >
+                    <Table.Td>
+                      <Text fw={600} size="sm" className="mono" style={{ color: INK.navy }}>
+                        {inv.invoiceNumber}
+                      </Text>
+                    </Table.Td>
+                    <Table.Td>
+                      <Text size="sm">
+                        {customerMap.get(inv.customerId) ?? "Unknown"}
+                      </Text>
+                    </Table.Td>
+                    <Table.Td>
+                      <Text size="sm">{inv.invoiceDate}</Text>
+                    </Table.Td>
+                    <Table.Td>
+                      <Badge
+                        color={STATUS_COLORS[inv.status] ?? "gray"}
+                        variant="light"
+                      >
+                        {inv.status}
+                      </Badge>
+                    </Table.Td>
+                    <Table.Td ta="right">
+                      <Text size="sm" fw={600} className="tabular">
+                        {paisaToDisplay(inv.grandTotal)}
+                      </Text>
+                    </Table.Td>
+                    <Table.Td ta="right">
+                      <Text size="sm" className="tabular">{paisaToDisplay(inv.amountPaid)}</Text>
+                    </Table.Td>
+                    <Table.Td ta="right">
+                      <Text
+                        size="sm"
+                        fw={500}
+                        className="tabular"
+                        c={inv.balanceDue > 0 ? "orange" : "green"}
+                      >
+                        {paisaToDisplay(inv.balanceDue)}
+                      </Text>
+                    </Table.Td>
+                  </Table.Tr>
+                ))}
+              </Table.Tbody>
+            </Table>
+          </ScrollArea>
+        </Card>
       )}
 
       <CreateInvoiceModal

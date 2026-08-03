@@ -895,7 +895,7 @@ pub async fn finalize_invoice(
 
         // Deduct FIFO from expiry batches (soonest-expiring first).
         // No-op for products that have no batches.
-        crate::commands::expiry::deduct_fifo(&mut tx, company_id, product_id, *quantity)
+        crate::commands::inventory::deduct_fifo(&mut tx, company_id, product_id, *quantity)
             .await?;
     }
 
@@ -1703,3 +1703,4 @@ fn format_timestamp(secs: u64) -> String {
 fn is_leap(year: u64) -> bool {
     (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
 }
+

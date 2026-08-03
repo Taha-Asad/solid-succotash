@@ -31,16 +31,19 @@ import type {
   PublicCustomer,
   PublicInvoice,
   PublicInvoiceItem,
+  PublicPOItem,
   PublicProduct,
+  PublicPurchaseOrder,
+  PublicStockBatch,
   PublicStockMovement,
   PublicSupplier,
   PublicUser,
+  PurchaseOrderWithItems,
   RegisterCompanyResult,
   SalesByPeriod,
   SalesSummary,
   SetActiveInput,
   StockAdjustmentInput,
-  PublicStockBatch,
   StockSummary,
   TopCustomer,
   TopProduct,
@@ -149,7 +152,6 @@ export function listCategories(): Promise<PublicCategory[]> {
 export function createCategory(input: {
   name: string;
   description: string;
-  skuPrefix: string;
 }): Promise<PublicCategory> {
   return invoke<PublicCategory>("create_category", input);
 }
@@ -158,7 +160,6 @@ export function updateCategory(input: {
   categoryId: string;
   name: string;
   description: string;
-  skuPrefix: string;
 }): Promise<PublicCategory> {
   return invoke<PublicCategory>("update_category", input);
 }
@@ -238,25 +239,21 @@ export function listStockMovements(
   return invoke<PublicStockMovement[]>("list_stock_movements", { productId });
 }
 
-// ==========================================
-// INVENTORY: EXPIRY TRACKING (stock_batches + FIFO)
-// ==========================================
-
-// All batches of one product (live + depleted), soonest expiry first
+// List the expiry batches for a single product
 export function listProductBatches(
   productId: string,
 ): Promise<PublicStockBatch[]> {
   return invoke<PublicStockBatch[]>("list_product_batches", { productId });
 }
 
-// Expiry warning feed: batches that have expired or expire within warnDays
+// List batches that have expired or expire within `warnDays`
 export function listExpiringBatches(
   warnDays: number,
 ): Promise<PublicStockBatch[]> {
   return invoke<PublicStockBatch[]>("list_expiring_batches", { warnDays });
 }
 
-// Write off expired stock from a batch
+// Write off stock from an expired batch
 export function writeOffBatch(input: {
   batchId: string;
   quantity: number;
@@ -295,7 +292,7 @@ export function analyzeImportFile(input: {
 
 // Step 2: Send confirmed mapping + file bytes, Rust imports everything
 export function executeImport(input: ImportRequest): Promise<ImportResult> {
-  return invoke<ImportResult>("execute_import", { request: input });
+  return invoke<ImportResult>("execute_import", input);
 }
 
 // ==========================================
@@ -353,9 +350,17 @@ export function addInvoiceItem(input: {
   return invoke<PublicInvoiceItem[]>("add_invoice_item", input);
 }
 
+export function removeInvoiceItem(input: {
+  invoiceId: string;
+  itemId: string;
+}): Promise<PublicInvoiceItem[]> {
+  return invoke<PublicInvoiceItem[]>("remove_invoice_item", input);
+}
+
 export function updateInvoiceItem(input: {
   invoiceId: string;
   itemId: string;
+  productId: string;
   quantity: number;
   unitPrice: number;
   taxRate: number;
@@ -363,13 +368,6 @@ export function updateInvoiceItem(input: {
   discountValue: number;
 }): Promise<PublicInvoiceItem[]> {
   return invoke<PublicInvoiceItem[]>("update_invoice_item", input);
-}
-
-export function removeInvoiceItem(input: {
-  invoiceId: string;
-  itemId: string;
-}): Promise<PublicInvoiceItem[]> {
-  return invoke<PublicInvoiceItem[]>("remove_invoice_item", input);
 }
 
 export function finalizeInvoice(invoiceId: string): Promise<PublicInvoice> {
@@ -429,6 +427,68 @@ export function clearSavedSession(): Promise<void> {
 
 export function generateInvoiceHtml(invoiceId: string): Promise<string> {
   return invoke<string>("generate_invoice_html", { invoiceId });
+}
+
+// ==========================================
+// PURCHASE ORDERS
+// ==========================================
+
+export function listPurchaseOrders(): Promise<PublicPurchaseOrder[]> {
+  return invoke<PublicPurchaseOrder[]>("list_purchase_orders");
+}
+
+export function getPurchaseOrder(
+  poId: string,
+): Promise<PurchaseOrderWithItems> {
+  return invoke<PurchaseOrderWithItems>("get_purchase_order", { poId });
+}
+
+export function createPurchaseOrder(input: {
+  supplierId: string;
+  poDate: string;
+  expectedDate: string;
+  referenceNote: string;
+}): Promise<PublicPurchaseOrder> {
+  return invoke<PublicPurchaseOrder>("create_purchase_order", input);
+}
+
+export function addPOItem(input: {
+  poId: string;
+  productId: string;
+  quantity: number;
+  unitCost: number;
+  taxRate: number;
+  expiryDate: string;
+}): Promise<PublicPOItem[]> {
+  return invoke<PublicPOItem[]>("add_po_item", input);
+}
+
+export function removePOItem(input: {
+  poId: string;
+  itemId: string;
+}): Promise<PublicPOItem[]> {
+  return invoke<PublicPOItem[]>("remove_po_item", input);
+}
+
+export function submitPurchaseOrder(
+  poId: string,
+): Promise<PublicPurchaseOrder> {
+  return invoke<PublicPurchaseOrder>("submit_purchase_order", { poId });
+}
+
+export function receivePOItems(poId: string): Promise<PublicPurchaseOrder> {
+  return invoke<PublicPurchaseOrder>("receive_po_items", { poId });
+}
+
+export function recordPOPayment(input: {
+  poId: string;
+  amount: number;
+  paymentMethod: string;
+  paymentDate: string;
+  reference: string;
+  notes: string;
+}): Promise<PublicPurchaseOrder> {
+  return invoke<PublicPurchaseOrder>("record_po_payment", input);
 }
 
 // ==========================================

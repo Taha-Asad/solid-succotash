@@ -245,7 +245,7 @@ export default function InventoryPage({ user }: InventoryPageProps) {
   }
 
   return (
-    <Stack gap="lg" style={{ background: INK.paper, margin: -16, padding: 16 }}>
+    <Stack gap="lg">
       <Group justify="space-between" align="flex-end" wrap="wrap">
         <Stack gap={2}>
           <Eyebrow>Inventory</Eyebrow>

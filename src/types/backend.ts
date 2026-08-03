@@ -134,7 +134,6 @@ export type PublicProduct = {
   quantityInStock: number;
   unit: string;
   customFields: string | null; // JSON blob for company-specific fields
-  /** Expiry date of the soonest-expiring live batch (if any). */
   nextExpiryDate: string | null;
   isActive: boolean;
   createdAt: string;
@@ -153,11 +152,9 @@ export type PublicStockMovement = {
   createdAt: string;
 };
 
-// Input for creating/updating a product.
-// SKU is optional — when left blank the backend auto-generates it
-// from the category's SKU prefix (e.g. ELEC-001, ELEC-002, ...).
+// Input for creating/updating a product
 export type ProductInput = {
-  sku?: string;
+  sku: string;
   name: string;
   categoryId: string;
   supplierId: string;
@@ -168,11 +165,10 @@ export type ProductInput = {
   unit: string;
 };
 
-// Input for updating a product (no quantity change).
-// SKU is optional — when left blank the existing value is kept.
+// Input for updating a product (no quantity change)
 export type UpdateProductInput = {
   productId: string;
-  sku?: string;
+  sku: string;
   name: string;
   categoryId: string;
   supplierId: string;
@@ -182,10 +178,7 @@ export type UpdateProductInput = {
   unit: string;
 };
 
-// Input for stock adjustment.
-// expiryDate applies to stock IN only: when provided, the incoming
-// stock becomes an expiry batch (the product becomes expiry-tracked
-// and stock OUT is then deducted FIFO). Never auto-filled.
+// Input for stock adjustment
 export type StockAdjustmentInput = {
   productId: string;
   movementType: string;
@@ -194,7 +187,8 @@ export type StockAdjustmentInput = {
   expiryDate?: string | null;
 };
 
-// One expiry batch of a product (from stock_batches)
+// A stock batch (expiry-tracked stock).
+// status: "ok" | "expiring" | "expired" | "depleted"
 export type PublicStockBatch = {
   id: string;
   companyId: string;
@@ -205,7 +199,6 @@ export type PublicStockBatch = {
   unitCost: number;
   expiryDate: string;
   source: string;
-  /** "ok" | "expiring" | "expired" | "depleted" */
   status: string;
   createdAt: string;
 };
@@ -456,4 +449,49 @@ export type ProductMovement = {
   totalReturned: number;
   totalDamaged: number;
   currentStock: number;
+};
+
+// ==========================================
+// PURCHASE ORDER TYPES
+// ==========================================
+
+export type PublicPurchaseOrder = {
+  id: string;
+  companyId: string;
+  supplierId: string;
+  supplierName: string;
+  poNumber: string;
+  poDate: string;
+  expectedDate: string | null;
+  status: string; // "draft" | "ordered" | "received" | "paid" | "cancelled"
+  subtotal: number;
+  taxTotal: number;
+  grandTotal: number;
+  amountPaid: number;
+  balanceDue: number;
+  referenceNote: string | null;
+  createdBy: string;
+  receivedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type PublicPOItem = {
+  id: string;
+  poId: string;
+  productId: string;
+  productName: string;
+  productSku: string;
+  quantityOrdered: number;
+  quantityReceived: number;
+  unitCost: number;
+  taxRate: number;
+  taxAmount: number;
+  lineTotal: number;
+  expiryDate: string | null;
+};
+
+export type PurchaseOrderWithItems = {
+  order: PublicPurchaseOrder;
+  items: PublicPOItem[];
 };

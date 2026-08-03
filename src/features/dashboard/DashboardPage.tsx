@@ -1,704 +1,798 @@
 // ==========================================
-// DASHBOARD PAGE
+// DASHBOARD HOME — Analytics overview
 // ==========================================
-//
-// The main screen after login. Shows:
-//   - Company info card
-//   - Current user role and permissions
-//   - Quick-access cards for ERP modules
-//   - User management (owner/admin only)
-//   - Inventory management (all roles, Rust enforces real permissions)
-//
-// Because we have no React Router yet, module panels are shown
-// using local state ("tabs"). When you add a real router later,
-// each module gets its own URL instead.
+// Animated stat cards, revenue trend area chart, invoice-status
+// donut, top products bars, stock health, and recent invoices.
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { motion } from "framer-motion";
 
 import {
-  Avatar,
+  Area,
+  AreaChart,
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
+
+import {
   Badge,
-  Button,
+  Box,
   Card,
-  Container,
   Divider,
-  Grid,
   Group,
-  Modal,
+  Progress,
   SimpleGrid,
   Stack,
   Table,
   Text,
-  TextInput,
-  PasswordInput,
-  Select,
-  Title,
-  Tooltip,
-  Switch,
-  ScrollArea,
+  ThemeIcon,
 } from "@mantine/core";
 
-import { useForm } from "@mantine/form";
+import {
+  TrendingUp,
+  Wallet,
+  Receipt,
+  Package,
+  ArrowUpRight,
+  ArrowDownRight,
+  AlertTriangle,
+  CircleDollarSign,
+} from "lucide-react";
 
 import {
-  getCompany,
-  getErrorMessage,
-  listCompanyUsers,
-  createCompanyUser,
-  updateCompanyUserRole,
-  setCompanyUserActive,
-  createBackup,
+  reportSalesSummary,
+  reportSalesByMonth,
+  reportTopProducts,
+  reportStock,
+  listInvoices,
+  listPurchaseOrders,
 } from "../../api/backend";
 
-import InventoryPage from "../inventory/InventoryPage";
-import InvoicePage from "../invoices/InvoicePage";
-import ReportsPage from "../reports/ReportsPage";
+import type {
+  PublicUser,
+  SalesSummary,
+  SalesByPeriod,
+  StockSummary,
+  TopProduct,
+  PublicInvoice,
+  PublicPurchaseOrder,
+} from "../../types/backend";
 
-import type { PublicCompany, PublicUser, UserRole } from "../../types/backend";
+import AnimatedNumber from "../../components/AnimatedNumber";
+import { INK } from "../../theme";
 
 // ==========================================
-// PROPS
+// HELPERS
 // ==========================================
 
-interface DashboardPageProps {
-  user: PublicUser;
-  onLogout: () => Promise<void>;
+export function p(paisa: number): string {
+  return (paisa / 100).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
 }
 
-// ==========================================
-// WHAT EACH ROLE CAN SEE (frontend UX only — Rust enforces real security)
-// ==========================================
+// Recharts-safe money formatter (tooltip values may be undefined).
+const fmtMoney = (value: unknown): string => p(Math.round(Number(value ?? 0) * 100));
 
-const ROLE_CAPABILITIES: Record<UserRole, string[]> = {
-  owner: [
-    "Full company control",
-    "Create administrators and employees",
-    "Change user roles",
-    "Activate / deactivate users",
-    "Manage inventory and invoices",
-  ],
-  admin: [
-    "Update company information",
-    "Create and manage employees",
-    "Manage inventory and invoices",
-  ],
-  employee: ["Access assigned ERP modules", "Cannot manage company users"],
+const fadeUp = {
+  initial: { opacity: 0, y: 18 },
+  animate: { opacity: 1, y: 0 },
 };
-
-const ROLE_COLORS: Record<UserRole, string> = {
-  owner: "violet",
-  admin: "blue",
-  employee: "green",
-};
-
-// ==========================================
-// DASHBOARD VIEWS (local "tabs" without a router)
-// ==========================================
-
-type DashboardView = "home" | "users" | "inventory" | "invoices" | "reports";
 
 // ==========================================
 // MAIN COMPONENT
 // ==========================================
 
-export default function DashboardPage({ user, onLogout }: DashboardPageProps) {
-  const [company, setCompany] = useState<PublicCompany | null>(null);
-  const [view, setView] = useState<DashboardView>("home");
-  const [companyError, setCompanyError] = useState<string | null>(null);
-  const [backing, setBacking] = useState(false);
-  const [backupMsg, setBackupMsg] = useState<string | null>(null);
-
-  async function handleBackup() {
-    setBacking(true);
-    setBackupMsg(null);
-    try {
-      const path = await createBackup();
-      setBackupMsg(`Backup saved: ${path}`);
-    } catch (err) {
-      setBackupMsg(`Error: ${getErrorMessage(err)}`);
-    } finally {
-      setBacking(false);
-      // Clear message after 5 seconds
-      setTimeout(() => setBackupMsg(null), 5000);
-    }
-  }
-
-  // Load company info on mount
-  useEffect(() => {
-    getCompany()
-      .then(setCompany)
-      .catch((err) => setCompanyError(getErrorMessage(err)));
-  }, []);
-
-  // Can this user see the "Company Users" management section?
-  const canManageUsers = user.role === "owner" || user.role === "admin";
-
-  return (
-    <Container size="lg" py="xl">
-      {/* ---- TOP BAR ---- */}
-      <Group justify="space-between" mb="xl">
-        <Stack gap={0}>
-          <Title order={3}>{company ? company.name : "Ijaz & Company"}</Title>
-          <Text size="sm" c="dimmed">
-            {company?.currencyCode ?? "PKR"} — Desktop ERP
-          </Text>
-        </Stack>
-
-        <Group>
-          <Badge color={ROLE_COLORS[user.role]} variant="light" size="lg">
-            {user.role.toUpperCase()}
-          </Badge>
-          <Avatar color="blue" radius="xl">
-            {user.fullName.charAt(0).toUpperCase()}
-          </Avatar>
-          <Stack gap={0} align="flex-end">
-            <Text size="sm" fw={500}>
-              {user.fullName}
-            </Text>
-            <Text size="xs" c="dimmed">
-              {user.email}
-            </Text>
-          </Stack>
-          <Tooltip label="Backup database">
-            <Button variant="subtle" onClick={handleBackup} loading={backing}>
-              💾 Backup
-            </Button>
-          </Tooltip>
-          {backupMsg && (
-            <Text size="xs" c={backupMsg.startsWith("Error") ? "red" : "green"}>
-              {backupMsg}
-            </Text>
-          )}
-          <Button variant="outline" color="red" onClick={onLogout}>
-            Logout
-          </Button>
-        </Group>
-      </Group>
-
-      <Divider mb="xl" />
-
-      {/* ---- VIEW SWITCHER ---- */}
-      <Group mb="xl">
-        <Button
-          variant={view === "home" ? "filled" : "subtle"}
-          onClick={() => setView("home")}
-        >
-          Dashboard
-        </Button>
-        <Button
-          variant={view === "inventory" ? "filled" : "subtle"}
-          onClick={() => setView("inventory")}
-        >
-          Inventory
-        </Button>
-        <Button
-          variant={view === "invoices" ? "filled" : "subtle"}
-          onClick={() => setView("invoices")}
-        >
-          Invoices
-        </Button>
-        <Button
-          variant={view === "reports" ? "filled" : "subtle"}
-          onClick={() => setView("reports")}
-        >
-          Reports
-        </Button>
-        {canManageUsers && (
-          <Button
-            variant={view === "users" ? "filled" : "subtle"}
-            onClick={() => setView("users")}
-          >
-            Company Users
-          </Button>
-        )}
-      </Group>
-
-      {/* ---- HOME VIEW ---- */}
-      {view === "home" && (
-        <HomeView
-          user={user}
-          company={company}
-          companyError={companyError}
-          onNavigate={setView}
-        />
-      )}
-
-      {/* ---- INVENTORY VIEW ---- */}
-      {view === "inventory" && <InventoryPage user={user} />}
-
-      {/* ---- INVOICES VIEW ---- */}
-      {view === "invoices" && <InvoicePage user={user} />}
-
-      {/* ---- REPORTS VIEW ---- */}
-      {view === "reports" && <ReportsPage />}
-
-      {/* ---- USER MANAGEMENT VIEW ---- */}
-      {view === "users" && canManageUsers && (
-        <UserManagementView currentUser={user} />
-      )}
-    </Container>
-  );
-}
-
-// ==========================================
-// HOME VIEW — Company card + permissions + module cards
-// ==========================================
-
-function HomeView({
-  user,
-  company,
-  companyError,
-  onNavigate,
-}: {
-  user: PublicUser;
-  company: PublicCompany | null;
-  companyError: string | null;
-  onNavigate: (view: DashboardView) => void;
-}) {
-  return (
-    <Grid>
-      {/* ---- COMPANY CARD ---- */}
-      <Grid.Col span={6}>
-        <Card withBorder padding="lg" radius="md" h="100%">
-          <Title order={5} mb="md">
-            Company Information
-          </Title>
-          {companyError && (
-            <Text c="red" size="sm" mb="sm">
-              {companyError}
-            </Text>
-          )}
-          {company ? (
-            <Stack gap="xs">
-              <InfoRow label="Name" value={company.name} />
-              <InfoRow label="Currency" value={company.currencyCode} />
-              <InfoRow label="Email" value={company.email ?? "—"} />
-              <InfoRow label="Phone" value={company.phone ?? "—"} />
-              <InfoRow label="Address" value={company.address ?? "—"} />
-              <InfoRow label="Tax Number" value={company.taxNumber ?? "—"} />
-              <InfoRow label="Created" value={company.createdAt} />
-            </Stack>
-          ) : (
-            <Text size="sm" c="dimmed">
-              Loading company details...
-            </Text>
-          )}
-        </Card>
-      </Grid.Col>
-
-      {/* ---- PERMISSIONS CARD ---- */}
-      <Grid.Col span={6}>
-        <Card withBorder padding="lg" radius="md" h="100%">
-          <Title order={5} mb="md">
-            Your Permissions
-          </Title>
-          <Stack gap="xs">
-            {ROLE_CAPABILITIES[user.role].map((cap) => (
-              <Text key={cap} size="sm">
-                • {cap}
-              </Text>
-            ))}
-          </Stack>
-        </Card>
-      </Grid.Col>
-
-      {/* ---- MODULE CARDS ---- */}
-      <Grid.Col span={12}>
-        <Title order={5} mb="md" mt="md">
-          ERP Modules
-        </Title>
-        <SimpleGrid cols={3}>
-          <ModuleCard
-            title="Inventory"
-            description="Manage products, stock, categories"
-            color="teal"
-            onClick={() => onNavigate("inventory")}
-          />
-          <ModuleCard
-            title="Invoices"
-            description="Create bills and track payments"
-            color="orange"
-          />
-          {(user.role === "owner" || user.role === "admin") && (
-            <ModuleCard
-              title="Company Users"
-              description="Manage admins and employees"
-              color="blue"
-              onClick={() => onNavigate("users")}
-            />
-          )}
-        </SimpleGrid>
-      </Grid.Col>
-    </Grid>
-  );
-}
-
-// ==========================================
-// USER MANAGEMENT VIEW — Full CRUD table
-// ==========================================
-
-function UserManagementView({ currentUser }: { currentUser: PublicUser }) {
-  const [users, setUsers] = useState<PublicUser[]>([]);
+export default function DashboardHome({ user }: { user: PublicUser }) {
+  const [sales, setSales] = useState<SalesSummary | null>(null);
+  const [byMonth, setByMonth] = useState<SalesByPeriod[]>([]);
+  const [topProducts, setTopProducts] = useState<TopProduct[]>([]);
+  const [stock, setStock] = useState<StockSummary | null>(null);
+  const [recentInvoices, setRecentInvoices] = useState<PublicInvoice[]>([]);
+  const [recentPOs, setRecentPOs] = useState<PublicPurchaseOrder[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [createModalOpen, setCreateModalOpen] = useState(false);
-  const [actionLoading, setActionLoading] = useState<string | null>(null);
-
-  // ---- Load users ----
-  async function loadUsers() {
-    setLoading(true);
-    try {
-      const data = await listCompanyUsers();
-      setUsers(data);
-      setError(null);
-    } catch (err) {
-      setError(getErrorMessage(err));
-    } finally {
-      setLoading(false);
-    }
-  }
 
   useEffect(() => {
-    loadUsers();
+    Promise.all([
+      reportSalesSummary().catch(() => null),
+      reportSalesByMonth().catch(() => []),
+      reportTopProducts().catch(() => []),
+      reportStock(10).catch(() => null),
+      listInvoices().catch(() => []),
+      listPurchaseOrders().catch(() => []),
+    ]).then(([s, m, tp, st, inv, po]) => {
+      setSales(s);
+      setByMonth(m ?? []);
+      setTopProducts(tp ?? []);
+      setStock(st);
+      setRecentInvoices((inv ?? []).slice(0, 6));
+      setRecentPOs((po ?? []).slice(0, 6));
+      setLoading(false);
+    });
   }, []);
 
-  // ---- Create user handler ----
-  async function handleCreateUser(values: {
-    fullName: string;
-    email: string;
-    password: string;
-    role: "admin" | "employee";
-  }) {
-    try {
-      await createCompanyUser(values);
-      setCreateModalOpen(false);
-      await loadUsers();
-    } catch (err) {
-      throw new Error(getErrorMessage(err));
-    }
-  }
+  // Derive invoice-status donut data
+  const statusData = useMemo(() => {
+    if (!sales) return [];
+    return [
+      { name: "Paid", value: sales.paidCount, color: INK.chart.green },
+      { name: "Pending", value: sales.finalizedCount, color: INK.chart.blue },
+      { name: "Draft", value: sales.draftCount, color: INK.chart.orange },
+      { name: "Cancelled", value: sales.cancelledCount, color: INK.chart.red },
+    ].filter((d) => d.value > 0);
+  }, [sales]);
 
-  // ---- Change role handler ----
-  async function handleChangeRole(
-    userId: string,
-    newRole: "admin" | "employee",
-  ) {
-    setActionLoading(userId);
-    try {
-      await updateCompanyUserRole({ userId, role: newRole });
-      await loadUsers();
-    } catch (err) {
-      setError(getErrorMessage(err));
-    } finally {
-      setActionLoading(null);
-    }
-  }
+  // Chart-friendly monthly revenue series
+  const revenueSeries = useMemo(
+    () =>
+      byMonth.map((m) => ({
+        name: m.period,
+        Revenue: m.revenue / 100,
+        Collected: m.paid / 100,
+      })),
+    [byMonth],
+  );
 
-  // ---- Toggle active handler ----
-  async function handleToggleActive(userId: string, currentActive: boolean) {
-    setActionLoading(userId);
-    try {
-      await setCompanyUserActive({ userId, active: !currentActive });
-      await loadUsers();
-    } catch (err) {
-      setError(getErrorMessage(err));
-    } finally {
-      setActionLoading(null);
-    }
-  }
+  const productData = useMemo(
+    () =>
+      topProducts.slice(0, 7).map((prod) => ({
+        name:
+          prod.productName.length > 16
+            ? `${prod.productName.slice(0, 15)}…`
+            : prod.productName,
+        Value: prod.totalRevenue / 100,
+        fill: INK.chart.navy,
+      })),
+    [topProducts],
+  );
 
-  // ---- Permission checks ----
-  // Frontend hides buttons for UX. Rust still enforces the real rules.
+  const lowStockItems = stock?.items
+    .filter((i) => i.isLowStock)
+    .slice(0, 5) ?? [];
 
-  function canChangeRole(targetUser: PublicUser): boolean {
-    if (currentUser.role !== "owner") return false;
-    if (targetUser.id === currentUser.id) return false;
-    if (targetUser.role === "owner") return false;
-    return true;
-  }
+  const collectionRate = useMemo(() => {
+    if (!sales || sales.totalRevenue <= 0) return 0;
+    return Math.round((sales.totalPaid / sales.totalRevenue) * 100);
+  }, [sales]);
 
-  function canToggleActive(targetUser: PublicUser): boolean {
-    if (targetUser.id === currentUser.id) return false;
-    if (targetUser.role === "owner") return false;
-    if (currentUser.role === "admin" && targetUser.role !== "employee")
-      return false;
-    return true;
+  if (loading) {
+    return (
+      <Stack align="center" justify="center" style={{ minHeight: "60vh" }}>
+        <motion.div
+          animate={{ rotate: 360 }}
+          transition={{ repeat: Infinity, duration: 1.2, ease: "linear" }}
+          style={{
+            width: 40,
+            height: 40,
+            borderRadius: 12,
+            border: "3px solid #E3E8F1",
+            borderTopColor: INK.gold,
+          }}
+        />
+        <Text c="dimmed" size="sm">
+          Loading your dashboard…
+        </Text>
+      </Stack>
+    );
   }
 
   return (
-    <Stack>
-      <Group justify="space-between">
-        <Title order={4}>Company Users</Title>
-        <Button onClick={() => setCreateModalOpen(true)}>+ Add User</Button>
+    <Stack gap="lg">
+      {/* ---- HERO BANNER ---- */}
+      <motion.div
+        initial={{ opacity: 0, y: -14 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
+      >
+        <Box
+          style={{
+            position: "relative",
+            overflow: "hidden",
+            borderRadius: 20,
+            padding: "28px 32px",
+            background:
+              "linear-gradient(120deg, #131C39 0%, #1D2B54 55%, #2E4178 100%)",
+            color: "#fff",
+          }}
+        >
+          <motion.div
+            aria-hidden
+            style={{
+              position: "absolute",
+              width: 320,
+              height: 320,
+              borderRadius: "50%",
+              right: -80,
+              top: -140,
+              background:
+                "radial-gradient(circle, rgba(201,149,42,0.35) 0%, transparent 70%)",
+            }}
+            animate={{ scale: [1, 1.15, 1], opacity: [0.7, 1, 0.7] }}
+            transition={{ repeat: Infinity, duration: 6, ease: "easeInOut" }}
+          />
+          <motion.div
+            aria-hidden
+            style={{
+              position: "absolute",
+              width: 220,
+              height: 220,
+              borderRadius: "50%",
+              right: 160,
+              bottom: -120,
+              background:
+                "radial-gradient(circle, rgba(255,255,255,0.08) 0%, transparent 70%)",
+            }}
+            animate={{ scale: [1.2, 1, 1.2] }}
+            transition={{ repeat: Infinity, duration: 8, ease: "easeInOut" }}
+          />
+          <Group justify="space-between" align="flex-start" wrap="wrap" style={{ position: "relative" }}>
+            <Stack gap={4}>
+              <Text size="xs" style={{ color: "#E6C965", fontWeight: 700, letterSpacing: 1.5, textTransform: "uppercase" }}>
+                Welcome back
+              </Text>
+              <Text fw={800} size="xl" style={{ letterSpacing: -0.4 }}>
+                {user.fullName.split(" ")[0]}, here’s your business at a glance.
+              </Text>
+              <Text size="sm" style={{ color: "#A9B6D6" }}>
+                Revenue collection rate is{" "}
+                <Text span fw={700} style={{ color: collectionRate >= 70 ? "#7AD69A" : "#F0C15A" }}>
+                  {collectionRate}%
+                </Text>{" "}
+                —{" "}
+                {collectionRate >= 70
+                  ? "healthy cash flow."
+                  : "consider following up on outstanding invoices."}
+              </Text>
+            </Stack>
+            <Group gap={10}>
+              <Badge size="lg" variant="light" color="gold" styles={{ label: { fontWeight: 700 } }}>
+                <Group gap={6} wrap="nowrap">
+                  <CircleDollarSign size={14} />
+                  {user.role.toUpperCase()}
+                </Group>
+              </Badge>
+            </Group>
+          </Group>
+        </Box>
+      </motion.div>
+
+      {/* ---- STAT CARDS ---- */}
+      <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }} spacing="md">
+        <StatCard
+          delay={0.05}
+          icon={<TrendingUp size={18} />}
+          tint={INK.chart.navy}
+          label="Total Revenue"
+          value={sales ? p(sales.totalRevenue) : "—"}
+          sub={
+            <Group gap={6}>
+              <Text size="xs" c="dimmed">{sales?.totalInvoices ?? 0} invoices</Text>
+              <Badge size="xs" color="blue" variant="light">{sales?.paidCount ?? 0} paid</Badge>
+            </Group>
+          }
+          footer={
+            sales && sales.totalTax > 0 ? `Includes ${p(sales.totalTax)} tax` : "No tax recorded yet"
+          }
+        />
+        <StatCard
+          delay={0.1}
+          icon={<Wallet size={18} />}
+          tint={INK.chart.green}
+          label="Collected"
+          value={sales ? p(sales.totalPaid) : "—"}
+          sub={
+            <Group gap={6}>
+              <ArrowUpRight size={14} color={INK.chart.green} />
+              <Text size="xs" style={{ color: INK.chart.green }}>{collectionRate}% collection rate</Text>
+            </Group>
+          }
+          footer="Cash actually received"
+        />
+        <StatCard
+          delay={0.15}
+          icon={<Receipt size={18} />}
+          tint={sales && sales.totalOutstanding > 0 ? INK.chart.orange : INK.chart.green}
+          label="Outstanding"
+          value={sales ? p(sales.totalOutstanding) : "—"}
+          sub={
+            <Group gap={6}>
+              <ArrowDownRight size={14} color={sales && sales.totalOutstanding > 0 ? INK.chart.orange : INK.chart.green} />
+              <Text size="xs" c="dimmed">{sales?.finalizedCount ?? 0} pending invoices</Text>
+            </Group>
+          }
+          footer={
+            sales && sales.totalOutstanding > 0
+              ? "Follow up to recover receivables"
+              : "Nothing owed — great!"
+          }
+        />
+        <StatCard
+          delay={0.2}
+          icon={<Package size={18} />}
+          tint={INK.chart.violet}
+          label="Products"
+          value={String(stock?.totalProducts ?? 0)}
+          sub={
+            <Group gap={6}>
+              <Text size="xs" c="dimmed">{stock?.totalStockUnits.toLocaleString() ?? 0} units</Text>
+            </Group>
+          }
+          footer={
+            <Group gap={6}>
+              <AlertTriangle size={12} color={stock && stock.lowStockCount > 0 ? INK.chart.orange : INK.chart.green} />
+              <Text size="xs" c={stock && stock.lowStockCount > 0 ? "orange" : "green"}>
+                {stock?.lowStockCount ?? 0} low stock
+              </Text>
+            </Group>
+          }
+        />
+      </SimpleGrid>
+
+      {/* ---- CHARTS ROW 1 ---- */}
+      <Group align="stretch" grow>
+        {/* Revenue trend */}
+        <motion.div {...fadeUp} transition={{ duration: 0.5, delay: 0.1 }} style={{ flex: 2, minWidth: 300 }}>
+          <Card withBorder shadow="sm" p="lg" style={{ height: "100%" }}>
+            <Group justify="space-between" mb="md">
+              <Stack gap={2}>
+                <Text fw={700} style={{ color: INK.navy }}>Revenue Trend</Text>
+                <Text size="xs" c="dimmed">Monthly invoiced vs collected</Text>
+              </Stack>
+              <Badge color="gold" variant="light" size="sm">PKR</Badge>
+            </Group>
+            {revenueSeries.length === 0 ? (
+              <EmptyChart message="No monthly sales data yet. Create and finalize invoices to see trends." />
+            ) : (
+              <Box h={260}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={revenueSeries} margin={{ top: 8, right: 8, left: -8, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="revFill" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor={INK.chart.navy} stopOpacity={0.28} />
+                        <stop offset="100%" stopColor={INK.chart.navy} stopOpacity={0.02} />
+                      </linearGradient>
+                      <linearGradient id="paidFill" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor={INK.chart.gold} stopOpacity={0.3} />
+                        <stop offset="100%" stopColor={INK.chart.gold} stopOpacity={0.02} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="4 4" stroke="#E7ECF5" vertical={false} />
+                    <XAxis dataKey="name" tick={{ fontSize: 11, fill: "#5C6B84" }} tickLine={false} axisLine={false} />
+                    <YAxis tick={{ fontSize: 11, fill: "#5C6B84" }} tickLine={false} axisLine={false} tickFormatter={(v) => `${v >= 1000 ? `${(v / 1000).toFixed(1)}k` : v}`} />
+                    <Tooltip
+                      formatter={(value) => [fmtMoney(value), ""]}
+                      labelStyle={{ fontWeight: 700, color: INK.navy }}
+                      contentStyle={{ borderRadius: 12, border: "1px solid #E3E8F1", boxShadow: "0 10px 30px -12px rgba(29,43,84,0.25)" }}
+                    />
+                    <Area type="monotone" dataKey="Revenue" stroke={INK.chart.navy} strokeWidth={2.5} fill="url(#revFill)" animationDuration={900} />
+                    <Area type="monotone" dataKey="Collected" stroke={INK.chart.gold} strokeWidth={2} fill="url(#paidFill)" animationDuration={900} />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </Box>
+            )}
+          </Card>
+        </motion.div>
+
+        {/* Invoice status donut */}
+        <motion.div {...fadeUp} transition={{ duration: 0.5, delay: 0.16 }} style={{ flex: 1, minWidth: 260 }}>
+          <Card withBorder shadow="sm" p="lg" style={{ height: "100%" }}>
+            <Text fw={700} style={{ color: INK.navy }} mb="md">Invoice Status</Text>
+            {statusData.length === 0 ? (
+              <EmptyChart message="No invoices yet." />
+            ) : (
+              <>
+                <Box h={210} pos="relative">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={statusData}
+                        dataKey="value"
+                        nameKey="name"
+                        innerRadius={60}
+                        outerRadius={86}
+                        paddingAngle={3}
+                        cornerRadius={6}
+                        animationDuration={900}
+                      >
+                        {statusData.map((entry, i) => (
+                          <Cell key={i} fill={entry.color} />
+                        ))}
+                      </Pie>
+                      <Tooltip
+                        formatter={(value, name) => [`${Number(value ?? 0)} invoices`, String(name)]}
+                        contentStyle={{ borderRadius: 12, border: "1px solid #E3E8F1" }}
+                      />
+                    </PieChart>
+                  </ResponsiveContainer>
+                  <Box
+                    style={{
+                      position: "absolute",
+                      inset: 0,
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      pointerEvents: "none",
+                    }}
+                  >
+                    <Text fw={800} size="xl" style={{ color: INK.navy }} className="tabular">
+                      {sales?.totalInvoices ?? 0}
+                    </Text>
+                    <Text size="xs" c="dimmed">total invoices</Text>
+                  </Box>
+                </Box>
+                <Stack gap={6} mt="sm">
+                  {statusData.map((d) => (
+                    <Group key={d.name} justify="space-between">
+                      <Group gap={6}>
+                        <Box w={8} h={8} style={{ borderRadius: 4, background: d.color }} />
+                        <Text size="xs">{d.name}</Text>
+                      </Group>
+                      <Text size="xs" fw={700} className="tabular">{d.value}</Text>
+                    </Group>
+                  ))}
+                </Stack>
+              </>
+            )}
+          </Card>
+        </motion.div>
       </Group>
 
-      {error && (
-        <Text c="red" size="sm">
-          {error}
-        </Text>
-      )}
+      {/* ---- CHARTS ROW 2 ---- */}
+      <Group align="stretch" grow>
+        {/* Top products */}
+        <motion.div {...fadeUp} transition={{ duration: 0.5, delay: 0.22 }} style={{ flex: 2, minWidth: 300 }}>
+          <Card withBorder shadow="sm" p="lg" style={{ height: "100%" }}>
+            <Text fw={700} style={{ color: INK.navy }} mb="md">Top Products by Revenue</Text>
+            {productData.length === 0 ? (
+              <EmptyChart message="Finalize invoices to surface your best sellers." />
+            ) : (
+              <Box h={260}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={productData} layout="vertical" margin={{ top: 4, right: 16, left: 8, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="4 4" stroke="#E7ECF5" horizontal={false} />
+                    <XAxis type="number" tick={{ fontSize: 11, fill: "#5C6B84" }} tickLine={false} axisLine={false} tickFormatter={(v) => `${v >= 1000 ? `${(v / 1000).toFixed(1)}k` : v}`} />
+                    <YAxis type="category" dataKey="name" width={120} tick={{ fontSize: 11, fill: "#5C6B84" }} tickLine={false} axisLine={false} />
+                    <Tooltip
+                      formatter={(value) => [fmtMoney(value), "Revenue"]}
+                      contentStyle={{ borderRadius: 12, border: "1px solid #E3E8F1" }}
+                      cursor={{ fill: "rgba(29,43,84,0.04)" }}
+                    />
+                    <Bar dataKey="Value" radius={[0, 8, 8, 0]} animationDuration={900}>
+                      {productData.map((_, i) => (
+                        <Cell key={i} fill={i === 0 ? INK.chart.gold : INK.chart.navy} fillOpacity={i === 0 ? 1 : 1 - i * 0.1} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </Box>
+            )}
+          </Card>
+        </motion.div>
 
-      {loading ? (
-        <Text c="dimmed">Loading users...</Text>
-      ) : (
-        <ScrollArea>
-          <Table striped highlightOnHover withTableBorder>
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th>Name</Table.Th>
-                <Table.Th>Email</Table.Th>
-                <Table.Th>Role</Table.Th>
-                <Table.Th>Status</Table.Th>
-                <Table.Th>Created</Table.Th>
-                <Table.Th>Actions</Table.Th>
-              </Table.Tr>
-            </Table.Thead>
-            <Table.Tbody>
-              {users.map((u) => (
-                <Table.Tr key={u.id}>
-                  <Table.Td>
-                    <Group gap="sm">
-                      <Avatar size="sm" color="blue" radius="xl">
-                        {u.fullName.charAt(0).toUpperCase()}
-                      </Avatar>
-                      <Text size="sm" fw={500}>
-                        {u.fullName}
-                      </Text>
-                      {u.id === currentUser.id && (
-                        <Badge size="xs" variant="light">
-                          You
+        {/* Stock health */}
+        <motion.div {...fadeUp} transition={{ duration: 0.5, delay: 0.28 }} style={{ flex: 1, minWidth: 260 }}>
+          <Card withBorder shadow="sm" p="lg" style={{ height: "100%" }}>
+            <Group justify="space-between" mb="md">
+              <Text fw={700} style={{ color: INK.navy }}>Stock Health</Text>
+              <Badge color={lowStockItems.length > 0 ? "orange" : "green"} variant="light" size="sm">
+                {lowStockItems.length} low
+              </Badge>
+            </Group>
+
+            {stock ? (
+              <Stack gap="sm">
+                <Group justify="space-between">
+                  <Text size="xs" c="dimmed">Stock value at cost</Text>
+                  <Text size="sm" fw={700} className="tabular">{p(stock.totalValueAtCost)}</Text>
+                </Group>
+                <Group justify="space-between">
+                  <Text size="xs" c="dimmed">Stock value at sell</Text>
+                  <Text size="sm" fw={700} className="tabular" style={{ color: INK.chart.green }}>{p(stock.totalValueAtSell)}</Text>
+                </Group>
+                <Divider />
+                <Group justify="space-between">
+                  <Text size="xs" fw={600}>Potential profit</Text>
+                  <Text size="sm" fw={800} className="tabular" style={{ color: INK.chart.green }}>
+                    {p(stock.totalValueAtSell - stock.totalValueAtCost)}
+                  </Text>
+                </Group>
+
+                <Divider my="xs" label="Low stock alert" labelPosition="left" styles={{ label: { fontSize: 11, fontWeight: 700 } }} />
+
+                {lowStockItems.length === 0 ? (
+                  <Text size="xs" c="dimmed" ta="center" py="md">
+                    All products are well stocked. 
+                  </Text>
+                ) : (
+                  <Stack gap="sm">
+                    {lowStockItems.map((item) => {
+                      const max = Math.max(item.quantityInStock, 10);
+                      const pct = Math.max(0, Math.min(100, (item.quantityInStock / max) * 100));
+                      return (
+                        <Box key={item.productId}>
+                          <Group justify="space-between" mb={4}>
+                            <Text size="xs" fw={600} style={{ color: INK.navy }} truncate>
+                              {item.productName}
+                            </Text>
+                            <Text size="xs" className="tabular" c={item.quantityInStock <= 0 ? "red" : "orange"}>
+                              {item.quantityInStock} left
+                            </Text>
+                          </Group>
+                          <Progress
+                            value={pct}
+                            size="sm"
+                            radius="xl"
+                            color={item.quantityInStock <= 0 ? "red" : "orange"}
+                          />
+                        </Box>
+                      );
+                    })}
+                  </Stack>
+                )}
+              </Stack>
+            ) : (
+              <EmptyChart message="No stock data yet." />
+            )}
+          </Card>
+        </motion.div>
+      </Group>
+
+      {/* ---- RECENT INVOICES ---- */}
+      <motion.div {...fadeUp} transition={{ duration: 0.5, delay: 0.34 }}>
+        <Card withBorder shadow="sm" p="lg">
+          <Group justify="space-between" mb="md">
+            <Stack gap={2}>
+              <Text fw={700} style={{ color: INK.navy }}>Recent Invoices</Text>
+              <Text size="xs" c="dimmed">Latest billing activity</Text>
+            </Stack>
+            <Badge color="gold" variant="light" size="sm">
+              {recentInvoices.length} shown
+            </Badge>
+          </Group>
+          {recentInvoices.length === 0 ? (
+            <EmptyChart message="No invoices yet. Head to the Invoices module to create your first bill." />
+          ) : (
+            <Box style={{ overflowX: "auto" }}>
+              <Table highlightOnHover verticalSpacing="sm">
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>Invoice</Table.Th>
+                    <Table.Th>Date</Table.Th>
+                    <Table.Th>Status</Table.Th>
+                    <Table.Th ta="right">Total</Table.Th>
+                    <Table.Th ta="right">Balance</Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {recentInvoices.map((inv, i) => (
+                    <motion.tr
+                      key={inv.id}
+                      initial={{ opacity: 0, x: -12 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: 0.05 * i, duration: 0.3 }}
+                    >
+                      <Table.Td>
+                        <Text size="sm" fw={600} style={{ color: INK.navy }} className="mono">
+                          {inv.invoiceNumber}
+                        </Text>
+                      </Table.Td>
+                      <Table.Td>
+                        <Text size="sm" c="dimmed">{inv.invoiceDate}</Text>
+                      </Table.Td>
+                      <Table.Td>
+                        <Badge
+                          size="sm"
+                          variant="light"
+                          color={
+                            inv.status === "paid"
+                              ? "green"
+                              : inv.status === "finalized"
+                                ? "blue"
+                                : inv.status === "cancelled"
+                                  ? "red"
+                                  : "yellow"
+                          }
+                        >
+                          {inv.status}
                         </Badge>
-                      )}
-                    </Group>
-                  </Table.Td>
-                  <Table.Td>
-                    <Text size="sm">{u.email}</Text>
-                  </Table.Td>
-                  <Table.Td>
-                    {canChangeRole(u) ? (
-                      <Select
-                        size="xs"
-                        data={[
-                          { value: "admin", label: "Admin" },
-                          { value: "employee", label: "Employee" },
-                        ]}
-                        value={u.role}
-                        onChange={(value) => {
-                          if (value)
-                            handleChangeRole(
-                              u.id,
-                              value as "admin" | "employee",
-                            );
-                        }}
-                        disabled={actionLoading === u.id}
-                        w={130}
-                      />
-                    ) : (
-                      <Badge color={ROLE_COLORS[u.role]} variant="light">
-                        {u.role}
-                      </Badge>
-                    )}
-                  </Table.Td>
-                  <Table.Td>
-                    <Badge color={u.isActive ? "green" : "red"} variant="light">
-                      {u.isActive ? "Active" : "Inactive"}
-                    </Badge>
-                  </Table.Td>
-                  <Table.Td>
-                    <Text size="xs" c="dimmed">
-                      {u.createdAt}
-                    </Text>
-                  </Table.Td>
-                  <Table.Td>
-                    {canToggleActive(u) && (
-                      <Tooltip label={u.isActive ? "Deactivate" : "Reactivate"}>
-                        <Switch
-                          checked={u.isActive}
-                          onChange={() => handleToggleActive(u.id, u.isActive)}
-                          disabled={actionLoading === u.id}
-                          color="red"
-                          onLabel="ON"
-                          offLabel="OFF"
-                        />
-                      </Tooltip>
-                    )}
-                  </Table.Td>
-                </Table.Tr>
-              ))}
-            </Table.Tbody>
-          </Table>
-        </ScrollArea>
-      )}
+                      </Table.Td>
+                      <Table.Td ta="right">
+                        <Text size="sm" fw={600} className="tabular">{p(inv.grandTotal)}</Text>
+                      </Table.Td>
+                      <Table.Td ta="right">
+                        <Text
+                          size="sm"
+                          className="tabular"
+                          c={inv.balanceDue > 0 ? "orange" : "green"}
+                        >
+                          {p(inv.balanceDue)}
+                        </Text>
+                      </Table.Td>
+                    </motion.tr>
+                  ))}
+                </Table.Tbody>
+              </Table>
+            </Box>
+          )}
+        </Card>
+      </motion.div>
 
-      {/* ---- CREATE USER MODAL ---- */}
-      <CreateUserModal
-        opened={createModalOpen}
-        onClose={() => setCreateModalOpen(false)}
-        onCreate={handleCreateUser}
-        currentUser={currentUser}
-      />
+      {/* ---- RECENT PURCHASE ORDERS ---- */}
+      <motion.div {...fadeUp} transition={{ duration: 0.5, delay: 0.4 }}>
+        <Card withBorder shadow="sm" p="lg">
+          <Group justify="space-between" mb="md">
+            <Stack gap={2}>
+              <Text fw={700} style={{ color: INK.navy }}>Recent Purchase Orders</Text>
+              <Text size="xs" c="dimmed">Latest procurement activity</Text>
+            </Stack>
+            <Badge color="gold" variant="light" size="sm">
+              {recentPOs.length} shown
+            </Badge>
+          </Group>
+          {recentPOs.length === 0 ? (
+            <EmptyChart message="No purchase orders yet. Head to the Purchasing module to order stock from suppliers." />
+          ) : (
+            <Box style={{ overflowX: "auto" }}>
+              <Table highlightOnHover verticalSpacing="sm">
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>PO</Table.Th>
+                    <Table.Th>Supplier</Table.Th>
+                    <Table.Th>Date</Table.Th>
+                    <Table.Th>Status</Table.Th>
+                    <Table.Th ta="right">Total</Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {recentPOs.map((po, i) => (
+                    <motion.tr
+                      key={po.id}
+                      initial={{ opacity: 0, x: -12 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: 0.05 * i, duration: 0.3 }}
+                    >
+                      <Table.Td>
+                        <Text size="sm" fw={600} style={{ color: INK.navy }} className="mono">
+                          {po.poNumber}
+                        </Text>
+                      </Table.Td>
+                      <Table.Td>
+                        <Text size="sm">{po.supplierName}</Text>
+                      </Table.Td>
+                      <Table.Td>
+                        <Text size="sm" c="dimmed">{po.poDate}</Text>
+                      </Table.Td>
+                      <Table.Td>
+                        <Badge
+                          size="sm"
+                          variant="light"
+                          color={
+                            po.status === "paid"
+                              ? "green"
+                              : po.status === "received"
+                                ? "teal"
+                                : po.status === "ordered"
+                                  ? "blue"
+                                  : po.status === "cancelled"
+                                    ? "red"
+                                    : "yellow"
+                          }
+                        >
+                          {po.status}
+                        </Badge>
+                      </Table.Td>
+                      <Table.Td ta="right">
+                        <Text size="sm" fw={600} className="tabular">{p(po.grandTotal)}</Text>
+                      </Table.Td>
+                    </motion.tr>
+                  ))}
+                </Table.Tbody>
+              </Table>
+            </Box>
+          )}
+        </Card>
+      </motion.div>
     </Stack>
   );
 }
 
 // ==========================================
-// CREATE USER MODAL
+// STAT CARD
 // ==========================================
 
-function CreateUserModal({
-  opened,
-  onClose,
-  onCreate,
-  currentUser,
+function StatCard({
+  label,
+  value,
+  icon,
+  tint,
+  sub,
+  footer,
+  delay,
 }: {
-  opened: boolean;
-  onClose: () => void;
-  onCreate: (values: {
-    fullName: string;
-    email: string;
-    password: string;
-    role: "admin" | "employee";
-  }) => Promise<void>;
-  currentUser: PublicUser;
+  label: string;
+  value: string;
+  icon: React.ReactNode;
+  tint: string;
+  sub: React.ReactNode;
+  footer?: React.ReactNode;
+  delay: number;
 }) {
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const form = useForm({
-    initialValues: {
-      fullName: "",
-      email: "",
-      password: "",
-      role: "employee" as "admin" | "employee",
-    },
-    validate: {
-      fullName: (value) =>
-        value.trim().length < 2 ? "Name must be at least 2 characters" : null,
-      email: (value) =>
-        /^\S+@\S+\.\S+$/.test(value) ? null : "Invalid email address",
-      password: (value) =>
-        value.length < 6 ? "Password must be at least 6 characters" : null,
-    },
-  });
-
-  async function handleSubmit(values: typeof form.values) {
-    setError(null);
-    setLoading(true);
-    try {
-      await onCreate(values);
-      form.reset();
-    } catch (err) {
-      setError(getErrorMessage(err));
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  // Owner can create admin or employee; admin can only create employee
-  const roleOptions =
-    currentUser.role === "owner"
-      ? [
-          { value: "admin", label: "Administrator" },
-          { value: "employee", label: "Employee" },
-        ]
-      : [{ value: "employee", label: "Employee" }];
-
+  const isMoney = value.includes(".");
+  const isDash = value === "—";
   return (
-    <Modal opened={opened} onClose={onClose} title="Add New User" centered>
-      <form onSubmit={form.onSubmit(handleSubmit)}>
-        <Stack gap="md">
-          <TextInput
-            label="Full Name"
-            placeholder="John Doe"
-            required
-            {...form.getInputProps("fullName")}
-          />
-
-          <TextInput
-            label="Email"
-            placeholder="john@company.com"
-            type="email"
-            required
-            {...form.getInputProps("email")}
-          />
-
-          <PasswordInput
-            label="Password"
-            placeholder="Minimum 6 characters"
-            required
-            {...form.getInputProps("password")}
-          />
-
-          <Select
-            label="Role"
-            data={roleOptions}
-            required
-            {...form.getInputProps("role")}
-          />
-
-          {error && (
-            <Text c="red" size="sm">
-              {error}
-            </Text>
-          )}
-
-          <Group justify="flex-end">
-            <Button variant="subtle" onClick={onClose}>
-              Cancel
-            </Button>
-            <Button type="submit" loading={loading}>
-              Create User
-            </Button>
-          </Group>
-        </Stack>
-      </form>
-    </Modal>
-  );
-}
-
-// ==========================================
-// SMALL HELPER COMPONENTS
-// ==========================================
-
-function InfoRow({ label, value }: { label: string; value: string }) {
-  return (
-    <Group>
-      <Text size="sm" fw={500} w={100}>
-        {label}
-      </Text>
-      <Text size="sm">{value}</Text>
-    </Group>
-  );
-}
-
-function ModuleCard({
-  title,
-  description,
-  color,
-  onClick,
-}: {
-  title: string;
-  description: string;
-  color: string;
-  onClick?: () => void;
-}) {
-  return (
-    <Card
-      withBorder
-      padding="lg"
-      radius="md"
-      style={{ cursor: onClick ? "pointer" : undefined }}
-      onClick={onClick}
+    <motion.div
+      initial={{ opacity: 0, y: 18 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.45, delay, ease: [0.22, 1, 0.36, 1] }}
+      className="lift"
     >
-      <Stack gap="xs">
-        <Badge color={color} variant="light" w="fit-content">
-          Module
-        </Badge>
-        <Title order={5}>{title}</Title>
-        <Text size="sm" c="dimmed">
-          {description}
-        </Text>
-      </Stack>
-    </Card>
+      <Card withBorder shadow="sm" padding="lg">
+        <Group justify="space-between" align="flex-start">
+          <Stack gap={2}>
+            <Text size="xs" fw={600} style={{ color: "#5C6B84", letterSpacing: 0.4, textTransform: "uppercase" }}>
+              {label}
+            </Text>
+            <Text fw={800} size="xl" style={{ color: INK.navy, letterSpacing: -0.5 }} className="tabular">
+              {isDash ? (
+                "—"
+              ) : isMoney ? (
+                <AnimatedNumber value={parseFloat(value.replace(/[^0-9.-]/g, "")) || 0} decimals={2} prefix="₨ " />
+              ) : (
+                <AnimatedNumber value={parseInt(value, 10) || 0} />
+              )}
+            </Text>
+          </Stack>
+          <ThemeIcon
+            radius="md"
+            size="lg"
+            variant="light"
+            style={{ background: `${tint}18`, color: tint }}
+          >
+            {icon}
+          </ThemeIcon>
+        </Group>
+        <Box mt="xs">{sub}</Box>
+        {footer && (
+          <>
+            <Divider my="sm" />
+            <Text size="xs" c="dimmed">{footer}</Text>
+          </>
+        )}
+      </Card>
+    </motion.div>
+  );
+}
+
+// ==========================================
+// EMPTY CHART STATE
+// ==========================================
+
+function EmptyChart({ message }: { message: string }) {
+  return (
+    <Box
+      style={{
+        height: 220,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        borderRadius: 12,
+        background: "#F3F6FB",
+        border: "1px dashed #D3DCEB",
+      }}
+    >
+      <Text size="sm" c="dimmed" ta="center" maw={260}>
+        {message}
+      </Text>
+    </Box>
   );
 }
