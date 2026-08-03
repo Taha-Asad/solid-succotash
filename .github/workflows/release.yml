@@ -109,7 +109,8 @@ jobs:
           }
           $jsonPath = Join-Path $env:RUNNER_TEMP "latest.json"
           $payload | ConvertTo-Json -Depth 6 | Set-Content -Path $jsonPath -Encoding UTF8
+          $uploadUrl = $release.upload_url.Replace("{?name,label}", "?name=latest.json")
           Invoke-RestMethod -Method Post -Headers $headers -ContentType "application/json" `
-            -Uri "$api/releases/$($release.id)/assets?name=latest.json" `
+            -Uri $uploadUrl `
             -InFile $jsonPath | Out-Null
           Write-Host "Uploaded latest.json (version $version)"
