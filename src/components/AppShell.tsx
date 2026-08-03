@@ -4,7 +4,7 @@
 // Dark navy sidebar + animated navigation + content area
 // with smooth framer-motion page transitions.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   AnimatePresence,
   motion,
@@ -17,6 +17,7 @@ import {
   Box,
   Button,
   Group,
+  Modal,
   ScrollArea,
   Stack,
   Text,
@@ -33,9 +34,12 @@ import {
   LogOut,
   DatabaseBackup,
   Settings2,
+  Download,
 } from "lucide-react";
 
 import { createBackup, getErrorMessage } from "../api/backend";
+import { checkForUpdates, installUpdate } from "../api/updater";
+import type { UpdateResult } from "../api/updater";
 import type { PublicUser } from "../types/backend";
 
 import DashboardHome from "../features/dashboard/DashboardPage";
@@ -149,6 +153,36 @@ export default function AppShell({
   const [view, setView] = useState<DashboardView>("home");
   const [backing, setBacking] = useState(false);
   const [backupMsg, setBackupMsg] = useState<string | null>(null);
+  const [updateResult, setUpdateResult] = useState<UpdateResult | null>(null);
+  const [updateOpen, setUpdateOpen] = useState(false);
+  const [installing, setInstalling] = useState(false);
+  const [updateMsg, setUpdateMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    checkForUpdates().then((result) => {
+      if (!cancelled) setUpdateResult(result);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const updateAvailable =
+    updateResult?.available && updateResult.update != null;
+
+  async function handleInstallUpdate() {
+    setInstalling(true);
+    setUpdateMsg(null);
+    try {
+      await installUpdate();
+      setUpdateMsg("Update installed. The app will restart shortly.");
+    } catch (err) {
+      setUpdateMsg(`Error: ${getErrorMessage(err)}`);
+    } finally {
+      setInstalling(false);
+    }
+  }
 
   const navItems = NAV_ITEMS.filter((item) => item.roles.includes(user.role));
 
@@ -424,6 +458,26 @@ export default function AppShell({
                 {backupMsg}
               </Text>
             )}
+            {updateAvailable && updateResult?.update && (
+              <Tooltip label={`New version ${updateResult.update.version} available`}>
+                <Button
+                  variant="filled"
+                  size="sm"
+                  leftSection={<Download size={15} />}
+                  onClick={() => setUpdateOpen(true)}
+                  styles={{
+                    root: {
+                      fontWeight: 700,
+                      background: "linear-gradient(135deg, #C9952A 0%, #E6C965 100%)",
+                      color: "#131C39",
+                      "&:hover": { filter: "brightness(1.06)" },
+                    },
+                  }}
+                >
+                  Update v{updateResult.update.version}
+                </Button>
+              </Tooltip>
+            )}
             <Tooltip label="Backup database">
               <Button
                 variant="light"
@@ -471,6 +525,55 @@ export default function AppShell({
           </AnimatePresence>
         </Box>
       </Box>
+
+      {/* Update modal */}
+      <Modal
+        opened={updateOpen}
+        onClose={() => setUpdateOpen(false)}
+        title="Update available"
+        centered
+        styles={{ title: { fontWeight: 800, color: INK.navy } }}
+      >
+        <Stack gap="md">
+          <Text size="sm">
+            Version <b>{updateResult?.update?.version}</b> is available. You
+            are running v{updateResult?.currentVersion}.
+          </Text>
+          {updateResult?.update?.body && (
+            <Box
+              style={{
+                maxHeight: 220,
+                overflowY: "auto",
+                background: INK.paper,
+                padding: 12,
+                borderRadius: 8,
+              }}
+            >
+              <Text size="xs" style={{ whiteSpace: "pre-wrap", color: INK.navy }}>
+                {updateResult.update.body}
+              </Text>
+            </Box>
+          )}
+          {updateMsg && (
+            <Text size="xs" c={updateMsg.startsWith("Error") ? "red" : "green"}>
+              {updateMsg}
+            </Text>
+          )}
+          <Button
+            fullWidth
+            loading={installing}
+            onClick={handleInstallUpdate}
+            leftSection={<Download size={15} />}
+            styles={{ root: { fontWeight: 700 } }}
+          >
+            Download &amp; Install
+          </Button>
+          <Text size="xs" c="dimmed">
+            The app will close and restart after the update is installed. Your
+            data is preserved.
+          </Text>
+        </Stack>
+      </Modal>
     </Box>
   );
 }

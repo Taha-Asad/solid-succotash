@@ -7,8 +7,18 @@
 #   1. Builds the Windows .exe installer
 #   2. Creates a GitHub Release
 #   3. Uploads the installer as a release asset
+#   4. Generates and uploads the updater's latest.json
 #
 # Your app's updater checks GitHub Releases for new versions.
+#
+# Why the custom latest.json step?
+# The product name contains "&" and spaces, so GitHub normalizes the
+# uploaded asset names (e.g. "Ijaz & Company ERP_...exe" becomes
+# "Ijaz.Company.ERP_...exe"). tauri-action compares the local artifact
+# name against the uploaded name to find the signature, the names never
+# match, and it silently skips latest.json. This step generates the file
+# from the assets that were actually uploaded, so it works for any
+# product name.
 #
 # TRIGGER: Push a tag like "v0.1.0"
 #   git tag v0.1.0
@@ -67,3 +77,39 @@ jobs:
             Your data is preserved — no need to uninstall the previous version.
           releaseDraft: false
           prerelease: false
+
+      - name: Generate and upload updater latest.json
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $headers = @{
+            Authorization = "Bearer $env:GH_TOKEN"
+            Accept        = "application/vnd.github+json"
+          }
+          $tag = "${{ github.ref_name }}"
+          $api = "https://api.github.com/repos/${{ github.repository }}"
+          $release = Invoke-RestMethod -Headers $headers -Uri "$api/releases/tags/$tag"
+          $exe = $release.assets | Where-Object { $_.name -like "*.exe" -and $_.name -notlike "*.exe.sig" } | Select-Object -First 1
+          $sig = $release.assets | Where-Object { $_.name -like "*.exe.sig" } | Select-Object -First 1
+          if (-not $exe -or -not $sig) {
+            throw "Installer/signature asset not found in release $tag"
+          }
+          $signature = [System.Net.WebClient]::new().DownloadString($sig.browser_download_url).Trim()
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          $payload = [ordered]@{
+            version   = $version
+            notes     = $release.body
+            pub_date  = $release.published_at
+            platforms = [ordered]@{
+              "windows-x86_64"      = [ordered]@{ signature = $signature; url = $exe.browser_download_url }
+              "windows-x86_64-nsis" = [ordered]@{ signature = $signature; url = $exe.browser_download_url }
+            }
+          }
+          $jsonPath = Join-Path $env:RUNNER_TEMP "latest.json"
+          $payload | ConvertTo-Json -Depth 6 | Set-Content -Path $jsonPath -Encoding UTF8
+          Invoke-RestMethod -Method Post -Headers $headers -ContentType "application/json" `
+            -Uri "$api/releases/$($release.id)/assets?name=latest.json" `
+            -InFile $jsonPath | Out-Null
+          Write-Host "Uploaded latest.json (version $version)"
