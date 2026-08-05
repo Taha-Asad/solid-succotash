@@ -306,7 +306,7 @@ export function analyzeImportFile(input: {
 
 // Step 2: Send confirmed mapping + file bytes, Rust imports everything
 export function executeImport(input: ImportRequest): Promise<ImportResult> {
-  return invoke<ImportResult>("execute_import", input);
+  return invoke<ImportResult>("execute_import", { request: input });
 }
 
 // ==========================================
