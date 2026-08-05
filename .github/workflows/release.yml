@@ -112,6 +112,12 @@ jobs:
           }
           $jsonPath = Join-Path $env:RUNNER_TEMP "latest.json"
           $payload | ConvertTo-Json -Depth 6 | Set-Content -Path $jsonPath -Encoding UTF8
+          $existing = $release.assets | Where-Object { $_.name -eq "latest.json" } | Select-Object -First 1
+          if ($existing) {
+            Invoke-RestMethod -Method Delete -Headers $headers `
+              -Uri "https://api.github.com/repos/${{ github.repository }}/releases/assets/$($existing.id)"
+            Write-Host "Deleted existing latest.json (asset id $($existing.id))"
+          }
           $uploadUrl = $release.upload_url.Replace("{?name,label}", "?name=latest.json")
           Invoke-RestMethod -Method Post -Headers $headers -ContentType "application/json" `
             -Uri $uploadUrl `
@@ -267,6 +273,15 @@ jobs:
           print("Merged platforms:", ", ".join(latest["platforms"].keys()))
           PY
           upload_url=$(python3 -c "import json;print(json.load(open('$RUNNER_TEMP/release.json'))['upload_url'])" | sed 's/{?name,label}//')
+          existing_ids=$(python3 -c "import json;print(' '.join(str(a['id']) for a in json.load(open('$RUNNER_TEMP/release.json'))['assets'] if a['name'].lower() == 'latest.json'))")
+          if [ -n "$existing_ids" ]; then
+            for id in $existing_ids; do
+              curl -fsSL -X DELETE \
+                -H "Authorization: Bearer $GH_TOKEN" \
+                "$api/releases/assets/$id"
+            done
+            echo "Deleted existing latest.json (asset id(s) $existing_ids)"
+          fi
           curl -fsSL -X POST \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "Content-Type: application/json" \
