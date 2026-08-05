@@ -51,6 +51,8 @@ import ReportsPage from "../features/reports/ReportsPage";
 import UserManagementView from "../features/dashboard/UserManagement";
 import SettingsPage from "../features/settings/SettingsPage";
 import CustomersPage from "../features/customers/CustomersPage";
+import SearchBar from "./SearchBar";
+import NotificationBell from "./NotificationBell";
 import { INK } from "../theme";
 
 // ==========================================
@@ -474,6 +476,12 @@ export default function AppShell({
           </motion.div>
 
           <Group gap="md">
+            <SearchBar
+              onSelect={(result) => {
+                if (result.resultType === "product") setView("inventory");
+                else if (result.resultType === "customer") setView("customers");
+              }}
+            />
             <Text size="sm" c="dimmed">
               {today}
             </Text>
@@ -502,6 +510,9 @@ export default function AppShell({
                 </Button>
               </Tooltip>
             )}
+            <NotificationBell
+              onNavigate={(view) => setView(view)}
+            />
             <Tooltip label="Backup database">
               <Button
                 variant="light"

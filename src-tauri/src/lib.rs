@@ -277,6 +277,21 @@ pub async fn run() {
             commands::export::export_stock_csv,
             commands::export::export_customer_ledger_csv,
             commands::export::export_sales_csv,
+
+            // ---- Search ----
+            commands::search::search_all,
+
+            // ---- Theme ----
+            commands::theme::get_theme,
+            commands::theme::update_theme,
+            commands::theme::read_file_base64,
+
+                        // ---- Notifications ----
+            commands::notifications::get_notifications,
+
+            // ---- Retention ----
+            commands::retention::get_retention_summary,
+            commands::retention::archive_old_records,
         ])
         .run(tauri::generate_context!())
         .expect("Error while running Tauri application");

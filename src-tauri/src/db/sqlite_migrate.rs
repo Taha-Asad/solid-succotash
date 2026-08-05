@@ -69,6 +69,16 @@ fn get_embedded_migrations() -> Vec<(i64, &'static str, &'static str)> {
             "009_soft_delete_versioning",
             include_str!("../../migrations/sqlite/009_soft_delete_versioning.sql"),
         ),
+                (
+            10,
+            "010_fts5_search",
+            include_str!("../../migrations/sqlite/010_fts5_search.sql"),
+        ),
+                        (
+            11,
+            "011_theme_settings",
+            include_str!("../../migrations/sqlite/011_theme_settings.sql"),
+        ),
     ]
 }
 
@@ -116,11 +126,17 @@ pub async fn run_sqlite_migrations(sqlite_url: &str) -> Result<(), Box<dyn std::
             .await?;
 
         println!("Migration {version} applied successfully.");
-    }
 
-    ensure_category_columns(&pool).await?;
-    ensure_invoice_item_columns(&pool).await?;
-    ensure_soft_delete_columns(&pool).await?;
+        // Migrations 010/011 (FTS5 search, theme) reference the soft-delete
+        // columns declared by migration 009, so the ALTER-based helpers must
+        // run before those migrations are applied. Otherwise a fresh or old
+        // database fails with "no such column: deleted_at".
+        if version == 9 {
+            ensure_category_columns(&pool).await?;
+            ensure_invoice_item_columns(&pool).await?;
+            ensure_soft_delete_columns(&pool).await?;
+        }
+    }
 
     let _ = applied;
 

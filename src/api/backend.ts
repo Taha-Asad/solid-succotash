@@ -562,6 +562,96 @@ export function exportSalesCsv(savePath: string): Promise<string> {
 }
 
 // ==========================================
+// SEARCH (FTS5)
+// ==========================================
+
+export type SearchResult = {
+  resultType: string; // "product" or "customer"
+  id: string;
+  name: string;
+  subtitle: string;
+  detail: string;
+};
+
+export function searchAll(query: string): Promise<SearchResult[]> {
+  return invoke<SearchResult[]>("search_all", { query });
+}
+
+// ==========================================
+// THEME & BRANDING
+// ==========================================
+
+export type CompanyTheme = {
+  primaryColor: string;
+  secondaryColor: string;
+  accentColor: string;
+  colorScheme: string; // "light" | "dark" | "auto"
+  logoBase64: string | null;
+  companyTagline: string | null;
+  erpWatermark: string;
+};
+
+// Tenant-editable theme fields. The ERP watermark is platform-owned
+// (super admin) and is intentionally NOT part of this type.
+export type UpdateThemeInput = Omit<CompanyTheme, "erpWatermark">;
+
+export function getTheme(): Promise<CompanyTheme> {
+  return invoke<CompanyTheme>("get_theme");
+}
+
+export function updateTheme(theme: UpdateThemeInput): Promise<CompanyTheme> {
+  return invoke<CompanyTheme>("update_theme", { input: theme });
+}
+
+// Reads an image file into a base64 data URI (for logo upload)
+export function readFileBase64(path: string): Promise<string> {
+  return invoke<string>("read_file_base64", { path });
+}
+
+// ==========================================
+// NOTIFICATIONS
+// ==========================================
+
+export type AppNotification = {
+  id: string;
+  notificationType: string; // "low_stock" | "expiring" | "overdue" | "activity"
+  severity: string; // "info" | "warning" | "critical"
+  title: string;
+  message: string;
+  resourceType: string; // "product" | "invoice" | "batch"
+  resourceId: string | null;
+  createdAt: string;
+};
+
+export function getNotifications(): Promise<AppNotification[]> {
+  return invoke<AppNotification[]>("get_notifications");
+}
+
+// ==========================================
+// DATA RETENTION
+// ==========================================
+
+export type RetentionSummary = {
+  invoicesArchivable: number;
+  poArchivable: number;
+  movementsArchivable: number;
+  oldestInvoiceDate: string | null;
+  oldestMovementDate: string | null;
+};
+
+export function getRetentionSummary(
+  retentionYears: number,
+): Promise<RetentionSummary> {
+  return invoke<RetentionSummary>("get_retention_summary", {
+    retentionYears,
+  });
+}
+
+export function archiveOldRecords(retentionYears: number): Promise<string> {
+  return invoke<string>("archive_old_records", { retentionYears });
+}
+
+// ==========================================
 // BACKUP & RESTORE
 // ==========================================
 
