@@ -5,9 +5,11 @@
 # When you push a version tag (v0.1.0, v0.2.0, etc.),
 # this workflow automatically:
 #   1. Builds the Windows .exe installer
-#   2. Creates a GitHub Release
-#   3. Uploads the installer as a release asset
-#   4. Generates and uploads the updater's latest.json
+#   2. Builds the Linux .deb and .AppImage packages
+#   3. Creates a GitHub Release
+#   4. Uploads the installers as release assets
+#   5. Generates and uploads the updater's latest.json
+#      (merged with Windows and Linux entries)
 #
 # Your app's updater checks GitHub Releases for new versions.
 #
@@ -73,7 +75,8 @@ jobs:
             - See the changelog for details
 
             ## Installation
-            Download the `.exe` installer below and run it.
+            Windows: download the `.exe` installer below.
+            Linux: download the `.deb` or `.AppImage` package below.
             Your data is preserved — no need to uninstall the previous version.
           releaseDraft: false
           prerelease: false
@@ -114,3 +117,159 @@ jobs:
             -Uri $uploadUrl `
             -InFile $jsonPath | Out-Null
           Write-Host "Uploaded latest.json (version $version)"
+
+  # ==========================================
+  # Linux build job (.deb + .AppImage)
+  # Runs after the Windows job so it can merge
+  # the Linux entries into the latest.json that
+  # the Windows job already uploaded.
+  # ==========================================
+  release-linux:
+    runs-on: ubuntu-22.04
+    needs: release
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            build-essential \
+            libssl-dev \
+            pkg-config
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Save Windows updater metadata (pre-build)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${{ github.ref_name }}"
+          api="https://api.github.com/repos/${{ github.repository }}"
+          curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "$api/releases/tags/$tag" > "$RUNNER_TEMP/release.json"
+          python3 - "$RUNNER_TEMP/release.json" "$RUNNER_TEMP/latest_windows.json" <<'PY'
+          import json, sys, urllib.request
+          release = json.load(open(sys.argv[1]))
+          target = None
+          for a in release["assets"]:
+              if a["name"].lower() == "latest.json":
+                  target = a
+          if target is None:
+              sys.exit("latest.json not on the release yet - Windows job must finish first")
+          urllib.request.urlretrieve(target["browser_download_url"], sys.argv[2])
+          print("Saved Windows latest.json")
+          PY
+
+      - name: Build and release (Linux)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: v__VERSION__
+          releaseName: "Ijaz & Company ERP v__VERSION__"
+          releaseBody: |
+            ## What's New
+            - See the changelog for details
+
+            ## Installation
+            Windows: download the `.exe` installer below.
+            Linux: download the `.deb` or `.AppImage` package below.
+            Your data is preserved — no need to uninstall the previous version.
+          releaseDraft: false
+          prerelease: false
+          args: --bundles deb,appimage
+
+      - name: Merge Windows + Linux entries into latest.json
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${{ github.ref_name }}"
+          api="https://api.github.com/repos/${{ github.repository }}"
+          curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "$api/releases/tags/$tag" > "$RUNNER_TEMP/release.json"
+          python3 - "$RUNNER_TEMP/release.json" "$RUNNER_TEMP/latest_windows.json" "$RUNNER_TEMP/latest.json" <<'PY'
+          import json, sys, urllib.request
+          release = json.load(open(sys.argv[1]))
+          assets = {a["name"]: a for a in release["assets"]}
+
+          def pick(*exts):
+              for name in assets:
+                  low = name.lower()
+                  if low.endswith(".sig"):
+                      continue
+                  if any(low.endswith(e) for e in exts):
+                      return assets[name]
+              return None
+
+          def sig_for(asset):
+              for name in assets:
+                  if name.lower() == (asset["name"] + ".sig").lower():
+                      return assets[name]
+              return None
+
+          def download(url):
+              return urllib.request.urlopen(url).read().decode().strip()
+
+          deb = pick(".deb")
+          app = pick(".appimage")
+          if not (deb or app):
+              sys.exit("No .deb or .AppImage asset found on the release")
+
+          platforms = {}
+          if deb:
+              sig = sig_for(deb)
+              if not sig:
+                  sys.exit("missing .deb.sig asset")
+              signature = download(sig["browser_download_url"])
+              platforms["linux-x86_64-deb"] = {"signature": signature, "url": deb["browser_download_url"]}
+              platforms["linux-x86_64"]    = {"signature": signature, "url": deb["browser_download_url"]}
+          if app:
+              sig = sig_for(app)
+              if not sig:
+                  sys.exit("missing .AppImage.sig asset")
+              signature = download(sig["browser_download_url"])
+              platforms["linux-x86_64-appimage"] = {"signature": signature, "url": app["browser_download_url"]}
+
+          latest = json.load(open(sys.argv[2]))
+          latest["platforms"].update(platforms)
+          with open(sys.argv[3], "w") as f:
+              json.dump(latest, f, indent=2)
+          print("Merged platforms:", ", ".join(latest["platforms"].keys()))
+          PY
+          upload_url=$(python3 -c "import json;print(json.load(open('$RUNNER_TEMP/release.json'))['upload_url'])" | sed 's/{?name,label}//')
+          curl -fsSL -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data-binary @"$RUNNER_TEMP/latest.json" \
+            "$upload_url?name=latest.json"
+          echo "Uploaded merged latest.json"
