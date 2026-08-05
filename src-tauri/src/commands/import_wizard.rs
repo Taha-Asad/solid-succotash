@@ -17,6 +17,7 @@
 //
 // The database schema NEVER changes. Only metadata changes.
 
+use crate::commands::audit::log_audit;
 use crate::commands::auth::{require_current_user, SessionState};
 use calamine::{open_workbook_auto_from_rs, Data, Reader};
 use serde::{Deserialize, Serialize};
@@ -415,6 +416,22 @@ pub async fn execute_import(
         }
     }
 
+    log_audit(
+        pool.inner(),
+        company_id,
+        &current_user.id,
+        &current_user.email,
+        &current_user.role,
+        "import",
+        "products",
+        None,
+        &format!(
+            "Imported {} products, {} custom fields ({} error(s))",
+            products_imported, fields_created, rows_with_errors
+        ),
+    )
+    .await;
+
     Ok(ImportResult {
         fields_created,
         products_imported,
@@ -717,6 +734,27 @@ fn detect_field(normalized: &str) -> (String, String, String) {
         );
     }
 
+    // TAX
+    // Checked before SELL PRICE because SELL PRICE's broad "rate" pattern
+    // would otherwise swallow "tax rate" / "gst rate" via substring match.
+    if matches_any(
+        normalized,
+        &[
+            "tax",
+            "tax rate",
+            "gst",
+            "vat",
+            "sales tax",
+            "tax percentage",
+        ],
+    ) {
+        return (
+            "tax_rate".to_string(),
+            "core".to_string(),
+            "medium".to_string(),
+        );
+    }
+
     // SELL PRICE
     if matches_any(
         normalized,
@@ -812,25 +850,6 @@ fn detect_field(normalized: &str) -> (String, String, String) {
     ) {
         return (
             "supplier".to_string(),
-            "core".to_string(),
-            "medium".to_string(),
-        );
-    }
-
-    // TAX
-    if matches_any(
-        normalized,
-        &[
-            "tax",
-            "tax rate",
-            "gst",
-            "vat",
-            "sales tax",
-            "tax percentage",
-        ],
-    ) {
-        return (
-            "tax_rate".to_string(),
             "core".to_string(),
             "medium".to_string(),
         );
@@ -1276,4 +1295,732 @@ async fn resolve_or_create_supplier(
         .map_err(|e| format!("Failed to create supplier '{trimmed}': {e}"))?;
 
     Ok(Some(id))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::test_helpers::{register_owner, register_owner_full, setup_app};
+    use calamine::{CellErrorType, Data};
+    use tauri::test::MockRuntime;
+    use tauri::Manager;
+
+    // ---------------------------------------------------------------
+    // Helpers
+    // ---------------------------------------------------------------
+
+    async fn owner_app() -> tauri::App<MockRuntime> {
+        let app = setup_app().await;
+        register_owner(&app, "owner@test.com").await;
+        app
+    }
+
+    fn mapping(
+        source: &str,
+        index: usize,
+        target: &str,
+        category: &str,
+        confidence: &str,
+    ) -> FieldMapping {
+        FieldMapping {
+            source_column: source.to_string(),
+            source_index: index,
+            target_field: target.to_string(),
+            field_category: category.to_string(),
+            confidence: confidence.to_string(),
+        }
+    }
+
+    /// Builds a minimal but valid .docx (ZIP + word/document.xml) in memory.
+    fn make_docx(document_xml: &str) -> Vec<u8> {
+        use std::io::Write;
+        let cursor = Cursor::new(Vec::new());
+        let mut zip = zip::ZipWriter::new(cursor);
+        zip.start_file("word/document.xml", zip::write::SimpleFileOptions::default())
+            .expect("start file");
+        zip.write_all(document_xml.as_bytes()).expect("write xml");
+        zip.finish().expect("finish zip").into_inner()
+    }
+
+    // ---------------------------------------------------------------
+    // normalize_header (pure)
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn normalize_header_lowercases_and_collapses_spaces() {
+        // Input: "Product Name!", "  SKU # ", "unit__price".
+        // Expected: lowercase, non-alphanumerics dropped, spaces collapsed.
+        assert_eq!(normalize_header("Product Name!"), "product name");
+        assert_eq!(normalize_header("  SKU # "), "sku");
+        assert_eq!(normalize_header("Unit__Price"), "unit price");
+        assert_eq!(normalize_header("Cost Price"), "cost price");
+    }
+
+    // ---------------------------------------------------------------
+    // propose_mappings / detect_field (pure)
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn propose_mappings_matches_core_fields() {
+        // Input: common ERP headers.
+        // Expected: sku/name/sell_price/quantity/unit/category/supplier/tax/expiry mapped.
+        let headers = vec![
+            "SKU".to_string(),
+            "Product Name".to_string(),
+            "Selling Price".to_string(),
+            "Qty".to_string(),
+            "Unit".to_string(),
+            "Category".to_string(),
+            "Supplier".to_string(),
+            "Tax Rate".to_string(),
+            "Expiry Date".to_string(),
+        ];
+        let mapped = propose_mappings(&headers);
+        assert_eq!(mapped[0].target_field, "sku");
+        assert_eq!(mapped[0].field_category, "core");
+        assert_eq!(mapped[0].confidence, "high");
+        assert_eq!(mapped[1].target_field, "name");
+        assert_eq!(mapped[2].target_field, "sell_price");
+        assert_eq!(mapped[3].target_field, "quantity_in_stock");
+        assert_eq!(mapped[4].target_field, "unit");
+        assert_eq!(mapped[5].target_field, "category");
+        assert_eq!(mapped[5].confidence, "medium");
+        assert_eq!(mapped[6].target_field, "supplier");
+        assert_eq!(mapped[7].target_field, "tax_rate");
+        assert_eq!(mapped[8].target_field, "expiry_date");
+        assert_eq!(mapped[8].confidence, "high");
+    }
+
+    #[test]
+    fn propose_mappings_custom_fallback_for_unknown_column() {
+        // Input: a header with no known pattern.
+        // Expected: custom:<normalized> field, category "custom", confidence "unknown".
+        let headers = vec!["Flavor".to_string()];
+        let mapped = propose_mappings(&headers);
+        assert_eq!(mapped[0].target_field, "custom:flavor");
+        assert_eq!(mapped[0].field_category, "custom");
+        assert_eq!(mapped[0].confidence, "unknown");
+    }
+
+    #[test]
+    fn propose_mappings_preserves_source_column_and_index() {
+        // Input: headers ["Name", "Price"].
+        // Expected: source_column/source_index echo the file.
+        let headers = vec!["Name".to_string(), "Price".to_string()];
+        let mapped = propose_mappings(&headers);
+        assert_eq!(mapped[0].source_column, "Name");
+        assert_eq!(mapped[0].source_index, 0);
+        assert_eq!(mapped[1].source_column, "Price");
+        assert_eq!(mapped[1].source_index, 1);
+        assert_eq!(mapped[1].target_field, "sell_price");
+    }
+
+    // ---------------------------------------------------------------
+    // parse_price (pure)
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn parse_price_converts_to_paisa() {
+        // Input: "15.00", "1500", "1,500.00", "0".
+        // Expected: 1500, 1500 (already paisa), 150000, 0.
+        assert_eq!(parse_price("15.00"), 1500);
+        assert_eq!(parse_price("1500"), 1500);
+        assert_eq!(parse_price("1,500.00"), 150000);
+        assert_eq!(parse_price("0"), 0);
+    }
+
+    #[test]
+    fn parse_price_truncates_to_two_decimals() {
+        // Input: "5.999", "1.2", "7".
+        // Expected: 599, 120, 7.
+        assert_eq!(parse_price("5.999"), 599);
+        assert_eq!(parse_price("1.2"), 120);
+        assert_eq!(parse_price("7"), 7);
+    }
+
+    // ---------------------------------------------------------------
+    // cell_to_string (pure)
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn cell_to_string_converts_common_variants() {
+        // Input: String/Int/Float/Bool/Error/Empty cells.
+        // Expected: trimmed strings, whole floats without decimal, errors/empty = "".
+        assert_eq!(cell_to_string(&Data::String("  Widget  ".to_string())), "Widget");
+        assert_eq!(cell_to_string(&Data::Int(42)), "42");
+        assert_eq!(cell_to_string(&Data::Float(5.0)), "5");
+        assert_eq!(cell_to_string(&Data::Float(5.5)), "5.5");
+        assert_eq!(cell_to_string(&Data::Bool(true)), "true");
+        assert_eq!(cell_to_string(&Data::Error(CellErrorType::NA)), "");
+        assert_eq!(cell_to_string(&Data::Empty), "");
+    }
+
+    // ---------------------------------------------------------------
+    // parse_docx_table (pure)
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn parse_docx_table_extracts_first_table() {
+        // Input: minimal WordprocessingML with a 2x2 table.
+        // Expected: two rows, multi-paragraph cell joined with a space.
+        let xml = concat!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+            "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">",
+            "<w:body><w:tbl>",
+            "<w:tr><w:tc><w:p><w:r><w:t>SKU</w:t></w:r></w:p></w:tc>",
+            "<w:tc><w:p><w:r><w:t>Product</w:t></w:r></w:p><w:p><w:r><w:t>Name</w:t></w:r></w:p></w:tc></w:tr>",
+            "<w:tr><w:tc><w:p><w:r><w:t>A-1</w:t></w:r></w:p></w:tc>",
+            "<w:tc><w:p><w:r><w:t>Widget</w:t></w:r></w:p></w:tc></w:tr>",
+            "</w:tbl></w:body></w:document>",
+        );
+        let rows = parse_docx_table(xml).expect("parse");
+        assert_eq!(
+            rows,
+            vec![
+                vec!["SKU".to_string(), "Product Name".to_string()],
+                vec!["A-1".to_string(), "Widget".to_string()],
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_docx_table_rejects_malformed_xml() {
+        // Input: invalid XML.
+        // Expected: Err containing "XML parsing error".
+        let err = parse_docx_table("<w:tbl").unwrap_err();
+        assert!(err.contains("XML parsing error"), "got: {err}");
+    }
+
+    // ---------------------------------------------------------------
+    // detect_field_type / looks_like_date
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn looks_like_date_recognizes_common_formats() {
+        // Input: ISO, slash and non-date strings.
+        // Expected: date-like patterns true, others false.
+        assert!(looks_like_date("2024-01-15"));
+        assert!(looks_like_date("15/01/2024"));
+        assert!(!looks_like_date("not a date"));
+        assert!(!looks_like_date("2024"));
+        assert!(!looks_like_date("Widget"));
+    }
+
+    #[tokio::test]
+    async fn detect_field_type_classifies_numeric_and_text_columns() {
+        // Input: CSV with a Price column of numbers and a Name column of text.
+        // Expected: "number" for the price column, "text" for the name column.
+        let req = ImportRequest {
+            mappings: Vec::new(),
+            file_bytes: b"Name,Price\nAlpha,10.50\nBeta,20.25\n".to_vec(),
+            file_type: "csv".to_string(),
+            template_name: String::new(),
+            import_data: false,
+        };
+        assert_eq!(detect_field_type(&req, &1), "number");
+        assert_eq!(detect_field_type(&req, &0), "text");
+    }
+
+    #[tokio::test]
+    async fn detect_field_type_returns_text_for_unknown_type() {
+        // Input: CSV whose sampled column is neither numeric nor date-like.
+        // Expected: "text".
+        let req = ImportRequest {
+            mappings: Vec::new(),
+            file_bytes: b"Header\none\ntwo\nthree\n".to_vec(),
+            file_type: "csv".to_string(),
+            template_name: String::new(),
+            import_data: false,
+        };
+        assert_eq!(detect_field_type(&req, &0), "text");
+    }
+
+    // ---------------------------------------------------------------
+    // analyze_import_file (integration)
+    // ---------------------------------------------------------------
+
+    #[tokio::test]
+    async fn analyze_csv_returns_headers_rows_and_mappings() {
+        // Input: a 2-column, 2-data-row CSV through analyze_import_file.
+        // Expected: headers extracted, total_rows = 2, sku/name mappings proposed.
+        let app = owner_app().await;
+        let csv = "SKU,Product Name\nA-1,Widget\nA-2,Gadget\n".to_string();
+        let analysis = analyze_import_file(
+            app.state(),
+            app.state(),
+            csv.into_bytes(),
+            "csv".to_string(),
+        )
+        .await
+        .expect("analyze");
+        assert_eq!(
+            analysis.headers,
+            vec!["SKU".to_string(), "Product Name".to_string()]
+        );
+        assert_eq!(analysis.total_rows, 2);
+        assert_eq!(analysis.sample_rows.len(), 2);
+        assert_eq!(analysis.file_type, "csv");
+        assert_eq!(analysis.proposed_mappings[0].target_field, "sku");
+        assert_eq!(analysis.proposed_mappings[1].target_field, "name");
+    }
+
+    #[tokio::test]
+    async fn analyze_csv_with_header_row_only_has_zero_total_rows() {
+        // Input: CSV with only a header line.
+        // Expected: total_rows = 0, empty sample, headers still parsed.
+        let app = owner_app().await;
+        let csv = "SKU,Product Name\n".to_string();
+        let analysis = analyze_import_file(
+            app.state(),
+            app.state(),
+            csv.into_bytes(),
+            "csv".to_string(),
+        )
+        .await
+        .expect("analyze");
+        assert_eq!(analysis.total_rows, 0);
+        assert!(analysis.sample_rows.is_empty());
+    }
+
+    #[tokio::test]
+    async fn analyze_import_file_rejects_empty_bytes() {
+        // Input: empty byte vector.
+        // Expected: Err "File is empty".
+        let app = owner_app().await;
+        let err = analyze_import_file(app.state(), app.state(), Vec::new(), "csv".to_string())
+            .await
+            .unwrap_err();
+        assert_eq!(err, "File is empty");
+    }
+
+    #[tokio::test]
+    async fn analyze_import_file_rejects_unsupported_type() {
+        // Input: file_type "pdf".
+        // Expected: Err listing supported types.
+        let app = owner_app().await;
+        let err = analyze_import_file(
+            app.state(),
+            app.state(),
+            b"data".to_vec(),
+            "pdf".to_string(),
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("Unsupported file type"), "got: {err}");
+        assert!(err.contains("xlsx"));
+    }
+
+    #[tokio::test]
+    async fn analyze_import_file_requires_login() {
+        // Input: no session.
+        // Expected: Err "You must log in first".
+        let app = setup_app().await;
+        let err = analyze_import_file(
+            app.state(),
+            app.state(),
+            b"a,b\n1,2".to_vec(),
+            "csv".to_string(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err, "You must log in first");
+    }
+
+    #[tokio::test]
+    async fn analyze_docx_extracts_table_from_real_zip() {
+        // Input: an in-memory .docx (ZIP) containing one table.
+        // Expected: headers/rows/mappings extracted; file_type "docx".
+        let app = owner_app().await;
+        let xml = concat!(
+            "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">",
+            "<w:body><w:tbl>",
+            "<w:tr><w:tc><w:p><w:r><w:t>SKU</w:t></w:r></w:p></w:tc>",
+            "<w:tc><w:p><w:r><w:t>Product Name</w:t></w:r></w:p></w:tc></w:tr>",
+            "<w:tr><w:tc><w:p><w:r><w:t>A-1</w:t></w:r></w:p></w:tc>",
+            "<w:tc><w:p><w:r><w:t>Widget</w:t></w:r></w:p></w:tc></w:tr>",
+            "</w:tbl></w:body></w:document>",
+        );
+        let bytes = make_docx(xml);
+
+        let analysis = analyze_import_file(app.state(), app.state(), bytes, "docx".to_string())
+            .await
+            .expect("analyze");
+        assert_eq!(analysis.file_type, "docx");
+        assert_eq!(
+            analysis.headers,
+            vec!["SKU".to_string(), "Product Name".to_string()]
+        );
+        assert_eq!(analysis.total_rows, 1);
+        assert_eq!(analysis.proposed_mappings[0].target_field, "sku");
+        assert_eq!(analysis.proposed_mappings[1].target_field, "name");
+    }
+
+    #[tokio::test]
+    async fn analyze_docx_rejects_file_without_table() {
+        // Input: a valid .docx whose XML has no <w:tbl>.
+        // Expected: Err about no table found.
+        let app = owner_app().await;
+        let xml = concat!(
+            "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">",
+            "<w:body><w:p><w:r><w:t>Just text</w:t></w:r></w:p></w:body></w:document>",
+        );
+        let bytes = make_docx(xml);
+        let err = analyze_import_file(app.state(), app.state(), bytes, "docx".to_string())
+            .await
+            .unwrap_err();
+        assert!(err.contains("No table found"), "got: {err}");
+    }
+
+    // ---------------------------------------------------------------
+    // execute_import (integration)
+    // ---------------------------------------------------------------
+
+    #[tokio::test]
+    async fn execute_import_creates_products_relations_and_batches() {
+        // Input: CSV with sku/name/category/supplier/qty/prices/tax/expiry/custom columns.
+        // Expected: 2 products imported, 1 custom field, category+supplier created,
+        //           stock movement + expiry batch recorded, tax as basis points.
+        let app = setup_app().await;
+        let company = register_owner_full(&app, "owner@test.com").await;
+        let company_id = &company.company.id;
+
+        let csv = concat!(
+            "SKU,Product Name,Category,Supplier,Quantity,Sell Price,Cost Price,Tax Rate,Expiry Date,Flavor\n",
+            "A-1,Widget One,Gadgets,Acme Supplies,10,1500.00,800.00,17.00,2026-12-31,Vanilla\n",
+            "A-2,Widget Two,Gadgets,Acme Supplies,5,2000.00,1000.00,0,,\n",
+        );
+
+        let result = execute_import(
+            app.state(),
+            app.state(),
+            ImportRequest {
+                mappings: vec![
+                    mapping("SKU", 0, "sku", "core", "high"),
+                    mapping("Product Name", 1, "name", "core", "high"),
+                    mapping("Category", 2, "category", "core", "medium"),
+                    mapping("Supplier", 3, "supplier", "core", "medium"),
+                    mapping("Quantity", 4, "quantity_in_stock", "core", "high"),
+                    mapping("Sell Price", 5, "sell_price", "core", "high"),
+                    mapping("Cost Price", 6, "cost_price", "core", "high"),
+                    mapping("Tax Rate", 7, "tax_rate", "core", "medium"),
+                    mapping("Expiry Date", 8, "expiry_date", "core", "high"),
+                    mapping("Flavor", 9, "custom:flavor", "custom", "unknown"),
+                ],
+                file_bytes: csv.as_bytes().to_vec(),
+                file_type: "csv".to_string(),
+                template_name: "default".to_string(),
+                import_data: true,
+            },
+        )
+        .await
+        .expect("import");
+
+        assert_eq!(result.products_imported, 2);
+        assert_eq!(result.fields_created, 1);
+        assert_eq!(result.rows_with_errors, 0);
+        assert!(result.errors.is_empty());
+
+        let pool = app.state::<SqlitePool>();
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM products WHERE company_id = ?")
+            .bind(company_id)
+            .fetch_one(&*pool)
+            .await
+            .expect("count");
+        assert_eq!(count, 2);
+
+        let (name, cost, sell, tax, qty, category, supplier): (String, i64, i64, i64, i64, String, String) =
+            sqlx::query_as(
+                "SELECT p.name, p.cost_price, p.sell_price, p.tax_rate, p.quantity_in_stock,
+                        COALESCE(c.name, ''), COALESCE(s.name, '')
+                 FROM products p
+                 LEFT JOIN categories c ON c.id = p.category_id
+                 LEFT JOIN suppliers s ON s.id = p.supplier_id
+                 WHERE p.sku = 'A-1'",
+            )
+            .fetch_one(&*pool)
+            .await
+            .expect("product");
+        assert_eq!(name, "Widget One");
+        assert_eq!(cost, 80000);
+        assert_eq!(sell, 150000);
+        assert_eq!(tax, 1700);
+        assert_eq!(qty, 10);
+        assert_eq!(category, "Gadgets");
+        assert_eq!(supplier, "Acme Supplies");
+
+        let custom: Option<String> =
+            sqlx::query_scalar("SELECT custom_fields FROM products WHERE sku = 'A-1'")
+                .fetch_one(&*pool)
+                .await
+                .expect("custom");
+        assert!(
+            custom.as_ref().unwrap_or(&String::new()).contains("Vanilla"),
+            "got: {custom:?}"
+        );
+
+        let category_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM categories")
+            .fetch_one(&*pool)
+            .await
+            .expect("categories");
+        assert_eq!(category_count, 1, "categories should be shared between rows");
+        let supplier_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM suppliers")
+            .fetch_one(&*pool)
+            .await
+            .expect("suppliers");
+        assert_eq!(supplier_count, 1);
+
+        let movement_note: String = sqlx::query_scalar(
+            "SELECT reference_note FROM stock_movements WHERE movement_type = 'adjustment' LIMIT 1",
+        )
+        .fetch_one(&*pool)
+        .await
+        .expect("movement");
+        assert_eq!(movement_note, "Imported from file");
+
+        let (batch_qty, batch_expiry, batch_source): (i64, String, String) =
+            sqlx::query_as("SELECT quantity, expiry_date, source FROM stock_batches")
+                .fetch_one(&*pool)
+                .await
+                .expect("batch");
+        assert_eq!(batch_qty, 10);
+        assert_eq!(batch_expiry, "2026-12-31");
+        assert_eq!(batch_source, "import");
+
+        let (field_name, field_label, field_type): (String, String, String) = sqlx::query_as(
+            "SELECT field_name, field_label, field_type FROM company_field_settings",
+        )
+        .fetch_one(&*pool)
+        .await
+        .expect("field");
+        assert_eq!(field_name, "flavor");
+        assert_eq!(field_label, "Flavor");
+        assert_eq!(field_type, "text");
+
+        let (tpl_name, tpl_type): (String, String) = sqlx::query_as(
+            "SELECT template_name, file_type FROM import_templates",
+        )
+        .fetch_one(&*pool)
+        .await
+        .expect("template");
+        assert_eq!(tpl_name, "default");
+        assert_eq!(tpl_type, "csv");
+
+        let audit_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM audit_logs WHERE action = 'import'")
+                .fetch_one(&*pool)
+                .await
+                .expect("audit");
+        assert_eq!(audit_count, 1);
+    }
+
+    #[tokio::test]
+    async fn execute_import_reports_duplicate_sku_error() {
+        // Input: two rows sharing the same SKU.
+        // Expected: 1 product imported, 1 error mentioning "Duplicate SKU".
+        let app = owner_app().await;
+        let csv = "SKU,Product Name\nA-1,Widget\nA-1,Widget Dup\n";
+        let result = execute_import(
+            app.state(),
+            app.state(),
+            ImportRequest {
+                mappings: vec![
+                    mapping("SKU", 0, "sku", "core", "high"),
+                    mapping("Product Name", 1, "name", "core", "high"),
+                ],
+                file_bytes: csv.as_bytes().to_vec(),
+                file_type: "csv".to_string(),
+                template_name: String::new(),
+                import_data: true,
+            },
+        )
+        .await
+        .expect("import");
+
+        assert_eq!(result.products_imported, 1);
+        assert_eq!(result.rows_with_errors, 1);
+        assert_eq!(result.errors[0].row_number, 3);
+        assert!(
+            result.errors[0].reason.contains("Duplicate SKU 'A-1'"),
+            "got: {}",
+            result.errors[0].reason
+        );
+    }
+
+    #[tokio::test]
+    async fn execute_import_errors_when_name_column_missing() {
+        // Input: only an SKU column mapped, no name source.
+        // Expected: every row errors with the "no product NAME" message.
+        let app = owner_app().await;
+        let csv = "SKU\nA-1\nA-2\n";
+        let result = execute_import(
+            app.state(),
+            app.state(),
+            ImportRequest {
+                mappings: vec![mapping("SKU", 0, "sku", "core", "high")],
+                file_bytes: csv.as_bytes().to_vec(),
+                file_type: "csv".to_string(),
+                template_name: String::new(),
+                import_data: true,
+            },
+        )
+        .await
+        .expect("import");
+
+        assert_eq!(result.products_imported, 0);
+        assert_eq!(result.rows_with_errors, 2);
+        assert!(
+            result.errors[0].reason.contains("Row has no product NAME"),
+            "got: {}",
+            result.errors[0].reason
+        );
+    }
+
+    #[tokio::test]
+    async fn execute_import_skips_blank_rows() {
+        // Input: CSV with an empty line between two data rows.
+        // Expected: blank row skipped, both products imported.
+        let app = owner_app().await;
+        let csv = "SKU,Product Name\nA-1,Widget\n\nA-2,Gadget\n";
+        let result = execute_import(
+            app.state(),
+            app.state(),
+            ImportRequest {
+                mappings: vec![
+                    mapping("SKU", 0, "sku", "core", "high"),
+                    mapping("Product Name", 1, "name", "core", "high"),
+                ],
+                file_bytes: csv.as_bytes().to_vec(),
+                file_type: "csv".to_string(),
+                template_name: String::new(),
+                import_data: true,
+            },
+        )
+        .await
+        .expect("import");
+        assert_eq!(result.products_imported, 2);
+        assert_eq!(result.rows_with_errors, 0);
+    }
+
+    #[tokio::test]
+    async fn execute_import_bad_expiry_reports_row_error() {
+        // Input: an unparseable expiry date in one row.
+        // Expected: that row fails; others still import.
+        let app = owner_app().await;
+        let csv = "SKU,Product Name,Expiry Date\nA-1,Widget,not-a-date\nA-2,Gadget,\n";
+        let result = execute_import(
+            app.state(),
+            app.state(),
+            ImportRequest {
+                mappings: vec![
+                    mapping("SKU", 0, "sku", "core", "high"),
+                    mapping("Product Name", 1, "name", "core", "high"),
+                    mapping("Expiry Date", 2, "expiry_date", "core", "high"),
+                ],
+                file_bytes: csv.as_bytes().to_vec(),
+                file_type: "csv".to_string(),
+                template_name: String::new(),
+                import_data: true,
+            },
+        )
+        .await
+        .expect("import");
+
+        assert_eq!(result.products_imported, 1);
+        assert_eq!(result.rows_with_errors, 1);
+        assert!(
+            result.errors[0].reason.contains("Cannot read date 'not-a-date'"),
+            "got: {}",
+            result.errors[0].reason
+        );
+    }
+
+    #[tokio::test]
+    async fn execute_import_without_import_data_creates_no_products() {
+        // Input: same mappings but import_data = false.
+        // Expected: custom field still created, 0 products imported.
+        let app = owner_app().await;
+        let csv = "SKU,Product Name,Flavor\nA-1,Widget,Vanilla\n";
+        let result = execute_import(
+            app.state(),
+            app.state(),
+            ImportRequest {
+                mappings: vec![
+                    mapping("SKU", 0, "sku", "core", "high"),
+                    mapping("Product Name", 1, "name", "core", "high"),
+                    mapping("Flavor", 2, "custom:flavor", "custom", "unknown"),
+                ],
+                file_bytes: csv.as_bytes().to_vec(),
+                file_type: "csv".to_string(),
+                template_name: String::new(),
+                import_data: false,
+            },
+        )
+        .await
+        .expect("import");
+
+        assert_eq!(result.products_imported, 0);
+        assert_eq!(result.fields_created, 1);
+
+        let pool = app.state::<SqlitePool>();
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM products")
+            .fetch_one(&*pool)
+            .await
+            .expect("count");
+        assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn execute_import_stops_after_fifty_errors() {
+        // Input: 55 rows that all fail (no name mapping).
+        // Expected: 50 counted errors + a "Stopped after 50 errors" cap entry.
+        let app = owner_app().await;
+        let mut csv = String::from("SKU\n");
+        for i in 0..55 {
+            csv.push_str(&format!("SKU-{i}\n"));
+        }
+        let result = execute_import(
+            app.state(),
+            app.state(),
+            ImportRequest {
+                mappings: vec![mapping("SKU", 0, "sku", "core", "high")],
+                file_bytes: csv.into_bytes(),
+                file_type: "csv".to_string(),
+                template_name: String::new(),
+                import_data: true,
+            },
+        )
+        .await
+        .expect("import");
+
+        assert_eq!(result.products_imported, 0);
+        assert_eq!(result.rows_with_errors, 50);
+        assert_eq!(result.errors.len(), 51);
+        assert_eq!(result.errors.last().unwrap().row_number, 0);
+        assert!(
+            result.errors.last().unwrap().reason.contains("Stopped after 50 errors"),
+            "got: {}",
+            result.errors.last().unwrap().reason
+        );
+    }
+
+    #[tokio::test]
+    async fn execute_import_requires_login() {
+        // Input: no session.
+        // Expected: Err "You must log in first".
+        let app = setup_app().await;
+        let err = execute_import(
+            app.state(),
+            app.state(),
+            ImportRequest {
+                mappings: Vec::new(),
+                file_bytes: b"a,b\n1,2".to_vec(),
+                file_type: "csv".to_string(),
+                template_name: String::new(),
+                import_data: true,
+            },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err, "You must log in first");
+    }
 }

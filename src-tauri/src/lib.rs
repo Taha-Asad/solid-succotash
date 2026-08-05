@@ -111,7 +111,7 @@
 // }
 mod commands;
 mod db;
-use sqlx::sqlite::{ SqliteConnectOptions, SqlitePool };
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePool};
 use std::str::FromStr;
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -120,8 +120,7 @@ fn greet(name: &str) -> String {
 
 /// Writes an error to a log file the user can find
 fn write_error_log(message: &str) {
-    let log_path = dirs
-        ::data_dir()
+    let log_path = dirs::data_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("."))
         .join("ijazandcompany-erp")
         .join("error.log");
@@ -136,7 +135,7 @@ fn attach_console() {
     unsafe {
         // ATTACH_PARENT_PROCESS = -1
         windows_sys::Win32::System::Console::AttachConsole(
-            windows_sys::Win32::System::Console::ATTACH_PARENT_PROCESS
+            windows_sys::Win32::System::Console::ATTACH_PARENT_PROCESS,
         );
     }
 }
@@ -171,21 +170,19 @@ pub async fn run() {
 
     // Create the connection pool
     let sqlite_pool = match SqliteConnectOptions::from_str(&sqlite_url) {
-        Ok(options) => {
-            match SqlitePool::connect_with(options.create_if_missing(true)).await {
-                Ok(pool) => {
-                    println!("Database connected");
-                    pool
-                }
-                Err(e) => {
-                    let error_msg = format!("DATABASE CONNECTION FAILED:\n\n{e}");
-                    eprintln!("{error_msg}");
-                    write_error_log(&error_msg);
-                    std::thread::sleep(std::time::Duration::from_secs(10));
-                    panic!("{error_msg}");
-                }
+        Ok(options) => match SqlitePool::connect_with(options.create_if_missing(true)).await {
+            Ok(pool) => {
+                println!("Database connected");
+                pool
             }
-        }
+            Err(e) => {
+                let error_msg = format!("DATABASE CONNECTION FAILED:\n\n{e}");
+                eprintln!("{error_msg}");
+                write_error_log(&error_msg);
+                std::thread::sleep(std::time::Duration::from_secs(10));
+                panic!("{error_msg}");
+            }
+        },
         Err(e) => {
             panic!("Invalid SQLite URL: {e}");
         }
@@ -193,88 +190,94 @@ pub async fn run() {
 
     println!("Starting Tauri application...");
 
-    tauri::Builder
-        ::default()
+    tauri::Builder::default()
         .manage(sqlite_pool)
         .manage(commands::auth::SessionState::new())
+        .manage(commands::auth::LoginAttemptTracker::new())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .invoke_handler(
-            tauri::generate_handler![
-                greet,
-                commands::auth::login_user,
-                commands::auth::logout_user,
-                commands::auth::current_user,
-                commands::auth::update_my_profile,
-                commands::auth::change_my_password,
-                commands::company::is_company_setup,
-                commands::company::register_company,
-                commands::company::get_company,
-                commands::company::update_company,
-                commands::users::list_company_users,
-                commands::users::create_company_user,
-                commands::users::update_company_user_role,
-                commands::users::set_company_user_active,
-                commands::inventory::list_categories,
-                commands::inventory::create_category,
-                commands::inventory::update_category,
-                commands::inventory::set_category_active,
-                commands::inventory::list_suppliers,
-                commands::inventory::create_supplier,
-                commands::inventory::update_supplier,
-                commands::inventory::set_supplier_active,
-                commands::inventory::list_products,
-                commands::inventory::create_product,
-                commands::inventory::update_product,
-                commands::inventory::adjust_stock,
-                commands::inventory::list_stock_movements,
-                commands::inventory::list_custom_fields,
-                commands::inventory::list_product_batches,
-                commands::inventory::list_expiring_batches,
-                commands::inventory::write_off_batch,
-                commands::import_wizard::analyze_import_file,
-                commands::import_wizard::execute_import,
-                commands::invoices::list_customers,
-                commands::invoices::create_customer,
-                commands::invoices::list_invoices,
-                commands::invoices::get_invoice,
-                commands::invoices::create_invoice,
-                commands::invoices::add_invoice_item,
-                commands::invoices::update_invoice_item,
-                commands::invoices::remove_invoice_item,
-                commands::invoices::finalize_invoice,
-                commands::invoices::record_payment,
-                commands::invoices::get_invoice_settings,
-                commands::invoices::update_invoice_settings,
-                commands::invoices::generate_invoice_html,
-                commands::auth::save_session,
-                commands::auth::load_saved_session,
-                commands::auth::clear_saved_session,
-                commands::updater::check_for_updates,
-                commands::updater::install_update,
-
-                // ---- Backup ----
-                commands::backup::create_backup,
-                commands::backup::list_backups,
-
-                commands::reports::report_sales_summary,
-                commands::reports::report_sales_by_month,
-                commands::reports::report_top_products,
-                commands::reports::report_top_customers,
-                commands::reports::report_stock,
-                commands::reports::report_profit_loss,
-                commands::reports::report_customer_ledger,
-                commands::reports::report_product_movements,
-                commands::purchase_orders::list_purchase_orders,
-                commands::purchase_orders::get_purchase_order,
-                commands::purchase_orders::create_purchase_order,
-                commands::purchase_orders::add_po_item,
-                commands::purchase_orders::remove_po_item,
-                commands::purchase_orders::submit_purchase_order,
-                commands::purchase_orders::receive_po_items,
-                commands::purchase_orders::record_po_payment
-            ]
-        )
+        .invoke_handler(tauri::generate_handler![
+            greet,
+            commands::auth::login_user,
+            commands::auth::logout_user,
+            commands::auth::current_user,
+            commands::auth::update_my_profile,
+            commands::auth::change_my_password,
+            commands::company::is_company_setup,
+            commands::company::register_company,
+            commands::company::get_company,
+            commands::company::update_company,
+            commands::users::list_company_users,
+            commands::users::create_company_user,
+            commands::users::update_company_user_role,
+            commands::users::set_company_user_active,
+            commands::inventory::list_categories,
+            commands::inventory::create_category,
+            commands::inventory::update_category,
+            commands::inventory::set_category_active,
+            commands::inventory::delete_category,
+            commands::inventory::list_suppliers,
+            commands::inventory::create_supplier,
+            commands::inventory::update_supplier,
+            commands::inventory::set_supplier_active,
+            commands::inventory::delete_supplier,
+            commands::inventory::list_products,
+            commands::inventory::create_product,
+            commands::inventory::update_product,
+            commands::inventory::adjust_stock,
+            commands::inventory::delete_product,
+            commands::inventory::list_stock_movements,
+            commands::inventory::list_custom_fields,
+            commands::inventory::list_product_batches,
+            commands::inventory::list_expiring_batches,
+            commands::inventory::write_off_batch,
+            commands::import_wizard::analyze_import_file,
+            commands::import_wizard::execute_import,
+            commands::invoices::list_customers,
+            commands::invoices::create_customer,
+            commands::invoices::delete_customer,
+            commands::invoices::list_invoices,
+            commands::invoices::get_invoice,
+            commands::invoices::create_invoice,
+            commands::invoices::add_invoice_item,
+            commands::invoices::update_invoice_item,
+            commands::invoices::remove_invoice_item,
+            commands::invoices::finalize_invoice,
+            commands::invoices::record_payment,
+            commands::invoices::get_invoice_settings,
+            commands::invoices::update_invoice_settings,
+            commands::invoices::generate_invoice_html,
+            commands::auth::save_session,
+            commands::auth::load_saved_session,
+            commands::auth::clear_saved_session,
+            commands::updater::check_for_updates,
+            commands::updater::install_update,
+            // ---- Backup ----
+            commands::backup::create_backup,
+            commands::backup::restore_backup,
+            commands::backup::list_backups,
+            commands::audit::list_audit_logs,
+            commands::reports::report_sales_summary,
+            commands::reports::report_sales_by_month,
+            commands::reports::report_top_products,
+            commands::reports::report_top_customers,
+            commands::reports::report_stock,
+            commands::reports::report_profit_loss,
+            commands::reports::report_customer_ledger,
+            commands::reports::report_product_movements,
+            commands::purchase_orders::list_purchase_orders,
+            commands::purchase_orders::get_purchase_order,
+            commands::purchase_orders::create_purchase_order,
+            commands::purchase_orders::add_po_item,
+            commands::purchase_orders::remove_po_item,
+            commands::purchase_orders::submit_purchase_order,
+            commands::purchase_orders::receive_po_items,
+            commands::purchase_orders::record_po_payment,
+            commands::export::export_stock_csv,
+            commands::export::export_customer_ledger_csv,
+            commands::export::export_sales_csv,
+        ])
         .run(tauri::generate_context!())
         .expect("Error while running Tauri application");
 }

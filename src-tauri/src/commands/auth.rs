@@ -4,10 +4,71 @@ use sqlx::{FromRow, SqlitePool};
 use tauri::State;
 use tokio::sync::RwLock;
 
+use crate::commands::audit::log_audit;
+
 // ==========================================
 // PUBLIC USER
 // ==========================================
+use std::collections::HashMap;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
+// ==========================================
+// LOGIN RATE LIMITING (PECA §16.2)
+// ==========================================
+
+pub struct LoginAttemptTracker {
+    attempts: Mutex<HashMap<String, Vec<Instant>>>,
+}
+
+impl LoginAttemptTracker {
+    pub fn new() -> Self {
+        Self {
+            attempts: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Returns Ok(remaining) if allowed, Err(message) if blocked.
+    /// key = email address (or IP for future)
+    /// max_attempts = how many tries in the window
+    /// window = time window
+    pub fn check(&self, key: &str, max_attempts: usize, window: Duration) -> Result<usize, String> {
+        let mut map = self.attempts.lock().map_err(|_| "Lock error".to_string())?;
+        let now = Instant::now();
+        let entry = map.entry(key.to_lowercase()).or_insert_with(Vec::new);
+
+        // Remove expired attempts
+        entry.retain(|t| now.duration_since(*t) < window);
+
+        if entry.len() >= max_attempts {
+            let remaining = window
+                .checked_sub(now.duration_since(entry[0]))
+                .unwrap_or(Duration::ZERO);
+            Err(format!(
+                "Too many login attempts. Try again in {} seconds.",
+                remaining.as_secs()
+            ))
+        } else {
+            Ok(max_attempts - entry.len())
+        }
+    }
+
+    /// Records a failed attempt.
+    pub fn record(&self, key: &str) {
+        if let Ok(mut map) = self.attempts.lock() {
+            map.entry(key.to_lowercase())
+                .or_insert_with(Vec::new)
+                .push(Instant::now());
+        }
+    }
+
+    /// Clears the attempt history after a successful login.
+    pub fn clear(&self, key: &str) {
+        if let Ok(mut map) = self.attempts.lock() {
+            map.remove(&key.to_lowercase());
+        }
+    }
+}
 // This structure is safe to send to React.
 // It intentionally does not contain password_hash.
 #[derive(Debug, Clone, Serialize, FromRow)]
@@ -216,10 +277,16 @@ pub(crate) async fn require_current_user(
 pub async fn login_user(
     pool: State<'_, SqlitePool>,
     session: State<'_, SessionState>,
+    tracker: State<'_, LoginAttemptTracker>,
     email: String,
     password: String,
 ) -> Result<PublicUser, String> {
     let email = normalize_email(&email)?;
+
+    // Rate limit: 5 attempts per minute per email (PECA §16.2)
+    tracker
+        .check(&email, 5, Duration::from_secs(60))
+        .map_err(|message| message)?;
 
     let user_row = sqlx::query_as::<_, UserWithPassword>(
         r#"
@@ -247,14 +314,20 @@ pub async fn login_user(
 
     let user_row = match user_row {
         Some(user) => user,
-        None => return Err("Invalid email or password".to_string()),
+        None => {
+            tracker.record(&email);
+            return Err("Invalid email or password".to_string());
+        }
     };
 
     let password_is_correct = verify_password(&password, &user_row.password_hash).await?;
 
     if !password_is_correct {
+        tracker.record(&email);
         return Err("Invalid email or password".to_string());
     }
+
+    tracker.clear(&email);
 
     let public_user = PublicUser {
         id: user_row.id,
@@ -317,6 +390,20 @@ pub async fn update_my_profile(
     .await
     .map_err(|error| format!("Database error: {error}"))?;
 
+    let company_id = current_user.company_id.as_deref().unwrap_or("system");
+    log_audit(
+        pool.inner(),
+        company_id,
+        &current_user.id,
+        &current_user.email,
+        &current_user.role,
+        "update",
+        "profile",
+        Some(&current_user.id),
+        &format!("Updated own full name to {full_name}"),
+    )
+    .await;
+
     require_current_user(pool.inner(), session.inner()).await
 }
 
@@ -367,6 +454,20 @@ pub async fn change_my_password(
     .execute(pool.inner())
     .await
     .map_err(|error| format!("Database error: {error}"))?;
+
+    let company_id = current_user.company_id.as_deref().unwrap_or("system");
+    log_audit(
+        pool.inner(),
+        company_id,
+        &current_user.id,
+        &current_user.email,
+        &current_user.role,
+        "update",
+        "password",
+        Some(&current_user.id),
+        "Changed own password",
+    )
+    .await;
 
     Ok(())
 }
@@ -483,4 +584,654 @@ pub async fn clear_saved_session(pool: State<'_, SqlitePool>) -> Result<(), Stri
         .map_err(|e| format!("Failed to clear session: {e}"))?;
 
     Ok(())
+}
+
+// ==========================================
+// TESTS
+// ==========================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::test_helpers::{deactivate_company, register_owner, setup_app, state_of};
+
+    // ---------------------------------------------------------------
+    // normalize_email
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn normalize_email_trims_and_lowercases() {
+        // Input: "  Alice@Example.COM  ".
+        // Expected: Ok("alice@example.com").
+        assert_eq!(normalize_email("  Alice@Example.COM  ").unwrap(), "alice@example.com");
+    }
+
+    #[test]
+    fn normalize_email_accepts_valid() {
+        // Input: a structurally valid address.
+        // Expected: Ok (unchanged except normalization).
+        assert!(normalize_email("user@company.pk").is_ok());
+    }
+
+    #[test]
+    fn normalize_email_rejects_missing_at() {
+        // Input: "not-an-email".
+        // Expected: Err "Invalid email address".
+        assert!(normalize_email("not-an-email").is_err());
+    }
+
+    #[test]
+    fn normalize_email_rejects_empty_parts() {
+        // Inputs: "@x.com", "a@", "a@@b.com", "a@b" (no dot in domain).
+        // Expected: all Err "Invalid email address".
+        for bad in ["@x.com", "a@", "a@@b.com", "a@b"] {
+            assert!(normalize_email(bad).is_err(), "should reject: {bad}");
+        }
+    }
+
+    #[test]
+    fn normalize_email_accepts_dot_leading_domain() {
+        // Input: "a@.com" — the validator only requires a dot somewhere in
+        // the domain, it does not check the dot's position.
+        // Expected: Ok (documents current accepted behaviour).
+        assert!(normalize_email("a@.com").is_ok());
+    }
+
+    #[test]
+    fn normalize_email_rejects_too_long() {
+        // Input: 255+ character address.
+        // Expected: Err "Email is too long".
+        let long = format!("{}@example.com", "a".repeat(250));
+        let err = normalize_email(&long).unwrap_err();
+        assert_eq!(err, "Email is too long");
+    }
+
+    // ---------------------------------------------------------------
+    // validate_person_name
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn person_name_accepts_valid() {
+        // Input: "Ali Khan" (>= 2, <= 100 chars).
+        // Expected: Ok (trimmed).
+        assert_eq!(validate_person_name("  Ali Khan  ").unwrap(), "Ali Khan");
+    }
+
+    #[test]
+    fn person_name_rejects_too_short() {
+        // Input: "A" (1 char).
+        // Expected: Err "Full name must contain at least 2 characters".
+        assert_eq!(
+            validate_person_name("A").unwrap_err(),
+            "Full name must contain at least 2 characters"
+        );
+    }
+
+    #[test]
+    fn person_name_rejects_too_long() {
+        // Input: 101 characters.
+        // Expected: Err "Full name cannot exceed 100 characters".
+        let err = validate_person_name(&"a".repeat(101)).unwrap_err();
+        assert_eq!(err, "Full name cannot exceed 100 characters");
+    }
+
+    // ---------------------------------------------------------------
+    // validate_password
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn password_accepts_eight_chars() {
+        // Input: exactly 8 chars.
+        // Expected: Ok.
+        assert!(validate_password("password").is_ok());
+    }
+
+    #[test]
+    fn password_rejects_short() {
+        // Input: 7 chars.
+        // Expected: Err "Password must contain at least 8 characters".
+        assert_eq!(
+            validate_password("1234567").unwrap_err(),
+            "Password must contain at least 8 characters"
+        );
+    }
+
+    #[test]
+    fn password_rejects_over_72_bytes() {
+        // Input: 73 ASCII bytes.
+        // Expected: Err "Password cannot exceed 72 bytes".
+        assert_eq!(
+            validate_password(&"a".repeat(73)).unwrap_err(),
+            "Password cannot exceed 72 bytes"
+        );
+    }
+
+    // ---------------------------------------------------------------
+    // hash_password / verify_password
+    // ---------------------------------------------------------------
+
+    #[tokio::test]
+    async fn password_hash_roundtrip() {
+        // Input: "secret123" hashed, then verified against the hash.
+        // Expected: verify returns true; wrong password returns false.
+        let hash = hash_password("secret123").await.expect("hash");
+        assert!(verify_password("secret123", &hash).await.unwrap());
+        assert!(!verify_password("wrongpass", &hash).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn hash_is_never_plaintext() {
+        // Input: hash of "secret123".
+        // Expected: the stored value does not contain the plaintext password.
+        let hash = hash_password("secret123").await.unwrap();
+        assert!(!hash.contains("secret123"));
+    }
+
+    // ---------------------------------------------------------------
+    // map_user_write_error
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn user_write_error_maps_unique_email() {
+        // Input: an sqlx error whose string contains the UNIQUE constraint
+        // message for users.email.
+        // Expected: friendly "Email address is already registered".
+        let raw = sqlx::Error::Protocol("UNIQUE constraint failed: users.email".to_string());
+        assert_eq!(map_user_write_error(raw), "Email address is already registered");
+    }
+
+    #[test]
+    fn user_write_error_passthrough_other_errors() {
+        // Input: any other error.
+        // Expected: prefixed with "Database error:".
+        let raw = sqlx::Error::Protocol("boom".to_string());
+        assert!(map_user_write_error(raw).contains("Database error:"));
+    }
+
+    // ---------------------------------------------------------------
+    // LoginAttemptTracker
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn tracker_allows_below_max() {
+        // Input: 2 recorded attempts, max 5.
+        // Expected: Ok with remaining = 3.
+        let t = LoginAttemptTracker::new();
+        t.record("a@b.com");
+        t.record("a@b.com");
+        let remaining = t.check("a@b.com", 5, Duration::from_secs(60)).unwrap();
+        assert_eq!(remaining, 3);
+    }
+
+    #[test]
+    fn tracker_blocks_at_max() {
+        // Input: 5 recorded attempts, max 5.
+        // Expected: Err "Too many login attempts".
+        let t = LoginAttemptTracker::new();
+        for _ in 0..5 {
+            t.record("a@b.com");
+        }
+        assert!(t.check("a@b.com", 5, Duration::from_secs(60)).is_err());
+    }
+
+    #[tokio::test]
+    async fn tracker_expires_old_attempts() {
+        // Input: 1 attempt recorded, then a 100ms window is checked after 150ms.
+        // Expected: Ok — the attempt expired out of the window.
+        let t = LoginAttemptTracker::new();
+        t.record("a@b.com");
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        assert!(t.check("a@b.com", 5, Duration::from_millis(100)).is_ok());
+    }
+
+    #[test]
+    fn tracker_is_case_insensitive() {
+        // Input: recorded under "A@B.com", checked as "a@b.com".
+        // Expected: same bucket → blocked after 5.
+        let t = LoginAttemptTracker::new();
+        for _ in 0..5 {
+            t.record("A@B.com");
+        }
+        assert!(t.check("a@b.com", 5, Duration::from_secs(60)).is_err());
+    }
+
+    #[test]
+    fn tracker_clear_resets() {
+        // Input: 5 recorded attempts, then clear().
+        // Expected: check returns Ok again.
+        let t = LoginAttemptTracker::new();
+        for _ in 0..5 {
+            t.record("a@b.com");
+        }
+        t.clear("a@b.com");
+        assert!(t.check("a@b.com", 5, Duration::from_secs(60)).is_ok());
+    }
+
+    // ---------------------------------------------------------------
+    // login_user
+    // ---------------------------------------------------------------
+
+    #[tokio::test]
+    async fn login_succeeds_with_valid_credentials() {
+        // Input: registered owner email + correct password.
+        // Expected: Ok(user); the session is now set (current_user works).
+        let app = setup_app().await;
+        register_owner(&app, "owner@test.com").await;
+        logout_user(state_of(&app)).await.expect("logout");
+
+        let user = login_user(
+            state_of(&app),
+            state_of(&app),
+            state_of(&app),
+            "owner@test.com".to_string(),
+            "password123".to_string(),
+        )
+        .await
+        .expect("login succeeds");
+        assert_eq!(user.email, "owner@test.com");
+        assert_eq!(user.role, "owner");
+
+        let current = current_user(state_of(&app), state_of(&app)).await.expect("session set");
+        assert_eq!(current.email, "owner@test.com");
+    }
+
+    #[tokio::test]
+    async fn login_fails_with_wrong_password() {
+        // Input: registered owner email + wrong password.
+        // Expected: Err "Invalid email or password".
+        let app = setup_app().await;
+        register_owner(&app, "owner@test.com").await;
+        let err = login_user(
+            state_of(&app),
+            state_of(&app),
+            state_of(&app),
+            "owner@test.com".to_string(),
+            "wrongpass".to_string(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err, "Invalid email or password");
+    }
+
+    #[tokio::test]
+    async fn login_fails_with_unknown_email() {
+        // Input: unregistered email.
+        // Expected: Err "Invalid email or password" (no user enumeration).
+        let app = setup_app().await;
+        register_owner(&app, "owner@test.com").await;
+        let err = login_user(
+            state_of(&app),
+            state_of(&app),
+            state_of(&app),
+            "ghost@test.com".to_string(),
+            "password123".to_string(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err, "Invalid email or password");
+    }
+
+    #[tokio::test]
+    async fn login_fails_for_inactive_user() {
+        // Input: registered owner, then is_active = 0.
+        // Expected: Err "Invalid email or password".
+        let app = setup_app().await;
+        let owner = register_owner(&app, "owner@test.com").await;
+        let pool = state_of::<SqlitePool>(&app);
+        sqlx::query("UPDATE users SET is_active = 0 WHERE id = ?")
+            .bind(&owner.id)
+            .execute(&*pool)
+            .await
+            .unwrap();
+
+        let err = login_user(
+            state_of(&app),
+            state_of(&app),
+            state_of(&app),
+            "owner@test.com".to_string(),
+            "password123".to_string(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err, "Invalid email or password");
+    }
+
+    #[tokio::test]
+    async fn login_fails_for_inactive_company() {
+        // Input: registered owner, then company is_active = 0.
+        // Expected: Err "Invalid email or password".
+        let app = setup_app().await;
+        let owner = register_owner(&app, "owner@test.com").await;
+        let pool = state_of::<SqlitePool>(&app);
+        deactivate_company(&*pool, owner.company_id.as_deref().unwrap()).await;
+
+        let err = login_user(
+            state_of(&app),
+            state_of(&app),
+            state_of(&app),
+            "owner@test.com".to_string(),
+            "password123".to_string(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err, "Invalid email or password");
+    }
+
+    #[tokio::test]
+    async fn login_blocks_after_five_failures() {
+        // Input: 5 wrong-password attempts on the same email.
+        // Expected: attempts 1–5 fail with "Invalid email or password";
+        // attempt 6 is blocked with "Too many login attempts".
+        let app = setup_app().await;
+        register_owner(&app, "owner@test.com").await;
+
+        for _ in 0..5 {
+            let err = login_user(
+                state_of(&app),
+                state_of(&app),
+                state_of(&app),
+                "owner@test.com".to_string(),
+                "bad".to_string(),
+            )
+            .await
+            .unwrap_err();
+            assert_eq!(err, "Invalid email or password");
+        }
+
+        let err = login_user(
+            state_of(&app),
+            state_of(&app),
+            state_of(&app),
+            "owner@test.com".to_string(),
+            "bad".to_string(),
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("Too many login attempts"), "got: {err}");
+    }
+
+    // ---------------------------------------------------------------
+    // logout_user
+    // ---------------------------------------------------------------
+
+    #[tokio::test]
+    async fn logout_clears_session() {
+        // Input: logged-in owner logs out.
+        // Expected: logout Ok; current_user then errors "log in first".
+        let app = setup_app().await;
+        register_owner(&app, "owner@test.com").await;
+        logout_user(state_of(&app)).await.expect("logout");
+        let err = current_user(state_of(&app), state_of(&app)).await.unwrap_err();
+        assert!(err.contains("log in first"), "got: {err}");
+    }
+
+    // ---------------------------------------------------------------
+    // current_user
+    // ---------------------------------------------------------------
+
+    #[tokio::test]
+    async fn current_user_errors_when_not_logged_in() {
+        // Input: empty session.
+        // Expected: Err "You must log in first".
+        let app = setup_app().await;
+        let err = current_user(state_of(&app), state_of(&app)).await.unwrap_err();
+        assert!(err.contains("log in first"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn current_user_errors_when_user_deactivated() {
+        // Input: session points at a user, but the user was deactivated.
+        // Expected: Err "account or company is no longer active".
+        let app = setup_app().await;
+        let owner = register_owner(&app, "owner@test.com").await;
+        let pool = state_of::<SqlitePool>(&app);
+        sqlx::query("UPDATE users SET is_active = 0 WHERE id = ?")
+            .bind(&owner.id)
+            .execute(&*pool)
+            .await
+            .unwrap();
+
+        let err = current_user(state_of(&app), state_of(&app)).await.unwrap_err();
+        assert!(err.contains("no longer active"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn current_user_errors_when_company_deactivated() {
+        // Input: session points at a user whose company is inactive.
+        // Expected: Err "account or company is no longer active".
+        let app = setup_app().await;
+        let owner = register_owner(&app, "owner@test.com").await;
+        let pool = state_of::<SqlitePool>(&app);
+        deactivate_company(&*pool, owner.company_id.as_deref().unwrap()).await;
+
+        let err = current_user(state_of(&app), state_of(&app)).await.unwrap_err();
+        assert!(err.contains("no longer active"), "got: {err}");
+    }
+
+    // ---------------------------------------------------------------
+    // update_my_profile
+    // ---------------------------------------------------------------
+
+    #[tokio::test]
+    async fn update_profile_succeeds() {
+        // Input: owner updates their full name to "New Name".
+        // Expected: Ok(user) with full_name = "New Name"; an audit row
+        // with resource "profile" is written.
+        let app = setup_app().await;
+        register_owner(&app, "owner@test.com").await;
+        let pool = state_of::<SqlitePool>(&app);
+
+        let updated = update_my_profile(state_of(&app), state_of(&app), "New Name".to_string())
+            .await
+            .expect("update succeeds");
+        assert_eq!(updated.full_name, "New Name");
+
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM audit_logs WHERE resource = 'profile'",
+        )
+        .fetch_one(&*pool)
+        .await
+        .unwrap();
+        assert_eq!(count, 1, "profile update must be audited");
+    }
+
+    #[tokio::test]
+    async fn update_profile_requires_login() {
+        // Input: no session.
+        // Expected: Err "You must log in first".
+        let app = setup_app().await;
+        let err = update_my_profile(state_of(&app), state_of(&app), "New Name".to_string())
+            .await
+            .unwrap_err();
+        assert!(err.contains("log in first"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn update_profile_rejects_short_name() {
+        // Input: "X" (1 char).
+        // Expected: Err about minimum length.
+        let app = setup_app().await;
+        register_owner(&app, "owner@test.com").await;
+        let err = update_my_profile(state_of(&app), state_of(&app), "X".to_string())
+            .await
+            .unwrap_err();
+        assert!(err.contains("at least 2 characters"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn update_profile_rejects_long_name() {
+        // Input: 101 characters.
+        // Expected: Err about maximum length.
+        let app = setup_app().await;
+        register_owner(&app, "owner@test.com").await;
+        let err = update_my_profile(state_of(&app), state_of(&app), "a".repeat(101))
+            .await
+            .unwrap_err();
+        assert!(err.contains("cannot exceed 100"), "got: {err}");
+    }
+
+    // ---------------------------------------------------------------
+    // change_my_password
+    // ---------------------------------------------------------------
+
+    #[tokio::test]
+    async fn change_password_succeeds() {
+        // Input: correct current password + a new valid password.
+        // Expected: Ok; the stored hash verifies against the new password
+        // and NOT against the old one; an audit row with resource "password" is written.
+        let app = setup_app().await;
+        register_owner(&app, "owner@test.com").await;
+        let pool = state_of::<SqlitePool>(&app);
+
+        change_my_password(
+            state_of(&app),
+            state_of(&app),
+            "password123".to_string(),
+            "newpassword456".to_string(),
+        )
+        .await
+        .expect("change succeeds");
+
+        let hash: String =
+            sqlx::query_scalar("SELECT password_hash FROM users WHERE email = 'owner@test.com'")
+                .fetch_one(&*pool)
+                .await
+                .unwrap();
+        assert!(verify_password("newpassword456", &hash).await.unwrap());
+        assert!(!verify_password("password123", &hash).await.unwrap());
+
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM audit_logs WHERE resource = 'password'",
+        )
+        .fetch_one(&*pool)
+        .await
+        .unwrap();
+        assert_eq!(count, 1, "password change must be audited");
+    }
+
+    #[tokio::test]
+    async fn change_password_rejects_wrong_current() {
+        // Input: wrong current password.
+        // Expected: Err "Current password is incorrect".
+        let app = setup_app().await;
+        register_owner(&app, "owner@test.com").await;
+        let err = change_my_password(
+            state_of(&app),
+            state_of(&app),
+            "wrong-current".to_string(),
+            "newpassword456".to_string(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err, "Current password is incorrect");
+    }
+
+    #[tokio::test]
+    async fn change_password_rejects_same_password() {
+        // Input: new password equals the current one.
+        // Expected: Err "New password must be different from the current password".
+        let app = setup_app().await;
+        register_owner(&app, "owner@test.com").await;
+        let err = change_my_password(
+            state_of(&app),
+            state_of(&app),
+            "password123".to_string(),
+            "password123".to_string(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err, "New password must be different from the current password");
+    }
+
+    #[tokio::test]
+    async fn change_password_rejects_short_new_password() {
+        // Input: valid current password + a too-short new password.
+        // Expected: Err "Password must contain at least 8 characters".
+        let app = setup_app().await;
+        register_owner(&app, "owner@test.com").await;
+        let err = change_my_password(
+            state_of(&app),
+            state_of(&app),
+            "password123".to_string(),
+            "short".to_string(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err, "Password must contain at least 8 characters");
+    }
+
+    // ---------------------------------------------------------------
+    // save_session / load_saved_session / clear_saved_session
+    // ---------------------------------------------------------------
+
+    #[tokio::test]
+    async fn save_then_load_restores_session() {
+        // Input: logged-in owner saves the session, logs out, then loads.
+        // Expected: load returns the owner and the in-memory session is restored.
+        let app = setup_app().await;
+        register_owner(&app, "owner@test.com").await;
+        save_session(state_of(&app), state_of(&app)).await.expect("save");
+        logout_user(state_of(&app)).await.expect("logout");
+
+        let loaded = load_saved_session(state_of(&app), state_of(&app))
+            .await
+            .expect("load");
+        assert_eq!(loaded.email, "owner@test.com");
+
+        let current = current_user(state_of(&app), state_of(&app)).await.expect("restored");
+        assert_eq!(current.email, "owner@test.com");
+    }
+
+    #[tokio::test]
+    async fn load_without_saved_session_fails() {
+        // Input: no saved session row.
+        // Expected: Err "No saved session".
+        let app = setup_app().await;
+        let err = load_saved_session(state_of(&app), state_of(&app))
+            .await
+            .unwrap_err();
+        assert_eq!(err, "No saved session");
+    }
+
+    #[tokio::test]
+    async fn load_clears_stale_session_for_deactivated_user() {
+        // Input: saved session, but the user is later deactivated.
+        // Expected: load Err "Saved user no longer active"; the app_session
+        // row is deleted.
+        let app = setup_app().await;
+        let owner = register_owner(&app, "owner@test.com").await;
+        let pool = state_of::<SqlitePool>(&app);
+        save_session(state_of(&app), state_of(&app)).await.expect("save");
+
+        sqlx::query("UPDATE users SET is_active = 0 WHERE id = ?")
+            .bind(&owner.id)
+            .execute(&*pool)
+            .await
+            .unwrap();
+        logout_user(state_of(&app)).await.expect("logout");
+
+        let err = load_saved_session(state_of(&app), state_of(&app))
+            .await
+            .unwrap_err();
+        assert_eq!(err, "Saved user no longer active");
+
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM app_session").fetch_one(&*pool).await.unwrap();
+        assert_eq!(count, 0, "stale session must be cleared");
+    }
+
+    #[tokio::test]
+    async fn clear_saved_session_removes_row() {
+        // Input: saved session then cleared.
+        // Expected: clear Ok; a subsequent load fails with "No saved session".
+        let app = setup_app().await;
+        register_owner(&app, "owner@test.com").await;
+        save_session(state_of(&app), state_of(&app)).await.expect("save");
+        clear_saved_session(state_of(&app)).await.expect("clear");
+
+        let err = load_saved_session(state_of(&app), state_of(&app))
+            .await
+            .unwrap_err();
+        assert_eq!(err, "No saved session");
+    }
 }

@@ -76,13 +76,16 @@ import {
   createCategory,
   updateCategory,
   setCategoryActive,
+  deleteCategory,
   listSuppliers,
   createSupplier,
   updateSupplier,
   setSupplierActive,
+  deleteSupplier,
   listProducts,
   createProduct,
   updateProduct,
+  deleteProduct,
   adjustStock,
   listStockMovements,
   listProductBatches,
@@ -373,6 +376,16 @@ function CategoriesTab({ canManage }: { canManage: boolean }) {
     }
   }
 
+  async function handleDelete(cat: PublicCategory) {
+    if (!confirm(`Delete category "${cat.name}"? Products in it are kept, just ungrouped.`)) return;
+    try {
+      await deleteCategory(cat.id);
+      await load();
+    } catch (err) {
+      setError(getErrorMessage(err));
+    }
+  }
+
   async function handleSave(values: {
     name: string;
     description: string;
@@ -382,6 +395,7 @@ function CategoriesTab({ canManage }: { canManage: boolean }) {
       if (editingCategory) {
         await updateCategory({
           categoryId: editingCategory.id,
+          expectedVersion: editingCategory.version,
           ...values,
         });
       } else {
@@ -513,6 +527,15 @@ function CategoriesTab({ canManage }: { canManage: boolean }) {
                               onClick={() => openEdit(cat)}
                             >
                               <Pencil size={15} />
+                            </ActionIcon>
+                          </Tooltip>
+                          <Tooltip label="Delete">
+                            <ActionIcon
+                              variant="subtle"
+                              color="red"
+                              onClick={() => handleDelete(cat)}
+                            >
+                              <Trash2 size={15} />
                             </ActionIcon>
                           </Tooltip>
                           <Switch
@@ -741,6 +764,16 @@ function SuppliersTab({ canManage }: { canManage: boolean }) {
     }
   }
 
+  async function handleDelete(sup: PublicSupplier) {
+    if (!confirm(`Delete supplier "${sup.name}"? Purchase history is kept.`)) return;
+    try {
+      await deleteSupplier(sup.id);
+      await load();
+    } catch (err) {
+      setError(getErrorMessage(err));
+    }
+  }
+
   async function handleSave(values: {
     name: string;
     contactPerson: string;
@@ -753,6 +786,7 @@ function SuppliersTab({ canManage }: { canManage: boolean }) {
       if (editingSupplier) {
         await updateSupplier({
           supplierId: editingSupplier.id,
+          expectedVersion: editingSupplier.version,
           ...values,
         });
       } else {
@@ -874,6 +908,15 @@ function SuppliersTab({ canManage }: { canManage: boolean }) {
                               onClick={() => openEdit(sup)}
                             >
                               <Pencil size={15} />
+                            </ActionIcon>
+                          </Tooltip>
+                          <Tooltip label="Delete">
+                            <ActionIcon
+                              variant="subtle"
+                              color="red"
+                              onClick={() => handleDelete(sup)}
+                            >
+                              <Trash2 size={15} />
                             </ActionIcon>
                           </Tooltip>
                           <Switch
@@ -1185,6 +1228,7 @@ function ProductsTab({ canManage }: { canManage: boolean }) {
       if (editingProduct) {
         await updateProduct({
           productId: editingProduct.id,
+          expectedVersion: editingProduct.version,
           sku: values.sku,
           name: values.name,
           categoryId: values.categoryId,
@@ -1211,6 +1255,21 @@ function ProductsTab({ canManage }: { canManage: boolean }) {
       await load();
     } catch (err) {
       throw new Error(getErrorMessage(err));
+    }
+  }
+
+  async function handleDeleteProduct(prod: PublicProduct) {
+    if (
+      !confirm(
+        `Delete product "${prod.name}" (${prod.sku})? Stock movements and history are kept.`,
+      )
+    )
+      return;
+    try {
+      await deleteProduct(prod.id);
+      await load();
+    } catch (err) {
+      setError(getErrorMessage(err));
     }
   }
 
@@ -1580,6 +1639,15 @@ function ProductsTab({ canManage }: { canManage: boolean }) {
                                   onClick={() => openMovements(prod)}
                                 >
                                   <History size={15} />
+                                </ActionIcon>
+                              </Tooltip>
+                              <Tooltip label="Delete product">
+                                <ActionIcon
+                                  variant="subtle"
+                                  color="red"
+                                  onClick={() => handleDeleteProduct(prod)}
+                                >
+                                  <Trash2 size={15} />
                                 </ActionIcon>
                               </Tooltip>
                             </Group>

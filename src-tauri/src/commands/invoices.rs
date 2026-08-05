@@ -12,7 +12,9 @@
 //   paid:       All payments received. Read-only.
 //   cancelled:  Reversed. Stock restored. Read-only.
 
+use crate::commands::audit::log_audit;
 use crate::commands::auth::{require_current_user, SessionState};
+use crate::commands::permissions::{check_permission, soft_delete};
 use serde::Serialize;
 use sqlx::SqlitePool;
 use tauri::State;
@@ -37,6 +39,7 @@ pub struct PublicCustomer {
     pub is_active: bool,
     pub created_at: String,
     pub updated_at: String,
+    pub version: i64,
 }
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
@@ -242,23 +245,23 @@ pub async fn get_or_create_settings(
 }
 
 /// Generates the next invoice number and increments the counter
-async fn generate_invoice_number(pool: &SqlitePool, company_id: &str) -> Result<String, String> {
-    let settings = get_or_create_settings(pool, company_id).await?;
+// async fn generate_invoice_number(pool: &SqlitePool, company_id: &str) -> Result<String, String> {
+//     let settings = get_or_create_settings(pool, company_id).await?;
 
-    let number = settings.next_number;
-    let invoice_number = format!("{}-{:04}", settings.invoice_prefix, number);
+//     let number = settings.next_number;
+//     let invoice_number = format!("{}-{:04}", settings.invoice_prefix, number);
 
-    // Increment the counter
-    sqlx::query(
-        "UPDATE company_invoice_settings SET next_number = next_number + 1, updated_at = CURRENT_TIMESTAMP WHERE company_id = ?"
-    )
-    .bind(company_id)
-    .execute(pool)
-    .await
-    .map_err(|e| format!("Failed to update invoice counter: {e}"))?;
+//     // Increment the counter
+//     sqlx::query(
+//         "UPDATE company_invoice_settings SET next_number = next_number + 1, updated_at = CURRENT_TIMESTAMP WHERE company_id = ?"
+//     )
+//     .bind(company_id)
+//     .execute(pool)
+//     .await
+//     .map_err(|e| format!("Failed to update invoice counter: {e}"))?;
 
-    Ok(invoice_number)
-}
+//     Ok(invoice_number)
+// }
 
 // ==========================================
 // CUSTOMER COMMANDS
@@ -275,9 +278,9 @@ pub async fn list_customers(
         r#"
         SELECT id, company_id, name, email, phone, address,
                cnic, ntn, strn, buyer_type, is_active,
-               created_at, updated_at
+               created_at, updated_at, version
         FROM customers
-        WHERE company_id = ?
+        WHERE company_id = ? AND deleted_at IS NULL
         ORDER BY name COLLATE NOCASE
         "#,
     )
@@ -303,6 +306,8 @@ pub async fn create_customer(
     buyer_type: String,
 ) -> Result<PublicCustomer, String> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
+
+    check_permission(pool.inner(), &current_user.role, "invoices", "create").await?;
 
     let company_id = current_user
         .company_id
@@ -349,7 +354,59 @@ pub async fn create_customer(
         .await
         .map_err(|e| format!("Database error: {e}"))?;
 
+    let company_id = current_user.company_id.as_deref().unwrap_or("system");
+    log_audit(
+        pool.inner(),
+        company_id,
+        &current_user.id,
+        &current_user.email,
+        &current_user.role,
+        "create",
+        "customer",
+        Some(&id),
+        &format!("Created customer '{}'", trimmed_name),
+    )
+    .await;
+
     Ok(customer)
+}
+
+#[tauri::command]
+pub async fn delete_customer(
+    pool: State<'_, SqlitePool>,
+    session: State<'_, SessionState>,
+    customer_id: String,
+) -> Result<(), String> {
+    let current_user = require_current_user(pool.inner(), session.inner()).await?;
+
+    check_permission(pool.inner(), &current_user.role, "invoices", "delete").await?;
+
+    let company_id = current_user
+        .company_id
+        .as_ref()
+        .ok_or("You are not assigned to a company")?;
+
+    let rows = soft_delete(pool.inner(), "customers", &customer_id, company_id).await?;
+
+    if rows == 0 {
+        return Err("Customer not found".to_string());
+    }
+
+    let company_id = current_user.company_id.as_deref().unwrap_or("system");
+    log_audit(
+        pool.inner(),
+        company_id,
+        &current_user.id,
+        &current_user.email,
+        &current_user.role,
+        "delete",
+        "customer",
+        Some(&customer_id),
+        &format!("Deleted customer"),
+    )
+    .await;
+
+    Ok(())
 }
 
 // ==========================================
@@ -455,9 +512,7 @@ pub async fn create_invoice(
 ) -> Result<PublicInvoice, String> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
 
-    if current_user.role == "employee" {
-        return Err("Employees cannot create invoices".to_string());
-    }
+    check_permission(pool.inner(), &current_user.role, "invoices", "create").await?;
 
     let company_id = current_user
         .company_id
@@ -465,16 +520,21 @@ pub async fn create_invoice(
         .ok_or("You are not assigned to a company")?;
 
     // Validate customer exists
-    let _customer = sqlx::query_scalar::<_, String>(
-        "SELECT name FROM customers WHERE id = ? AND company_id = ?",
-    )
-    .bind(&customer_id)
-    .bind(company_id)
-    .fetch_one(pool.inner())
-    .await
-    .map_err(|_| "Customer not found".to_string())?;
+    sqlx::query_scalar::<_, String>("SELECT name FROM customers WHERE id = ? AND company_id = ?")
+        .bind(&customer_id)
+        .bind(company_id)
+        .fetch_one(pool.inner())
+        .await
+        .map_err(|_| "Customer not found".to_string())?;
 
-    let invoice_number = generate_invoice_number(pool.inner(), company_id).await?;
+    // Use a transaction for atomic invoice number generation
+    let mut tx = pool
+        .inner()
+        .begin()
+        .await
+        .map_err(|e| format!("Transaction error: {e}"))?;
+
+    let invoice_number = generate_invoice_number(&mut tx, company_id).await?;
 
     let id = uuid::Uuid::new_v4().to_string();
     let due = clean_optional(&due_date);
@@ -496,9 +556,13 @@ pub async fn create_invoice(
     .bind(clean_optional(&po_number))
     .bind(clean_optional(&reference_note))
     .bind(&current_user.id)
-    .execute(pool.inner())
+    .execute(&mut *tx)
     .await
     .map_err(|e| format!("Database error: {e}"))?;
+
+    tx.commit()
+        .await
+        .map_err(|e| format!("Commit error: {e}"))?;
 
     let invoice = sqlx::query_as::<_, PublicInvoice>("SELECT * FROM invoices WHERE id = ?")
         .bind(&id)
@@ -524,9 +588,7 @@ pub async fn add_invoice_item(
 ) -> Result<Vec<PublicInvoiceItem>, String> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
 
-    if current_user.role == "employee" {
-        return Err("Employees cannot modify invoices".to_string());
-    }
+    check_permission(pool.inner(), &current_user.role, "invoices", "edit").await?;
 
     let company_id = current_user
         .company_id
@@ -620,6 +682,23 @@ pub async fn add_invoice_item(
     .await
     .map_err(|e| format!("Database error: {e}"))?;
 
+    let company_id = current_user.company_id.as_deref().unwrap_or("system");
+    log_audit(
+        pool.inner(),
+        company_id,
+        &current_user.id,
+        &current_user.email,
+        &current_user.role,
+        "update",
+        "invoice_item",
+        Some(&id),
+        &format!(
+            "Added item {}× '{}' ({} {})",
+            quantity, product.1, unit_price, &discount_type
+        ),
+    )
+    .await;
+
     Ok(items)
 }
 
@@ -638,9 +717,7 @@ pub async fn update_invoice_item(
 ) -> Result<Vec<PublicInvoiceItem>, String> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
 
-    if current_user.role == "employee" {
-        return Err("Employees cannot modify invoices".to_string());
-    }
+    check_permission(pool.inner(), &current_user.role, "invoices", "edit").await?;
 
     let company_id = current_user
         .company_id
@@ -731,6 +808,23 @@ pub async fn update_invoice_item(
     .await
     .map_err(|e| format!("Database error: {e}"))?;
 
+    let company_id = current_user.company_id.as_deref().unwrap_or("system");
+    log_audit(
+        pool.inner(),
+        company_id,
+        &current_user.id,
+        &current_user.email,
+        &current_user.role,
+        "update",
+        "invoice_item",
+        Some(&item_id),
+        &format!(
+            "Updated item on invoice {} (qty {}, price {})",
+            invoice_id, quantity, unit_price
+        ),
+    )
+    .await;
+
     Ok(items)
 }
 
@@ -744,9 +838,7 @@ pub async fn remove_invoice_item(
 ) -> Result<Vec<PublicInvoiceItem>, String> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
 
-    if current_user.role == "employee" {
-        return Err("Employees cannot modify invoices".to_string());
-    }
+    check_permission(pool.inner(), &current_user.role, "invoices", "edit").await?;
 
     let company_id = current_user
         .company_id
@@ -789,6 +881,20 @@ pub async fn remove_invoice_item(
     .await
     .map_err(|e| format!("Database error: {e}"))?;
 
+    let company_id = current_user.company_id.as_deref().unwrap_or("system");
+    log_audit(
+        pool.inner(),
+        company_id,
+        &current_user.id,
+        &current_user.email,
+        &current_user.role,
+        "delete",
+        "invoice_item",
+        Some(&item_id),
+        &format!("Removed item from invoice {}", invoice_id),
+    )
+    .await;
+
     Ok(items)
 }
 
@@ -801,9 +907,7 @@ pub async fn finalize_invoice(
 ) -> Result<PublicInvoice, String> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
 
-    if current_user.role == "employee" {
-        return Err("Employees cannot finalize invoices".to_string());
-    }
+    check_permission(pool.inner(), &current_user.role, "invoices", "finalize").await?;
 
     let company_id = current_user
         .company_id
@@ -895,15 +999,15 @@ pub async fn finalize_invoice(
 
         // Deduct FIFO from expiry batches (soonest-expiring first).
         // No-op for products that have no batches.
-        crate::commands::inventory::deduct_fifo(&mut tx, company_id, product_id, *quantity)
-            .await?;
+        crate::commands::inventory::deduct_fifo(&mut tx, company_id, product_id, *quantity).await?;
     }
 
     // Mark invoice as finalized
     sqlx::query(
         r#"
         UPDATE invoices
-        SET status = 'finalized', finalized_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+        SET status = 'finalized', finalized_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP,
+            balance_due = grand_total
         WHERE id = ?
         "#,
     )
@@ -922,6 +1026,20 @@ pub async fn finalize_invoice(
         .await
         .map_err(|e| format!("Database error: {e}"))?;
 
+    let company_id = current_user.company_id.as_deref().unwrap_or("system");
+    log_audit(
+        pool.inner(),
+        company_id,
+        &current_user.id,
+        &current_user.email,
+        &current_user.role,
+        "finalize",
+        "invoice",
+        Some(&invoice_id),
+        &format!("Finalized invoice (total {})", invoice.2),
+    )
+    .await;
+
     Ok(updated)
 }
 
@@ -939,9 +1057,7 @@ pub async fn record_payment(
 ) -> Result<PublicInvoice, String> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
 
-    if current_user.role == "employee" {
-        return Err("Employees cannot record payments".to_string());
-    }
+    check_permission(pool.inner(), &current_user.role, "invoices", "edit").await?;
 
     let company_id = current_user
         .company_id
@@ -1044,6 +1160,23 @@ pub async fn record_payment(
         .await
         .map_err(|e| format!("Database error: {e}"))?;
 
+    let company_id = current_user.company_id.as_deref().unwrap_or("system");
+    log_audit(
+        pool.inner(),
+        company_id,
+        &current_user.id,
+        &current_user.email,
+        &current_user.role,
+        "payment",
+        "invoice",
+        Some(&invoice_id),
+        &format!(
+            "Recorded payment of {} via {} (invoice now {})",
+            amount, payment_method, new_status
+        ),
+    )
+    .await;
+
     Ok(updated)
 }
 
@@ -1077,9 +1210,7 @@ pub async fn update_invoice_settings(
 ) -> Result<InvoiceSettings, String> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
 
-    if current_user.role != "owner" {
-        return Err("Only the owner can update invoice settings".to_string());
-    }
+    check_permission(pool.inner(), &current_user.role, "settings", "edit").await?;
 
     let company_id = current_user
         .company_id
@@ -1129,6 +1260,23 @@ pub async fn update_invoice_settings(
     .execute(pool.inner())
     .await
     .map_err(|e| format!("Database error: {e}"))?;
+
+    let company_id = current_user.company_id.as_deref().unwrap_or("system");
+    log_audit(
+        pool.inner(),
+        company_id,
+        &current_user.id,
+        &current_user.email,
+        &current_user.role,
+        "update",
+        "invoice_settings",
+        None,
+        &format!(
+            "Updated invoice settings (prefix '{}', due {} days)",
+            prefix, due_days
+        ),
+    )
+    .await;
 
     get_or_create_settings(pool.inner(), company_id).await
 }
@@ -1704,3 +1852,1127 @@ fn is_leap(year: u64) -> bool {
     (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
 }
 
+/// Generates the next invoice number ATOMICALLY inside a transaction.
+/// No two invoices can get the same number, even if created simultaneously.
+async fn generate_invoice_number(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    company_id: &str,
+) -> Result<String, String> {
+    // Ensure settings row exists
+    let exists: bool = sqlx::query_scalar(
+        "SELECT COUNT(*) > 0 FROM company_invoice_settings WHERE company_id = ?",
+    )
+    .bind(company_id)
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(|e| format!("Settings check error: {e}"))?;
+
+    if !exists {
+        let id = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO company_invoice_settings (id, company_id) VALUES (?, ?)")
+            .bind(&id)
+            .bind(company_id)
+            .execute(&mut **tx)
+            .await
+            .map_err(|e| format!("Settings create error: {e}"))?;
+    }
+
+    // READ and INCREMENT in the SAME transaction (atomic)
+    let (prefix, number): (String, i64) = sqlx::query_as(
+        "SELECT invoice_prefix, next_number FROM company_invoice_settings WHERE company_id = ?",
+    )
+    .bind(company_id)
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(|e| format!("Settings read error: {e}"))?;
+
+    // Increment immediately (within the same transaction)
+    sqlx::query(
+        "UPDATE company_invoice_settings SET next_number = next_number + 1, updated_at = CURRENT_TIMESTAMP WHERE company_id = ?"
+    )
+    .bind(company_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| format!("Counter update error: {e}"))?;
+
+    Ok(format!("{}-{:04}", prefix, number))
+}
+
+// ==========================================
+// TESTS
+// ==========================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::test_helpers::{
+        insert_user, register_owner, set_session_user, setup_app,
+    };
+    use tauri::Manager;
+    use uuid::Uuid;
+
+    /// Registers the owner and returns the app.
+    async fn owner_app() -> tauri::App<tauri::test::MockRuntime> {
+        let app = setup_app().await;
+        register_owner(&app, "owner@test.com").await;
+        app
+    }
+
+    /// Creates a customer through the real command.
+    async fn make_customer(
+        app: &tauri::App<tauri::test::MockRuntime>,
+        name: &str,
+    ) -> PublicCustomer {
+        create_customer(
+            app.state(),
+            app.state(),
+            name.to_string(),
+            "cust@test.com".to_string(),
+            "0300-111".to_string(),
+            "Lahore".to_string(),
+            "".to_string(),
+            "".to_string(),
+            "".to_string(),
+            "registered".to_string(),
+        )
+        .await
+        .expect("create customer")
+    }
+
+    /// Creates a product with the given initial stock through the real command.
+    async fn make_product(
+        app: &tauri::App<tauri::test::MockRuntime>,
+        name: &str,
+        stock: i64,
+    ) -> crate::commands::inventory::PublicProduct {
+        crate::commands::inventory::create_product(
+            app.state(),
+            app.state(),
+            "".to_string(),
+            name.to_string(),
+            "".to_string(),
+            "".to_string(),
+            500,
+            700,
+            0,
+            stock,
+            "pcs".to_string(),
+        )
+        .await
+        .expect("create product")
+    }
+
+    /// Creates a draft invoice for the given customer.
+    async fn make_invoice(
+        app: &tauri::App<tauri::test::MockRuntime>,
+        customer_id: &str,
+    ) -> PublicInvoice {
+        create_invoice(
+            app.state(),
+            app.state(),
+            customer_id.to_string(),
+            "2026-01-15".to_string(),
+            "2026-02-14".to_string(),
+            "PO-1".to_string(),
+            "note".to_string(),
+        )
+        .await
+        .expect("create invoice")
+    }
+
+    /// Adds an item (qty, unit_price, tax) to a draft invoice.
+    async fn add_item(
+        app: &tauri::App<tauri::test::MockRuntime>,
+        invoice_id: &str,
+        product_id: &str,
+        quantity: i64,
+        unit_price: i64,
+        tax_rate: i64,
+    ) -> Vec<PublicInvoiceItem> {
+        add_invoice_item(
+            app.state(),
+            app.state(),
+            invoice_id.to_string(),
+            product_id.to_string(),
+            quantity,
+            unit_price,
+            tax_rate,
+            "percent".to_string(),
+            0,
+        )
+        .await
+        .expect("add item")
+    }
+
+    /// Builds a finalized invoice with one item and returns (invoice, product).
+    async fn finalized_invoice_with_stock(
+        app: &tauri::App<tauri::test::MockRuntime>,
+    ) -> (PublicInvoice, crate::commands::inventory::PublicProduct) {
+        let customer = make_customer(app, "Walk-in").await;
+        let product = make_product(app, "Widget", 10).await;
+        let invoice = make_invoice(app, &customer.id).await;
+        add_item(app, &invoice.id, &product.id, 2, 1000, 0).await;
+        let finalized = finalize_invoice(app.state(), app.state(), invoice.id.clone())
+            .await
+            .expect("finalize");
+        (finalized, product)
+    }
+
+    // ---------------------------------------------------------------
+    // clean_optional (pure)
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn clean_optional_blank_is_none() {
+        // Input: "".
+        // Expected: None.
+        assert_eq!(clean_optional(""), None);
+    }
+
+    #[test]
+    fn clean_optional_trims() {
+        // Input: "  abc  ".
+        // Expected: Some("abc").
+        assert_eq!(clean_optional("  abc  "), Some("abc".to_string()));
+    }
+
+    // ---------------------------------------------------------------
+    // round_to_rupee (pure)
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn round_down_when_rem_below_50() {
+        // Input: 123 paisa.
+        // Expected: 100.
+        assert_eq!(round_to_rupee(123), 100);
+    }
+
+    #[test]
+    fn round_up_when_rem_at_least_50() {
+        // Input: 150 paisa.
+        // Expected: 200.
+        assert_eq!(round_to_rupee(150), 200);
+    }
+
+    #[test]
+    fn round_handles_negative_with_euclid() {
+        // Input: -140 paisa.
+        // Expected: -100.
+        assert_eq!(round_to_rupee(-140), -100);
+    }
+
+    // ---------------------------------------------------------------
+    // compute_line_amounts (pure)
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn line_amounts_percent_discount() {
+        // Input: qty 10, price 1000, tax 17%, percent discount 10%.
+        // Expected: (discount_rate 1000, tax 1530, discount 1000, line_total 10500).
+        assert_eq!(
+            compute_line_amounts(10, 1000, 1700, "percent", 1000),
+            (1000, 1530, 1000, 10500)
+        );
+    }
+
+    #[test]
+    fn line_amounts_fixed_amount_discount() {
+        // Input: qty 2, price 5000, tax 0, amount discount 3000.
+        // Expected: (0, 0, 3000, 7000).
+        assert_eq!(
+            compute_line_amounts(2, 5000, 0, "amount", 3000),
+            (0, 0, 3000, 7000)
+        );
+    }
+
+    #[test]
+    fn line_amounts_clamps_amount_discount_to_subtotal() {
+        // Input: amount discount bigger than the line subtotal.
+        // Expected: discount capped at line subtotal, line_total 0.
+        assert_eq!(
+            compute_line_amounts(1, 1000, 0, "amount", 99999),
+            (0, 0, 1000, 0)
+        );
+    }
+
+    #[test]
+    fn line_amounts_no_discount_no_tax() {
+        // Input: qty 3, price 200, tax 0, no discount.
+        // Expected: (0, 0, 0, 600).
+        assert_eq!(compute_line_amounts(3, 200, 0, "percent", 0), (0, 0, 0, 600));
+    }
+
+    // ---------------------------------------------------------------
+    // format_timestamp / is_leap (pure)
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn timestamp_epoch_is_1970_epoch() {
+        // Input: 0 seconds.
+        // Expected: "1970-01-01 00:00 UTC".
+        assert_eq!(format_timestamp(0), "1970-01-01 00:00 UTC");
+    }
+
+    #[test]
+    fn is_leap_handles_century_rules() {
+        // Inputs: 2000, 1900, 2024, 2023.
+        // Expected: true, false, true, false.
+        assert!(is_leap(2000));
+        assert!(!is_leap(1900));
+        assert!(is_leap(2024));
+        assert!(!is_leap(2023));
+    }
+
+    // ---------------------------------------------------------------
+    // generate_invoice_number (transaction helper)
+    // ---------------------------------------------------------------
+
+    #[tokio::test]
+    async fn invoice_numbers_increment() {
+        // Input: two calls in separate transactions.
+        // Expected: "INV-0001" then "INV-0002".
+        let app = owner_app().await;
+        let pool = app.state::<SqlitePool>();
+        let cid = company_id(&app).await;
+
+        let n1 = {
+            let mut tx = pool.begin().await.unwrap();
+            let n = generate_invoice_number(&mut tx, &cid).await.expect("n1");
+            tx.commit().await.unwrap();
+            n
+        };
+        let n2 = {
+            let mut tx = pool.begin().await.unwrap();
+            let n = generate_invoice_number(&mut tx, &cid).await.expect("n2");
+            tx.commit().await.unwrap();
+            n
+        };
+        assert_eq!(n1, "INV-0001");
+        assert_eq!(n2, "INV-0002");
+    }
+
+    // ---------------------------------------------------------------
+    // customers
+    // ---------------------------------------------------------------
+
+    #[tokio::test]
+    async fn create_customer_succeeds() {
+        // Input: valid registered customer.
+        // Expected: Ok with buyer_type "registered", trimmed name.
+        let app = owner_app().await;
+        let c = create_customer(
+            app.state(),
+            app.state(),
+            "  Acme Ltd  ".to_string(),
+            "acme@test.com".to_string(),
+            "".to_string(),
+            "".to_string(),
+            "".to_string(),
+            "".to_string(),
+            "".to_string(),
+            "registered".to_string(),
+        )
+        .await
+        .expect("create");
+        assert_eq!(c.name, "Acme Ltd");
+        assert_eq!(c.buyer_type, "registered");
+        assert_eq!(c.email.as_deref(), Some("acme@test.com"));
+    }
+
+    #[tokio::test]
+    async fn create_customer_rejects_empty_name() {
+        // Input: blank name.
+        // Expected: Err "Customer name cannot be empty".
+        let app = owner_app().await;
+        let err = create_customer(
+            app.state(),
+            app.state(),
+            "  ".to_string(),
+            "".to_string(),
+            "".to_string(),
+            "".to_string(),
+            "".to_string(),
+            "".to_string(),
+            "".to_string(),
+            "registered".to_string(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err, "Customer name cannot be empty");
+    }
+
+    #[tokio::test]
+    async fn create_customer_rejects_bad_buyer_type() {
+        // Input: buyer_type "walk-in".
+        // Expected: Err "Buyer type must be 'registered' or 'unregistered'".
+        let app = owner_app().await;
+        let err = create_customer(
+            app.state(),
+            app.state(),
+            "Acme".to_string(),
+            "".to_string(),
+            "".to_string(),
+            "".to_string(),
+            "".to_string(),
+            "".to_string(),
+            "".to_string(),
+            "walk-in".to_string(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(
+            err,
+            "Buyer type must be 'registered' or 'unregistered'"
+        );
+    }
+
+    #[tokio::test]
+    async fn create_customer_denied_for_employee() {
+        // Input: employee logged in (invoices/view only).
+        // Expected: Err "Access denied".
+        let app = owner_app().await;
+        let employee = insert_user(&app.state::<SqlitePool>(), &company_id(&app).await, "e@test.com", "Emp", "employee", true).await;
+        set_session_user(&app, employee).await;
+
+        let err = create_customer(
+            app.state(),
+            app.state(),
+            "Acme".to_string(),
+            "".to_string(),
+            "".to_string(),
+            "".to_string(),
+            "".to_string(),
+            "".to_string(),
+            "".to_string(),
+            "registered".to_string(),
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("Access denied"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn list_customers_and_delete() {
+        // Input: create then delete a customer.
+        // Expected: list reflects each state.
+        let app = owner_app().await;
+        let c = make_customer(&app, "Acme").await;
+
+        let listed = list_customers(app.state(), app.state()).await.expect("list");
+        assert_eq!(listed.len(), 1);
+
+        delete_customer(app.state(), app.state(), c.id.clone())
+            .await
+            .expect("delete");
+
+        let listed = list_customers(app.state(), app.state()).await.expect("list");
+        assert!(listed.is_empty());
+    }
+
+    #[tokio::test]
+    async fn delete_customer_not_found() {
+        // Input: a random id.
+        // Expected: Err "Customer not found".
+        let app = owner_app().await;
+        let err = delete_customer(app.state(), app.state(), Uuid::new_v4().to_string())
+            .await
+            .unwrap_err();
+        assert_eq!(err, "Customer not found");
+    }
+
+    #[tokio::test]
+    async fn list_customers_requires_login() {
+        // Input: no session.
+        // Expected: Err "You must log in first".
+        let app = setup_app().await;
+        let err = list_customers(app.state(), app.state()).await.unwrap_err();
+        assert!(err.contains("log in first"), "got: {err}");
+    }
+
+    // ---------------------------------------------------------------
+    // create_invoice
+    // ---------------------------------------------------------------
+
+    #[tokio::test]
+    async fn create_invoice_draft_with_number() {
+        // Input: valid customer.
+        // Expected: Ok, status "draft", number "INV-0001", due date stored.
+        let app = owner_app().await;
+        let customer = make_customer(&app, "Acme").await;
+
+        let inv = create_invoice(
+            app.state(),
+            app.state(),
+            customer.id.clone(),
+            "2026-01-15".to_string(),
+            "2026-02-14".to_string(),
+            "PO-9".to_string(),
+            "hello".to_string(),
+        )
+        .await
+        .expect("create");
+        assert_eq!(inv.status, "draft");
+        assert_eq!(inv.invoice_number, "INV-0001");
+        assert_eq!(inv.due_date.as_deref(), Some("2026-02-14"));
+        assert_eq!(inv.po_number.as_deref(), Some("PO-9"));
+    }
+
+    #[tokio::test]
+    async fn create_invoice_customer_not_found() {
+        // Input: a random customer id.
+        // Expected: Err "Customer not found".
+        let app = owner_app().await;
+        let err = create_invoice(
+            app.state(),
+            app.state(),
+            Uuid::new_v4().to_string(),
+            "2026-01-15".to_string(),
+            "".to_string(),
+            "".to_string(),
+            "".to_string(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err, "Customer not found");
+    }
+
+    #[tokio::test]
+    async fn create_invoice_denied_for_employee() {
+        // Input: employee logged in.
+        // Expected: Err "Access denied".
+        let app = owner_app().await;
+        let employee = insert_user(&app.state::<SqlitePool>(), &company_id(&app).await, "e@test.com", "Emp", "employee", true).await;
+        set_session_user(&app, employee).await;
+
+        let err = create_invoice(
+            app.state(),
+            app.state(),
+            Uuid::new_v4().to_string(),
+            "2026-01-15".to_string(),
+            "".to_string(),
+            "".to_string(),
+            "".to_string(),
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("Access denied"), "got: {err}");
+    }
+
+    // ---------------------------------------------------------------
+    // add / update / remove invoice items
+    // ---------------------------------------------------------------
+
+    #[tokio::test]
+    async fn add_item_recalculates_totals() {
+        // Input: two items with known prices.
+        // Expected: invoice totals reflect the items.
+        let app = owner_app().await;
+        let customer = make_customer(&app, "Acme").await;
+        let p1 = make_product(&app, "Widget", 10).await;
+        let p2 = make_product(&app, "Gadget", 5).await;
+        let inv = make_invoice(&app, &customer.id).await;
+
+        add_item(&app, &inv.id, &p1.id, 2, 1000, 0).await; // 2000
+        add_invoice_item(
+            app.state(),
+            app.state(),
+            inv.id.clone(),
+            p2.id.clone(),
+            1,
+            3000,
+            1700, // 17% tax on 3000 = 510
+            "percent".to_string(),
+            0,
+        )
+        .await
+        .expect("add second item");
+
+        let details = get_invoice(app.state(), app.state(), inv.id.clone())
+            .await
+            .expect("get");
+        assert_eq!(details.items.len(), 2);
+        assert_eq!(details.invoice.subtotal, 5000);
+        assert_eq!(details.invoice.tax_total, 510);
+        // 5510 paisa = 55.10 PKR → rounded to 55.00 = 5500.
+        assert_eq!(details.invoice.grand_total, 5500);
+    }
+
+    #[tokio::test]
+    async fn add_item_rejects_zero_quantity() {
+        // Input: quantity 0.
+        // Expected: Err "Quantity must be positive".
+        let app = owner_app().await;
+        let customer = make_customer(&app, "Acme").await;
+        let p = make_product(&app, "Widget", 10).await;
+        let inv = make_invoice(&app, &customer.id).await;
+
+        let err = add_invoice_item(
+            app.state(),
+            app.state(),
+            inv.id.clone(),
+            p.id.clone(),
+            0,
+            100,
+            0,
+            "percent".to_string(),
+            0,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err, "Quantity must be positive");
+    }
+
+    #[tokio::test]
+    async fn add_item_rejects_negative_price() {
+        // Input: unit_price -1.
+        // Expected: Err "Unit price cannot be negative".
+        let app = owner_app().await;
+        let customer = make_customer(&app, "Acme").await;
+        let p = make_product(&app, "Widget", 10).await;
+        let inv = make_invoice(&app, &customer.id).await;
+
+        let err = add_invoice_item(
+            app.state(),
+            app.state(),
+            inv.id.clone(),
+            p.id.clone(),
+            1,
+            -1,
+            0,
+            "percent".to_string(),
+            0,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err, "Unit price cannot be negative");
+    }
+
+    #[tokio::test]
+    async fn add_item_product_not_found() {
+        // Input: a random product id.
+        // Expected: Err "Product not found".
+        let app = owner_app().await;
+        let customer = make_customer(&app, "Acme").await;
+        let inv = make_invoice(&app, &customer.id).await;
+
+        let err = add_invoice_item(
+            app.state(),
+            app.state(),
+            inv.id.clone(),
+            Uuid::new_v4().to_string(),
+            1,
+            100,
+            0,
+            "percent".to_string(),
+            0,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err, "Product not found");
+    }
+
+    #[tokio::test]
+    async fn update_and_remove_item() {
+        // Input: add item, update its qty, then remove it.
+        // Expected: totals follow each change; final item list empty.
+        let app = owner_app().await;
+        let customer = make_customer(&app, "Acme").await;
+        let p = make_product(&app, "Widget", 10).await;
+        let inv = make_invoice(&app, &customer.id).await;
+        let items = add_item(&app, &inv.id, &p.id, 2, 1000, 0).await;
+
+        let updated = update_invoice_item(
+            app.state(),
+            app.state(),
+            inv.id.clone(),
+            items[0].id.clone(),
+            5,
+            1000,
+            0,
+            "percent".to_string(),
+            0,
+        )
+        .await
+        .expect("update item");
+        assert_eq!(updated[0].quantity, 5);
+
+        let details = get_invoice(app.state(), app.state(), inv.id.clone())
+            .await
+            .expect("get");
+        assert_eq!(details.invoice.subtotal, 5000);
+
+        let items = remove_invoice_item(app.state(), app.state(), inv.id.clone(), items[0].id.clone())
+            .await
+            .expect("remove");
+        assert!(items.is_empty());
+
+        let details = get_invoice(app.state(), app.state(), inv.id.clone())
+            .await
+            .expect("get");
+        assert_eq!(details.invoice.grand_total, 0);
+    }
+
+    #[tokio::test]
+    async fn update_item_not_on_invoice() {
+        // Input: a random item id.
+        // Expected: Err "Item not found on this invoice".
+        let app = owner_app().await;
+        let customer = make_customer(&app, "Acme").await;
+        let inv = make_invoice(&app, &customer.id).await;
+
+        let err = update_invoice_item(
+            app.state(),
+            app.state(),
+            inv.id.clone(),
+            Uuid::new_v4().to_string(),
+            1,
+            100,
+            0,
+            "percent".to_string(),
+            0,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err, "Item not found on this invoice");
+    }
+
+    #[tokio::test]
+    async fn add_item_rejected_on_finalized_invoice() {
+        // Input: adding an item to a finalized invoice.
+        // Expected: Err "Can only add items to draft invoices".
+        let app = owner_app().await;
+        let (inv, product) = finalized_invoice_with_stock(&app).await;
+
+        let err = add_invoice_item(
+            app.state(),
+            app.state(),
+            inv.id.clone(),
+            product.id.clone(),
+            1,
+            100,
+            0,
+            "percent".to_string(),
+            0,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err, "Can only add items to draft invoices");
+    }
+
+    #[tokio::test]
+    async fn add_item_invoice_not_found() {
+        // Input: a random invoice id.
+        // Expected: Err "Invoice not found".
+        let app = owner_app().await;
+        let p = make_product(&app, "Widget", 10).await;
+        let err = add_invoice_item(
+            app.state(),
+            app.state(),
+            Uuid::new_v4().to_string(),
+            p.id.clone(),
+            1,
+            100,
+            0,
+            "percent".to_string(),
+            0,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err, "Invoice not found");
+    }
+
+    // ---------------------------------------------------------------
+    // finalize_invoice
+    // ---------------------------------------------------------------
+
+    #[tokio::test]
+    async fn finalize_deducts_stock_and_locks() {
+        // Input: draft invoice with 2× Widget; product has 10.
+        // Expected: status "finalized"; product stock 8; sale movement recorded.
+        let app = owner_app().await;
+        let (inv, product) = finalized_invoice_with_stock(&app).await;
+
+        assert_eq!(inv.status, "finalized");
+        assert!(inv.finalized_at.is_some());
+
+        let products = crate::commands::inventory::list_products(app.state(), app.state())
+            .await
+            .expect("products");
+        assert_eq!(products[0].quantity_in_stock, 8);
+
+        let movements =
+            crate::commands::inventory::list_stock_movements(app.state(), app.state(), product.id.clone())
+                .await
+                .expect("movements");
+        assert!(movements.iter().any(|m| m.movement_type == "sale"));
+    }
+
+    #[tokio::test]
+    async fn finalize_rejects_insufficient_stock() {
+        // Input: item qty 50 but only 10 in stock.
+        // Expected: Err "Insufficient stock".
+        let app = owner_app().await;
+        let customer = make_customer(&app, "Acme").await;
+        let product = make_product(&app, "Widget", 10).await;
+        let inv = make_invoice(&app, &customer.id).await;
+        add_invoice_item(
+            app.state(),
+            app.state(),
+            inv.id.clone(),
+            product.id.clone(),
+            50,
+            100,
+            0,
+            "percent".to_string(),
+            0,
+        )
+        .await
+        .expect("add item");
+
+        let err = finalize_invoice(app.state(), app.state(), inv.id.clone())
+            .await
+            .unwrap_err();
+        assert!(err.contains("Insufficient stock"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn finalize_rejects_zero_total() {
+        // Input: draft invoice with no items.
+        // Expected: Err "Cannot finalize an invoice with zero total".
+        let app = owner_app().await;
+        let customer = make_customer(&app, "Acme").await;
+        let inv = make_invoice(&app, &customer.id).await;
+
+        let err = finalize_invoice(app.state(), app.state(), inv.id.clone())
+            .await
+            .unwrap_err();
+        assert!(err.contains("zero total"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn finalize_rejects_double_finalize() {
+        // Input: finalize an already-finalized invoice.
+        // Expected: Err "Invoice is not in draft status".
+        let app = owner_app().await;
+        let (inv, _) = finalized_invoice_with_stock(&app).await;
+
+        let err = finalize_invoice(app.state(), app.state(), inv.id.clone())
+            .await
+            .unwrap_err();
+        assert_eq!(err, "Invoice is not in draft status");
+    }
+
+    #[tokio::test]
+    async fn finalize_denied_for_employee() {
+        // Input: employee logged in (no invoices/finalize).
+        // Expected: Err "Access denied".
+        let app = owner_app().await;
+        let customer = make_customer(&app, "Acme").await;
+        let p = make_product(&app, "Widget", 10).await;
+        let inv = make_invoice(&app, &customer.id).await;
+        add_item(&app, &inv.id, &p.id, 1, 100, 0).await;
+
+        let employee = insert_user(&app.state::<SqlitePool>(), &company_id(&app).await, "e@test.com", "Emp", "employee", true).await;
+        set_session_user(&app, employee).await;
+
+        let err = finalize_invoice(app.state(), app.state(), inv.id.clone())
+            .await
+            .unwrap_err();
+        assert!(err.contains("Access denied"), "got: {err}");
+    }
+
+    // ---------------------------------------------------------------
+    // get_invoice / list_invoices
+    // ---------------------------------------------------------------
+
+    #[tokio::test]
+    async fn get_invoice_returns_full_details() {
+        // Input: finalized invoice.
+        // Expected: customer, 1 item, no payments.
+        let app = owner_app().await;
+        let (inv, _) = finalized_invoice_with_stock(&app).await;
+
+        let details = get_invoice(app.state(), app.state(), inv.id.clone())
+            .await
+            .expect("get");
+        assert_eq!(details.invoice.id, inv.id);
+        assert_eq!(details.customer.name, "Walk-in");
+        assert_eq!(details.items.len(), 1);
+        assert!(details.payments.is_empty());
+    }
+
+    #[tokio::test]
+    async fn get_invoice_not_found() {
+        // Input: a random id.
+        // Expected: Err "Invoice not found".
+        let app = owner_app().await;
+        let err = get_invoice(app.state(), app.state(), Uuid::new_v4().to_string())
+            .await
+            .unwrap_err();
+        assert_eq!(err, "Invoice not found");
+    }
+
+    #[tokio::test]
+    async fn list_invoices_returns_all() {
+        // Input: two invoices.
+        // Expected: 2 rows.
+        let app = owner_app().await;
+        let customer = make_customer(&app, "Acme").await;
+        make_invoice(&app, &customer.id).await;
+        make_invoice(&app, &customer.id).await;
+
+        let invoices = list_invoices(app.state(), app.state()).await.expect("list");
+        assert_eq!(invoices.len(), 2);
+    }
+
+    // ---------------------------------------------------------------
+    // record_payment
+    // ---------------------------------------------------------------
+
+    #[tokio::test]
+    async fn record_payment_partial_and_full() {
+        // Input: finalized invoice total 2000; pay 800 then 1200.
+        // Expected: status finalized (balance 1200) then paid (balance 0).
+        let app = owner_app().await;
+        let customer = make_customer(&app, "Acme").await;
+        let p = make_product(&app, "Widget", 10).await;
+        let inv = make_invoice(&app, &customer.id).await;
+        add_item(&app, &inv.id, &p.id, 2, 1000, 0).await; // 2000 total
+        let finalized = finalize_invoice(app.state(), app.state(), inv.id.clone())
+            .await
+            .expect("finalize");
+
+        let after_partial = record_payment(
+            app.state(),
+            app.state(),
+            inv.id.clone(),
+            800,
+            "cash".to_string(),
+            "2026-01-20".to_string(),
+            "ref-1".to_string(),
+            "advance".to_string(),
+        )
+        .await
+        .expect("partial");
+        assert_eq!(after_partial.status, "finalized");
+        assert_eq!(after_partial.balance_due, finalized.grand_total - 800);
+
+        let after_full = record_payment(
+            app.state(),
+            app.state(),
+            inv.id.clone(),
+            1200,
+            "bank_transfer".to_string(),
+            "2026-01-25".to_string(),
+            "".to_string(),
+            "".to_string(),
+        )
+        .await
+        .expect("full");
+        assert_eq!(after_full.status, "paid");
+        assert_eq!(after_full.amount_paid, finalized.grand_total);
+        assert_eq!(after_full.balance_due, 0);
+    }
+
+    #[tokio::test]
+    async fn record_payment_rejects_overpayment() {
+        // Input: payment exceeding balance.
+        // Expected: Err "Payment ... exceeds balance due".
+        let app = owner_app().await;
+        let (inv, _) = finalized_invoice_with_stock(&app).await;
+
+        let err = record_payment(
+            app.state(),
+            app.state(),
+            inv.id.clone(),
+            999999,
+            "cash".to_string(),
+            "2026-01-20".to_string(),
+            "".to_string(),
+            "".to_string(),
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("exceeds balance due"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn record_payment_rejects_draft_invoice() {
+        // Input: payment on a draft invoice.
+        // Expected: Err "Cannot record payment for draft or cancelled invoices".
+        let app = owner_app().await;
+        let customer = make_customer(&app, "Acme").await;
+        let inv = make_invoice(&app, &customer.id).await;
+
+        let err = record_payment(
+            app.state(),
+            app.state(),
+            inv.id.clone(),
+            100,
+            "cash".to_string(),
+            "2026-01-20".to_string(),
+            "".to_string(),
+            "".to_string(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(
+            err,
+            "Cannot record payment for draft or cancelled invoices"
+        );
+    }
+
+    #[tokio::test]
+    async fn record_payment_rejects_invalid_method() {
+        // Input: payment_method "bitcoin".
+        // Expected: Err "Invalid payment method".
+        let app = owner_app().await;
+        let (inv, _) = finalized_invoice_with_stock(&app).await;
+
+        let err = record_payment(
+            app.state(),
+            app.state(),
+            inv.id.clone(),
+            100,
+            "bitcoin".to_string(),
+            "2026-01-20".to_string(),
+            "".to_string(),
+            "".to_string(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err, "Invalid payment method");
+    }
+
+    #[tokio::test]
+    async fn record_payment_rejects_non_positive_amount() {
+        // Input: amount 0.
+        // Expected: Err "Payment amount must be positive".
+        let app = owner_app().await;
+        let (inv, _) = finalized_invoice_with_stock(&app).await;
+
+        let err = record_payment(
+            app.state(),
+            app.state(),
+            inv.id.clone(),
+            0,
+            "cash".to_string(),
+            "2026-01-20".to_string(),
+            "".to_string(),
+            "".to_string(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err, "Payment amount must be positive");
+    }
+
+    // ---------------------------------------------------------------
+    // invoice settings
+    // ---------------------------------------------------------------
+
+    #[tokio::test]
+    async fn settings_defaults_created() {
+        // Input: fresh company.
+        // Expected: prefix "INV", next_number 1, due 30.
+        let app = owner_app().await;
+        let s = get_invoice_settings(app.state(), app.state())
+            .await
+            .expect("settings");
+        assert_eq!(s.invoice_prefix, "INV");
+        assert_eq!(s.next_number, 1);
+        assert_eq!(s.default_due_days, 30);
+    }
+
+    #[tokio::test]
+    async fn settings_updated_and_upserted() {
+        // Input: update settings twice (upsert must not duplicate).
+        // Expected: latest values win, single row.
+        let app = owner_app().await;
+
+        let s = update_invoice_settings(
+            app.state(),
+            app.state(),
+            "NTN-1".to_string(),
+            "".to_string(),
+            "".to_string(),
+            "sale".to_string(),
+            15,
+            "footer".to_string(),
+            "terms".to_string(),
+        )
+        .await
+        .expect("update");
+        assert_eq!(s.invoice_prefix, "SALE");
+        assert_eq!(s.default_due_days, 15);
+        assert_eq!(s.company_ntn.as_deref(), Some("NTN-1"));
+
+        let s2 = update_invoice_settings(
+            app.state(),
+            app.state(),
+            "".to_string(),
+            "".to_string(),
+            "".to_string(),
+            "   ".to_string(),
+            0,
+            "".to_string(),
+            "".to_string(),
+        )
+        .await
+        .expect("update again");
+        assert_eq!(s2.invoice_prefix, "INV", "blank prefix falls back to INV");
+        assert_eq!(s2.default_due_days, 30, "due days below 1 falls back to 30");
+    }
+
+    #[tokio::test]
+    async fn update_settings_denied_for_employee() {
+        // Input: employee logged in (no settings/edit).
+        // Expected: Err "Access denied".
+        let app = owner_app().await;
+        let employee = insert_user(&app.state::<SqlitePool>(), &company_id(&app).await, "e@test.com", "Emp", "employee", true).await;
+        set_session_user(&app, employee).await;
+
+        let err = update_invoice_settings(
+            app.state(),
+            app.state(),
+            "".to_string(),
+            "".to_string(),
+            "".to_string(),
+            "INV".to_string(),
+            30,
+            "".to_string(),
+            "".to_string(),
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("Access denied"), "got: {err}");
+    }
+
+    // ---------------------------------------------------------------
+    // misc
+    // ---------------------------------------------------------------
+
+    #[tokio::test]
+    async fn get_or_create_settings_is_idempotent() {
+        // Input: call twice.
+        // Expected: same defaults, no error.
+        let app = owner_app().await;
+        let cid = company_id(&app).await;
+        let pool = app.state::<SqlitePool>();
+
+        let a = get_or_create_settings(&pool, &cid).await.expect("first");
+        let b = get_or_create_settings(&pool, &cid).await.expect("second");
+        assert_eq!(a.invoice_prefix, b.invoice_prefix);
+        assert_eq!(a.next_number, b.next_number);
+    }
+
+    /// Extracts the current user's company id from the DB.
+    async fn company_id(app: &tauri::App<tauri::test::MockRuntime>) -> String {
+        let pool = app.state::<SqlitePool>();
+        sqlx::query_scalar::<_, String>(
+            "SELECT company_id FROM users WHERE email = 'owner@test.com'",
+        )
+        .fetch_one(&*pool)
+        .await
+        .unwrap()
+    }
+}

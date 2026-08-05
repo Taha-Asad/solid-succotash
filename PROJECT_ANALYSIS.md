@@ -1,7 +1,8 @@
 # Ijaz & Company ERP — Project Analysis & Status Report
 
-> **Date:** 2026-08-01
-> **Scope:** Critical assessment of the current implementation against `SAAS_SPECIFICATION.md` (v5.1), build-readiness verification, achieved/approved scope, and next-phase roadmap.
+> **Date:** 2026-08-05
+> **Scope:** Refreshed assessment of the current implementation against `SAAS_SPECIFICATION.md` (v5.1), verified against the live codebase, with emphasis on **what is left** and **what the next steps are**. Supersedes the 2026-08-05 v0.1.6 report.
+> **Milestone:** **v1.0.0 released** — Phase 1 (single-tenant desktop ERP core + hardening) is complete.
 
 ---
 
@@ -10,152 +11,146 @@
 | Attribute      | Value                                                          |
 | -------------- | -------------------------------------------------------------- |
 | Product        | Ijaz & Company ERP (desktop application)                       |
-| Version        | 0.1.0                                                          |
-| Architecture   | Tauri 2.11.5 + React 19 + Mantine 9 + TypeScript + Rust (sqlx 0.9) |
+| Version        | **1.0.0** (tagged)                                             |
+| Architecture   | Tauri 2.11 + React 19 + Mantine 9 + TypeScript + Rust (sqlx 0.9 + SQLite) |
 | Database       | SQLite (single-tenant desktop mode per spec §21)               |
 | Data flow      | Tauri `invoke()` IPC — no HTTP/REST layer                      |
-| Auth           | In-memory Rust session + SQLite session persistence (bcrypt)   |
-| Build status   | ✅ Frontend + Rust release exe + **NSIS installer** build clean |
-|                | ⚠️ **MSI (WiX) bundling fails** — see §6.2                     |
-| Tests          | ❌ None (no Rust `#[test]`, no frontend test suite)             |
-| Spec alignment | This is spec **Desktop/Local Mode** (single-tenant SQLite) — a working Phase-1 core, with **none** of the SaaS/cloud layer built |
+| Auth           | In-memory Rust session + SQLite session persistence (bcrypt) + login rate limiting |
+| Registered commands | 78 (incl. `greet`); 77 business commands across auth, company, users, inventory, invoices, import, purchase orders, reports, audit, permissions, export, updater, backup |
+| Migrations     | 9 (`001..009`) — users, companies, inventory, invoices, session, expiry batches, purchase orders, **audit log**, **soft-delete/versioning/permissions** |
+| Build status   | ✅ Frontend + Rust + NSIS installer + updater artifacts build clean |
+| Auto-update    | ✅ Wired (GitHub Actions release pipeline + minisign + `latest.json`) |
+| Tests          | ✅ **366 Rust integration tests, all green** (`cargo test --lib`), zero warnings (`cargo check --all-targets`), clean `tsc --noEmit`. Cataloged in `TEST_CASES.md` |
+| Spec alignment | **Desktop/Local Mode** (single-tenant SQLite) — **v1.0 desktop achieved**; the SaaS/cloud layer (Phase 1 of the spec proper) is a deliberate later phase |
 
 ---
 
 ## 2. Executive Summary
 
-The project is a **working single-tenant desktop ERP core**, not yet the multi-tenant SaaS platform described in the specification. It is best understood as **spec "Desktop/Local Mode"** (§21.1) with a solid Phase-1 (ERP Core) implementation:
+Since the 2026-08-01 audit the project has advanced **v0.1.0 → v1.0.0** and closed every desktop blocker identified for a production single-tenant release:
 
-- ✅ Auth + company setup + user management
-- ✅ Inventory (categories, suppliers, products, stock movements, custom fields)
-- ✅ Invoicing (draft → finalize with transactional stock deduction → payments) + FBR placeholder fields
-- ✅ Historical data import wizard (CSV / Excel / DOCX → products) — the spec's highest-value onboarding feature (§23)
-- ✅ Installer production pipeline (NSIS) proven working
+- ✅ **Audit logging (PECA §16.2)** — migration `008`, `audit.rs`, `log_audit()` write-through on every mutating command, read-only viewer (owner/admin) in Settings.
+- ✅ **Login rate limiting (PECA §16.2)** — in-memory `LoginAttemptTracker` (5 failures → lockout, expiry, case-insensitive).
+- ✅ **Automated tests (spec §18.9)** — 366 tests across all 13 command modules against real migrated SQLite DBs; documented in `TEST_CASES.md`.
+- ✅ **Backup + restore + UI** — `restore_backup` added; working Settings page with **Backup & Restore** and **Audit Log** tabs.
+- ✅ **Invoice/PO numbering concurrency** — sequence allocation moved inside the write transaction (`generate_invoice_number`, `next_po_number` atomic upsert).
+- ✅ **Permissions model** — `permissions.rs` with seeded `role_permissions`, `check_permission` gate + owner short-circuit.
+- ✅ **Soft-delete + optimistic locking (spec §8.10/§8.11)** — migration `009` adds `deleted_at`/`version`; helpers enforce 409-style conflicts.
+- ✅ **CSV report export (spec §11.1)** — `export.rs`: stock, customer ledger, sales (with CSV escaping).
+- ✅ **Customers page** — dedicated UI (`src/features/customers/`).
 
-What is **not** built is the entire **SaaS/cloud layer** (PostgreSQL, RLS, packages, subscriptions, super admin, FBR/PRAL, accounting ledger, audit logs, notifications, search, analytics engine) plus several Phase-1 desktop quality items (working print/PDF, purchase orders, reports, audit trail, tests, code cleanup).
+The app is a **release-ready single-tenant desktop ERP** covering the full core loop **import → inventory → sales → purchase → reports → export**, with distribution (NSIS), auto-update, audit trail, rate limiting, permissions and a regression-tested backend.
 
-**Verdict:** the current build is a legitimate **v0.1 desktop MVP** that can be approved for internal use, but it is **not** production-ready for external distribution yet (broken print/PDF, no audit logging, zero tests, MSI bundler defect).
+**Verdict:** **v1.0 desktop reached.** The spec's SaaS/cloud end-state (§2–§9, §17, §19, §22, §23) remains future work and must not start until the desktop product is proven in production.
 
 ---
 
 ## 3. What Is Achieved (Verified)
 
-### 3.1 Authentication & Company Setup
-- `src-tauri/src/commands/auth.rs` — `login_user`, `logout_user`, `current_user`, `update_my_profile`, `change_my_password`, plus `save_session` / `load_saved_session` / `clear_saved_session` (persistent session, migration `005_persistent_session.sql`).
-- Passwords hashed with **bcrypt 0.19**; emails normalized; login rate protection is absent but sessions are stored.
-- `src-tauri/src/commands/company.rs` — `register_company` (creates company + owner atomically in a transaction), `is_company_setup` (single-tenant gate), `get_company`, `update_company`. Only **one** company per installation is enforced (company_count > 0 → error).
-- Roles: `owner`, `admin`, `employee`, enforced by SQLite triggers (`002_create_companies.sql`) and unique index `idx_users_one_owner_per_company`.
-- Frontend: `LoginPage`, `SetupPage`, and an App state-machine (`src/App.tsx`) routing loading → setup → login → dashboard, with session restore on restart.
+### 3.1 Auth, Company Setup, Users
+- `auth.rs` (8 commands): login/logout (rate-limited), current user, profile/password change, persistent session (migration `005`). bcrypt 0.19, email normalization.
+- `company.rs`: single-tenant registration gate, one company per installation enforced.
+- `users.rs`: role management (`owner`/`admin`/`employee`) with DB-trigger enforcement + permission checks.
 
-### 3.2 User Management
-- `src-tauri/src/commands/users.rs` — `list_company_users`, `create_company_user` (admin/employee), `update_company_user_role`, `set_company_user_active`. Employee role is restricted from creating/finalizing invoices in the backend (`invoices.rs`).
+### 3.2 Permissions & Security Core
+- `permissions.rs`: `check_permission` against seeded `role_permissions` (owner always allowed); `soft_delete`, `check_version`, `bump_version` helpers — migration `009`.
+- `audit.rs`: `log_audit` write-through on every mutating command; `list_audit_logs` with pagination; owner/admin viewer.
 
-### 3.3 Inventory (spec §4 `inventory`, §3 schema)
-- Categories, suppliers, products (SKU, prices stored in **paisa/cents** to avoid float errors, tax rate, stock, unit), stock movements (`purchase`/`sale`/`adjustment`/`return`/`damage`).
-- Custom fields: `company_field_settings` (text/number/date/dropdown, visibility, order, validation JSON) + `products.custom_fields` JSON blob — matches the spec's "core columns + company-discovered JSON" principle in migration `003`.
-- Import templates (`import_templates`) saved for reuse.
-- `src/features/inventory/InventoryPage.tsx` — full UI for all of the above.
+### 3.3 Inventory & Expiry (spec §4 `inventory`)
+- Categories, suppliers, products (paisa/cents), stock movements, custom fields (JSON), import templates.
+- `inventory.rs` (20 commands): products, stock adjust, movements, custom fields, **batch tracking** (`list_product_batches`, `list_expiring_batches`, `write_off_batch` — migration `006`).
 
-### 3.4 Invoicing (spec §4 `sales`, §10 lifecycle simplified)
-- Customers with FBR fields: `cnic`, `ntn`, `strn`, `buyer_type` (`004_create_invoices.sql`).
-- Invoice lifecycle `draft → finalized → paid` (+ `cancelled`), paisa amounts, per-item tax rate/discount, payment records with methods.
-- `finalize_invoice` (`invoices.rs:640`) runs in a **transaction**: verifies draft + non-zero total, checks stock, deducts stock, records stock movements (negative qty), commits — a real safety win.
-- `record_payment` updates `amount_paid` / `balance_due`.
-- Invoice settings: prefix, next number, default due days, footer, terms (`company_invoice_settings`).
-- `generate_invoice_html` (`invoices.rs:1042`) builds a printable HTML invoice (company, customer, items, totals, payments).
-- Frontend: `src/features/invoices/InvoicePage.tsx` — customers, invoice create/detail, item add/remove, finalize, payments, settings.
+### 3.4 Invoicing (spec §4 `sales`)
+- Customers with FBR fields (CNIC/NTN/STRN/buyer type), `draft → finalized → paid (+cancelled)`, transactional stock deduction in `finalize_invoice`, payments, invoice settings.
+- **Concurrency-safe numbering** — `generate_invoice_number` reads+increments atomically inside the invoice transaction.
+- `generate_invoice_html` renders a complete HTML invoice and opens it in the OS default browser (print works; webview-window polish is a minor outstanding item).
 
-### 3.5 Import Wizard (spec §23 — the highest business value feature)
-- `src-tauri/src/commands/import_wizard.rs` — `analyze_import_file` supports **CSV, XLS/XLSX (calamine), DOCX (quick-xml 0.41)**; auto column→field mapping with confidence scores; header/sample/total-row analysis.
-- `execute_import` creates discovered custom fields (`detect_field_type`) and inserts products with per-row error capture (`ImportResult.errors`).
-- Frontend `ImportWizard.tsx` — upload → preview mapping → confirm → result, with Mantine success/error notifications.
-- This is the **generic CSV/Excel adapter** of spec §23.11 Phase 1 (named ERP adapters like QuickBooks/Odoo are Phase 2).
+### 3.5 Purchase Orders
+- Migration `007`: `purchase_orders`, `purchase_order_items`, `purchase_payments`, `company_po_settings`.
+- `purchase_orders.rs` (8 commands): create → add/remove items → submit → receive (stock-in + batch creation) → record payment. Atomic `next_po_number` upsert.
 
-### 3.6 Dashboard
-- `DashboardPage.tsx` — company info, stat cards, inventory overview, low-stock alerts, recent movements, company users management. Basic analytics only; no revenue-trend reporting or exports (spec §11).
+### 3.6 Reports & Export
+- `reports.rs` (8 commands): sales summary, sales by month, top products, top customers, stock, P&L, customer ledger, product movements.
+- `export.rs` (3 commands): stock / customer ledger / sales CSV with proper CSV escaping (`escape_csv`).
 
-### 3.7 Build & Packaging
-- Frontend: `tsc && vite build` clean.
-- Rust: `cargo check --all-targets` clean (zero warnings), release exe builds.
-- **NSIS installer produced:** `src-tauri/target/release/bundle/nsis/Ijaz & Company ERP_0.1.0_x64-setup.exe`.
-- Icons regenerated (branded blue "I&C / ERP"); migrations bundled via `bundle.resources` and found at runtime through an updated `find_migrations_dir()` that covers exe-adjacent and `resources/` layouts (`db/sqlite_migrate.rs:239`).
+### 3.7 Import Wizard (spec §23 Phase-1 generic)
+- `import_wizard.rs`: CSV / XLS/XLSX (calamine) / DOCX (quick-xml) analysis → auto column mapping with confidence → `execute_import` with per-row error capture, custom-field registration, expiry batches and a 50-error cap.
+
+### 3.8 Update & Backup
+- `updater.rs`: `check_for_updates` / `install_update`; GitHub Actions release pipeline (NSIS + `.sig` + `latest.json`).
+- `backup.rs`: `create_backup` / `restore_backup` / `list_backups`, operating on the pool's actual DB file (safety copy created before restore). Full UI in Settings.
+
+### 3.9 Build & Packaging
+- `tsc`/`vite build` clean; `cargo check --all-targets` clean (zero warnings); NSIS installer + `.sig` + `latest.json` pipeline proven.
+- `bundle.targets = ["nsis", "app"]`. Dev tooling: `scripts/run-tauri.mjs` shim for Snap environments.
 
 ---
 
-## 4. Spec Coverage Matrix
+## 4. Spec Coverage Matrix (Desktop/Local relevance)
 
 | Spec Section | Feature | Status |
 | --- | --- | --- |
-| §2 | Roles & hierarchy (Super Admin, Company Admin, inventory_manager/sales_user/import_clerk, custom roles) | 🔴 Not built — flat `owner/admin/employee` only; `super_admin` role is **rejected** by the role trigger |
-| §3 | packages, subscriptions, company_modules, feature flags, audit_logs, refresh_tokens, encrypted_secrets, invoice_sequences, accounting tables | 🔴 Not built |
-| §4 | Module system & enforcement | 🔴 No module system (sidebar is hardcoded) |
-| §5 | Super Admin dashboard | 🔴 Not built |
-| §6 | Company Admin dashboard | 🟡 Partial (settings, employees exist; modules/subscription/tickets/templates/branches don't) |
-| §7 | JWT + refresh + permission cache | 🔴 Not built — desktop in-memory session instead (acceptable for Local mode, but not §7) |
-| §8 | Security: RLS, audit, soft deletes, permission inheritance, rate limiting, upload pipeline, optimistic locking, archival | 🟡 Partial — soft-active flags, DB triggers for integrity; **no audit log, no rate limiting, no optimistic locking, no archival** |
-| §9 | Subscription enforcement | 🔴 N/A in Local mode |
-| §10 | Invoice template system / FBR lifecycle | 🟡 Draft → finalize → paid works; FBR/IRN/QR/CN/DN not built |
-| §11 | Analytics & reporting | 🟡 Basic stat cards only |
-| §12 | Frontend dynamic sidebar / super admin layout / first-login | 🟡 Sidebar static; no super admin; no forced password change |
-| §13 | API routes | 🔴 N/A — Tauri IPC replaces REST (equivalent commands exist for core entities) |
-| §16 | Legal & compliance (PECA logging/rate-limit, ETO 5-year, FBR, PDPB/GDPR) | 🔴 PECA access logging and rate limiting **not** implemented; FBR fields exist but no integration |
-| §17 | FBR/PRAL integration | 🔴 Not built (only schema placeholders) |
-| §18 | Gap register: notifications, pagination, SSE, error schema, tests, observability | 🔴 Not built |
+| §2 | Roles & hierarchy (Super Admin, inventory_manager/sales_user/import_clerk, custom roles) | 🟡 Flat `owner/admin/employee` + `role_permissions` table (seeded); custom roles not built |
+| §3 | packages, subscriptions, company_modules, audit_logs, refresh_tokens, encrypted_secrets, invoice_sequences, accounting | 🟡 **audit_logs built**; rest N/A in Local mode |
+| §4 | Module system & enforcement | 🟡 No module system (sidebar is hardcoded) |
+| §4 `purchases` | Purchase orders | 🟢 **Built** (007 + commands + UI) |
+| §5 | Super Admin dashboard | 🔴 N/A in Local mode |
+| §6 | Company Admin dashboard | 🟡 Partial (settings/employees/customers exist; modules/subscription/tickets/templates/branches don't) |
+| §7 | JWT + refresh + permission cache | 🟡 Desktop in-memory session + `role_permissions` cache instead (acceptable for Local mode) |
+| §8 | Security: audit, soft deletes, optimistic locking, rate limiting, archival | 🟢 **Built** (audit 008, soft-delete/versioning 009, `LoginAttemptTracker`, `check_permission`); archival still pending |
+| §10 | Invoice template system / FBR lifecycle | 🟡 Draft → finalize → paid works + HTML print; FBR/IRN/QR/CN/DN not built |
+| §11 | Analytics & reporting | 🟢 **Reports + CSV export built** (8 reports + charts + 3 CSV exports); PDF export pending |
+| §12 | Dynamic sidebar / super admin / first-login | 🟡 Sidebar static; no super admin; no forced password change |
+| §13 | API routes | 🟡 N/A — Tauri IPC replaces REST (equivalent commands exist) |
+| §16 | Legal & compliance (PECA logging/rate-limit, ETO 5-year, FBR, PDPB/GDPR) | 🟢 **PECA access logging + rate limiting implemented**; ETO retention policy, FBR, PDPB/GDPR still open |
+| §17 | FBR/PRAL integration | 🔴 Not built (schema placeholders only) |
+| §18 | Gap register: notifications, pagination, SSE, error schema, tests, observability | 🟡 **Tests built (366)**; pagination exists on audit; notifications/SSE/error-schema/observability open |
 | §19 | Accounting ledger / outbox | 🔴 Not built |
-| §21 | DB mode separation (Postgres SaaS vs SQLite Local) | 🟢 Project correctly operates as **SQLite Local mode**; SaaS codebase split not created |
+| §21 | DB mode separation | 🟢 Correctly operates as SQLite Local mode |
 | §22 | Search (FTS) | 🔴 Not built |
-| §23 | Historical import system | 🟡 Phase-1 CSV/Excel/DOCX import works; **no job queue, no preview API, no rollback, no conflict strategy, no SSE** |
+| §23 | Import system | 🟡 Phase-1 generic CSV/Excel/DOCX import works; **no job queue, no rollback, no SSE, no conflict strategy, no named adapters** |
 | §24 | Intelligence layer (AI) | 🔮 Deferred by spec — correctly absent |
 
 ---
 
-## 5. Critical Gaps & Issues (Prioritized)
+## 5. What Is Left — Gap Register (Prioritized)
 
-### 🔴 Blockers for production release
-1. **Print/PDF is a no-op in the UI.** `generate_invoice_html` returns an HTML string, but `InvoicePage.tsx:635` (`handlePrint`) awaits and **discards** the result — the Print button does nothing visible. No PDF file is produced and no print window opens.
-2. **MSI (WiX) bundling fails.** `productName = "Ijaz & Company ERP"` contains `&`, which is written unescaped into the WiX source → `main.wxs:17` → `candle` fails with `CNDL0104` (XML EntityName parse error). NSIS works; MSI does not. **Fix options:** (a) switch to NSIS-only installer, or (b) rename the product (e.g. "Ijaz and Company ERP").
-3. **Zero automated tests** (no `cargo test`, no frontend tests) while spec §18.9 mandates a testing strategy. High regression risk for invoicing/stock/import logic.
-
-### 🟠 High priority
-4. **No audit logging** — contradicts PECA 2016 (§16.2) "all admin access logged" and spec §8.2. Every mutating command (`create_*`, `update_*`, `finalize`, `adjust_stock`, `execute_import`) should write an `audit_logs` row.
-5. **No rate limiting on login** — PECA-required; brute force protection missing (spec §8.5).
-6. **`backend.ts` is heavily polluted** with ~805 lines of dead commented-out duplicate code (active code starts ~line 806); `types/backend.ts` and `BackendTester.tsx` have the same problem. Maintainability and review hazard.
-7. **Employee permission model is thin** — most commands only check "logged in"; only a couple gate `employee`. No per-module or per-action permission system (spec §4.2, §8.4).
+### 🟠 High priority (post-v1.0 desktop)
+1. **Print/PDF polish.** `handlePrint` (`InvoicePage.tsx`) still discards the returned path and relies on the backend side-effect of opening the OS default browser. Polish: open in a Tauri `WebviewWindow` with `window.print()` (direct "Save as PDF"), use the return value, add a branded printable template.
+2. **Import safety net (spec §23.7/§23.12).** `execute_import` is single-shot: no `import_jobs` table, **no rollback**, no preview/confirm backend step, no duplicate/conflict strategy, no background execution with progress.
+3. **FTS5 search (spec §22).** Inventory/customers/invoices search is all `LIKE %…%`.
+4. **ETO 5-year retention policy + archival (spec §8.11).** History is kept but there is no retention/archive lifecycle or enforcement.
 
 ### 🟡 Medium priority
-8. **Invoice numbering is not concurrency-safe** — `generate_invoice_number` (`invoices.rs:208`) reads `next_number` then increments outside a transaction/lock; gaps occur on failure and multi-user edits could collide (spec §3.14 requires `SELECT FOR UPDATE`).
-9. **No reports/exports** (monthly revenue, top products, stock valuation, CSV/PDF export — spec §11).
-10. **No purchase orders / purchases module** despite `suppliers` existing (spec §4 `purchases`).
-11. **Dead dependencies bloat the binary:** `tauri-plugin-sql` (not registered in `lib.rs`), sqlx `postgres` + `tls-rustls` features, `dotenv`, `tauri-plugin-opener` backend unused. Trim via `cargo machete`/manual.
-12. **`withGlobalTauri: true`** exposes Tauri internals on `window.__TAURI__` — unnecessary for a packaged app; tighten later.
-13. **No soft-delete/restore flows** for most entities (only `is_active` flags; no archive commands), and no `version` optimistic-lock columns (spec §8.10).
+5. **Notifications/activity feed.** Low-stock + expiring-batch alerts surfaced in-app (queries already exist).
+6. **PDF export for reports** — CSV export done; PDF remains.
+7. **Custom roles / finer permission granularity** (spec §2) beyond the three static roles.
+8. **FBR/PRAL integration (spec §17)** — customer/company FBR fields exist but no payloads, queue, IRN/QR. Largest single chunk of the spec; firmly a SaaS-phase item.
+9. **Accounting ledger (spec §19)** — no chart of accounts / double-entry. Phase 3 of the spec.
 
 ### 🟢 Low priority / hygiene
-14. `index.html` title/favicon still say "Tauri + React + Typescript" / `vite.svg`.
-15. `BackendTester.tsx` is orphaned.
-16. `cargo` dead-code: commented `greet` usage, unused deps (§11).
+10. `src-tauri/src/commands/expiry.rs` — empty legacy file (still `pub mod` in `mod.rs`); `src/BackendTester.tsx` — dead placeholder. Remove both.
+11. Commented-out legacy code in `src-tauri/src/lib.rs:1–111`; trim unused deps (`tauri-plugin-sql` unregistered, sqlx `postgres` + `tls-rustls` features, `dotenv`).
+12. `withGlobalTauri: true` in `tauri.conf.json` exposes `window.__TAURI__` — tighten for release.
+13. No ESLint/Prettier/rustfmt/clippy enforcement, no `cargo audit` in CI.
 
 ---
 
 ## 6. Build & Release Readiness
 
-### 6.1 Verified results
 | Step | Result |
 | --- | --- |
-| `tsc --noEmit` | ✅ Clean |
-| `npm run build` | ✅ Clean (one advisory: JS chunk >500 kB — consider code-splitting) |
-| `cargo check --all-targets` | ✅ Zero warnings |
-| `cargo build --release` | ✅ `ijazandcompany.exe` |
-| `npm run tauri build` (all) | ⚠️ Exe + frontend OK; **MSI fails** at WiX `candle` (see §5.2) |
-| `npm run tauri build -- --bundles nsis` | ✅ **`Ijaz & Company ERP_0.1.0_x64-setup.exe` produced** |
+| `tsc --noEmit` / `npm run build` | ✅ Clean |
+| `cargo check --all-targets` | ✅ Clean (zero warnings) |
+| `cargo test --lib` | ✅ **366 passed, 0 failed** |
+| `cargo build --release` | ✅ Clean |
+| `npm run tauri build` | ✅ NSIS installer + updater artifacts produced |
+| Updater pipeline | ✅ `release.yml` (windows-latest) → NSIS + `.sig` + `latest.json` (uploads.github.com endpoint fix in place) |
+| Version bump | ✅ `1.0.0` in `package.json`, `package-lock.json`, `Cargo.toml`, `Cargo.lock`, `tauri.conf.json` |
 
-### 6.2 The one build defect
-`src-tauri/tauri.conf.json` → `productName: "Ijaz & Company ERP"`. Tauri emits `Name="Ijaz & Company ERP"` into the WiX `.wxs` without XML-escaping `&`, so WiX's compiler rejects it. This is a Tauri/WiX limitation; the **& must not appear in `productName`** if MSI is required. NSIS is unaffected. Recommended: NSIS-only for now, or rename to "Ijaz and Company ERP".
+**Release procedure** (per `Notes.txt`): bump semver in all 5 places → commit + tag + push → `npm run tauri build` with signing key → update `latest.json` with new `.sig` → create GitHub Release for the tag with installer + `.sig` + `latest.json`.
 
-### 6.3 Runtime deployment notes (all verified in code)
-- DB lives at `dirs::data_dir()/ijazandcompany-erp/ijazandcompany.db` (Roaming AppData) — **not** in the app's data dir; acceptable but unusual.
-- Migrations are bundled as resources (`tauri.conf.json` → `"resources": ["migrations/sqlite/*"]`) and resolved at runtime via exe-adjacent / `resources/` candidates (`db/sqlite_migrate.rs`).
-- `find_migrations_dir()` was updated during this analysis to also check `<exe>/resources/migrations/sqlite` so the packaged installer finds migrations (previously it only handled dev + exe-adjacent paths).
+**Runtime notes:** DB at `dirs::data_dir()/ijazandcompany-erp/ijazandcompany.db`; migrations bundled as resources; backup/restore act on the pool's actual DB file.
 
 ---
 
@@ -163,87 +158,74 @@ What is **not** built is the entire **SaaS/cloud layer** (PostgreSQL, RLS, packa
 
 | Requirement | Spec ref | Status |
 | --- | --- | --- |
-| PECA 2016 — access logging | §16.2 | 🔴 Missing |
-| PECA 2016 — rate limiting / failed-login logs | §16.2 | 🔴 Missing |
-| ETO 2002 — 5-year immutable record retention | §16.2 | 🟡 Schema keeps history; no policy/archive |
+| PECA 2016 — access logging | §16.2 | 🟢 **Implemented** — `audit_logs` (migration 008) + `log_audit()` write-through + viewer |
+| PECA 2016 — rate limiting / failed-login logs | §16.2 | 🟢 **Implemented** — `LoginAttemptTracker` (5/60s lockout) |
+| ETO 2002 — 5-year immutable record retention | §16.2 | 🟡 History kept (append-only audit); no retention policy/archive |
 | FBR digital invoicing | §17 | 🔴 Placeholder fields only |
 | PDPB / GDPR | §16.3 | 🔴 Not addressed |
 
 ---
 
-## 8. Code Quality & Technical Debt
-
-- **Dead-code pollution:** `src/api/backend.ts` (~805 commented lines), `src/types/backend.ts`, `src/BackendTester.tsx` — should be cleaned (with user preference: comment out rather than delete any still-referenced pieces).
-- **No lint/format enforcement:** no ESLint/Prettier config, no `rustfmt` CI check, no `cargo clippy` in CI.
-- **No tests** at any layer.
-- **Unused dependencies** and a large Mantine bundle (9 packages) inflating the JS chunk.
-- **Positive:** core business logic is transaction-aware where it matters (company setup, invoice finalize), errors are surfaced as readable strings, money uses integer paisa, and role/company integrity is enforced at the DB-trigger level.
-
----
-
-## 9. Project Maturity Level
+## 8. Project Maturity Level
 
 | Level | Verdict |
 | --- | --- |
-| Technical prototype | ✅ Passed — core flows run end-to-end |
-| **v0.1 Desktop MVP (current)** | ✅ **Reached** — usable for internal/limited rollout |
-| v1.0 Production desktop app | ⚠️ Not yet — print/PDF, audit, tests, MSI decision |
-| SaaS / Multi-tenant platform (spec end-state) | 🔴 Future — entire §5–§9, §17, §19, §22 layer missing |
+| Technical prototype | ✅ Passed |
+| v0.1 Desktop MVP | ✅ Passed (2026-08-01) |
+| **v1.0 Production desktop app** | ✅ **Reached (2026-08-05)** — audit, rate limiting, permissions, soft-delete/versioning, tests (366), backup/restore UI, atomic numbering, CSV export |
+| SaaS / Multi-tenant platform (spec end-state) | 🔴 Future — §2–§9, §17, §19, §22, §23 layer not started |
 
 ---
 
-## 10. What Can Be Approved
+## 9. Next Steps — Recommended Roadmap
 
-1. **Internal / pilot approval (v0.1):** single-tenant desktop ERP for inventory + invoicing + import on one machine, with NSIS installer. No external distribution.
-2. **Schema & money-handling design approval:** paisa-based integer amounts, JSON custom fields, transactional stock deduction, DB-level integrity triggers.
-3. **Import wizard approval:** analyze → map → import for CSV/Excel/DOCX is genuinely functional and matches spec §23 Phase-1 intent.
+**Finish desktop polish first; the SaaS layer stays a deliberate later phase.** The desktop product is now shippable; what remains is UX hardening plus the spec's cloud-only features.
 
-**NOT approvable for external production:** missing audit trail (PECA), broken print/PDF, zero tests, MSI installer defect, no backup/restore.
+### Step 1 — Desktop polish (1–3 weeks)
+1. **Print/PDF in a webview window** — use the returned HTML path, open in a Tauri `WebviewWindow` with `window.print()` / save-as-PDF, branded template.
+2. **Import safety net** — `import_jobs` tagging, duplicate/conflict strategy, rollback (§23.7, §23.12).
+3. **Notifications/activity feed** — low-stock + expiring-batch alerts (queries exist).
+4. **FTS5 search** — global search across products/customers/invoices (§22).
+5. **Retention/archival policy** — ETO 5-year enforcement + archive (§8.11).
 
----
+### Step 2 — Hygiene & engineering
+6. Remove `expiry.rs` empty module + `BackendTester.tsx`; strip commented legacy code in `lib.rs`; trim unused deps (`tauri-plugin-sql`, sqlx postgres, dotenv).
+7. Add ESLint/Prettier/rustfmt/clippy config + `cargo audit` in CI.
+8. Tighten `withGlobalTauri`; pin `bundle.targets = ["nsis"]`.
 
-## 11. Next Phase — Recommended Roadmap
-
-The spec's own architecture (§21) keeps Desktop/Local (SQLite) and SaaS (PostgreSQL) separate. The pragmatic next phase is to **finish the Desktop ERP Core (v0.1 → v1.0)** before any SaaS work.
-
-### Phase 1A — Close v1.0 desktop blockers (0–2 weeks)
-1. Fix print/PDF — open the generated HTML in a Tauri webview window (or `print` via a hidden window) and/or save as PDF through the browser print path.
-2. Decide & configure the installer target: set `bundle.targets = "nsis"` (keep `&` name) **or** rename product for MSI. Verify both bundlers.
-3. Add audit logging table + writes on all mutating commands (PECA §16.2).
-4. Add login rate limiting (simple in-memory throttling).
-5. Add a test harness: `cargo test` for invoice math/stock deduction/import parsing; a few vitest tests for key UI logic.
-6. Clean dead code from `backend.ts`, `types/backend.ts`, remove `BackendTester.tsx`, trim unused deps.
-
-### Phase 1B — Round out ERP Core (1–2 months)
-7. Purchases module (purchase orders → goods-received → supplier stock-in), closing the inventory loop.
-8. Reports & exports: monthly revenue, top products/customers, stock valuation, low-stock, CSV/PDF export (§11.1).
-9. Concurrency-safe invoice numbering (`SELECT FOR UPDATE`-style within the transaction) + `version` optimistic locking on core entities (§3.14, §8.10).
-10. Soft-delete/archive for invoices, users, products with retention notes (ETO §16.2).
-11. Basic search across inventory/invoices/customers (§22 SQLite FTS5).
-12. Invoicing polish: branded printable template, batch invoice creation, credit/debit notes.
-
-### Phase 2 — Decision point: SaaS (only after v1.0 is solid)
-13. Stand up PostgreSQL mode, `super_admin`, packages/subscriptions, module enforcement, RLS, permission cache (§2–§9).
-14. FBR/PRAL integration with outbox queue (§17) — requires a registered FBR sandbox.
-15. Accounting ledger with double-entry posting on invoices (§19).
-16. Import job queue + preview + rollback + conflict strategies + named ERP adapters (§23.3–§23.12).
-17. Observability, backup/DR, CI pipeline with clippy + cargo audit (§18, §20.7).
+### Step 3 — Decision point: SaaS (only after desktop is proven)
+9. Stand up the spec's `saas`/`desktop` split (§21.2), PostgreSQL mode, `super_admin`, packages/subscriptions, module enforcement, RLS, permission cache (§2–§9).
+10. FBR/PRAL integration with outbox queue (§17) — requires FBR sandbox registration.
+11. Accounting ledger with double-entry posting (§19).
+12. Import job queue + SSE + named ERP adapters (§23.3–§23.12).
+13. Observability, backup/DR, CI hardening (§18, §20.7).
 
 ### Deferred (per spec)
-- Intelligence layer (AI) — only after 20–30 tenants × 12+ months of data (§24).
+- Intelligence layer (AI) — after 20–30 tenants × 12+ months of data (§24).
 
 ---
 
-## 12. Immediate Action Items (from this analysis)
+## 10. Test Suite Summary (Phase-1 hardening)
 
-- [ ] `tauri.conf.json`: set `bundle.targets` to `nsis` OR change `productName` to remove `&` (unblocks MSI).
-- [ ] Wire `generate_invoice_html` return value into a real print/PDF window in `InvoicePage.tsx`.
-- [ ] Add `audit_logs` migration + write-through on mutating commands.
-- [ ] Add login throttling.
-- [ ] Create `cargo test` coverage for: invoice totals/tax/discount math, stock deduction in `finalize_invoice`, import parsing (CSV/XLSX/DOCX), migration runner on a temp DB.
-- [ ] Clean ~805 dead commented lines in `src/api/backend.ts`, `src/types/backend.ts`; remove `BackendTester.tsx`; trim unused Cargo deps.
-- [ ] Update `index.html` title/favicon branding.
+366 tests across 13 modules, all against real migrated SQLite DBs via `test_helpers.rs` (`setup_app` = mock Tauri app + temp-file pool + session + rate-limit tracker). Full catalog in `TEST_CASES.md`.
+
+| Module | Tests | Coverage highlights |
+| --- | --- | --- |
+| auth | 43 | login incl. rate limiting, sessions, password rules, persistence |
+| company | 31 | single-tenant gate, currency/email validation, owner/admin/employee |
+| users | 38 | role CRUD, owner/admin/employee permission paths |
+| inventory | 70 | products, stock adjust, FIFO, expiry batches, soft-delete/versioning |
+| invoices | 47 | totals/discount/tax math, finalize stock deduction, payments, numbering |
+| purchase_orders | 34 | draft→submit→receive→pay, atomic numbering, expiry batches |
+| permissions | 18 | role-permission matrix, soft_delete, version conflict helpers |
+| audit | 11 | log write-through, pagination, scoping |
+| reports | 22 | sales/stock/P&L/ledger/movements incl. empty-company |
+| export | 12 | CSV escaping, headers/rows, permission + write-error paths |
+| import_wizard | 27 | header mapping, docx/CSV parsing, execute_import end-to-end |
+| backup | 13 | backup/restore/list + safety copy, non-SQLite rejection |
+
+Production bugs surfaced and fixed by the suite: 3 SQL literal-misplacements in PO stock inserts, `next_po_number` race, `finalize_invoice` missing `balance_due`, import "Tax Rate"→`sell_price` mapping, and backup hardcoding the production DB path. See `TEST_CASES.md` header.
 
 ---
 
-*Document generated as part of a full project audit. Build verification was performed live: `tsc`, `vite build`, `cargo check --all-targets`, `cargo build --release`, and `tauri build` (NSIS).*
+*Report refreshed 2026-08-05 against the live tree at v1.0.0. Verification: `cargo test --lib` (366 green), `cargo check --all-targets` (0 warnings), `tsc --noEmit` clean, direct inspection of all 9 migrations, 78 registered commands, and the release workflow.*

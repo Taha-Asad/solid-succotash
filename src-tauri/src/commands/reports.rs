@@ -336,7 +336,11 @@ pub async fn report_stock(
         .as_ref()
         .ok_or("Not assigned to a company")?;
 
-    let threshold = if low_stock_threshold <= 0 { 10 } else { low_stock_threshold };
+    let threshold = if low_stock_threshold <= 0 {
+        10
+    } else {
+        low_stock_threshold
+    };
 
     let rows = sqlx::query_as::<_, (String, String, String, Option<String>, i64, i64, i64)>(
         r#"
@@ -373,8 +377,12 @@ pub async fn report_stock(
         total_units += qty;
         total_cost_value += value_cost;
         total_sell_value += value_sell;
-        if is_low { low_stock_count += 1; }
-        if is_out { out_of_stock_count += 1; }
+        if is_low {
+            low_stock_count += 1;
+        }
+        if is_out {
+            out_of_stock_count += 1;
+        }
 
         items.push(StockReportItem {
             product_id: id.clone(),
@@ -465,7 +473,18 @@ pub async fn report_customer_ledger(
         .as_ref()
         .ok_or("Not assigned to a company")?;
 
-    let rows = sqlx::query_as::<_, (String, String, i64, i64, i64, Option<String>, Option<String>)>(
+    let rows = sqlx::query_as::<
+        _,
+        (
+            String,
+            String,
+            i64,
+            i64,
+            i64,
+            Option<String>,
+            Option<String>,
+        ),
+    >(
         r#"
         SELECT
             c.id,
@@ -601,4 +620,572 @@ pub async fn report_product_movements(
     }
 
     Ok(movements)
+}
+
+// ==========================================
+// TESTS
+// ==========================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::inventory::create_product;
+    use crate::commands::invoices::{
+        add_invoice_item, create_customer, create_invoice, finalize_invoice, record_payment,
+    };
+    use crate::commands::test_helpers::{register_owner, setup_app};
+    use tauri::Manager;
+
+    async fn owner_app() -> tauri::App<tauri::test::MockRuntime> {
+        let app = setup_app().await;
+        register_owner(&app, "owner@test.com").await;
+        app
+    }
+
+    async fn make_customer(
+        app: &tauri::App<tauri::test::MockRuntime>,
+        name: &str,
+    ) -> crate::commands::invoices::PublicCustomer {
+        create_customer(
+            app.state(),
+            app.state(),
+            name.to_string(),
+            "cust@test.com".to_string(),
+            "0300-111".to_string(),
+            "Lahore".to_string(),
+            "".to_string(),
+            "".to_string(),
+            "".to_string(),
+            "registered".to_string(),
+        )
+        .await
+        .expect("create customer")
+    }
+
+    async fn make_product(
+        app: &tauri::App<tauri::test::MockRuntime>,
+        name: &str,
+        stock: i64,
+    ) -> crate::commands::inventory::PublicProduct {
+        create_product(
+            app.state(),
+            app.state(),
+            "".to_string(),
+            name.to_string(),
+            "".to_string(),
+            "".to_string(),
+            500,
+            700,
+            0,
+            stock,
+            "pcs".to_string(),
+        )
+        .await
+        .expect("create product")
+    }
+
+    async fn make_invoice(
+        app: &tauri::App<tauri::test::MockRuntime>,
+        customer_id: &str,
+        date: &str,
+    ) -> crate::commands::invoices::PublicInvoice {
+        create_invoice(
+            app.state(),
+            app.state(),
+            customer_id.to_string(),
+            date.to_string(),
+            "2026-02-14".to_string(),
+            "PO-1".to_string(),
+            "note".to_string(),
+        )
+        .await
+        .expect("create invoice")
+    }
+
+    async fn add_item(
+        app: &tauri::App<tauri::test::MockRuntime>,
+        invoice_id: &str,
+        product_id: &str,
+        quantity: i64,
+        unit_price: i64,
+        tax_rate: i64,
+    ) {
+        add_invoice_item(
+            app.state(),
+            app.state(),
+            invoice_id.to_string(),
+            product_id.to_string(),
+            quantity,
+            unit_price,
+            tax_rate,
+            "percent".to_string(),
+            0,
+        )
+        .await
+        .expect("add item");
+    }
+
+    async fn finalized_invoice(
+        app: &tauri::App<tauri::test::MockRuntime>,
+        customer_id: &str,
+        product_id: &str,
+        quantity: i64,
+        unit_price: i64,
+        tax_rate: i64,
+    ) -> crate::commands::invoices::PublicInvoice {
+        let invoice = make_invoice(app, customer_id, "2026-01-15").await;
+        add_item(app, &invoice.id, product_id, quantity, unit_price, tax_rate).await;
+        finalize_invoice(app.state(), app.state(), invoice.id.clone())
+            .await
+            .expect("finalize")
+    }
+
+    async fn cash_payment(
+        app: &tauri::App<tauri::test::MockRuntime>,
+        invoice_id: &str,
+        amount: i64,
+    ) -> crate::commands::invoices::PublicInvoice {
+        record_payment(
+            app.state(),
+            app.state(),
+            invoice_id.to_string(),
+            amount,
+            "cash".to_string(),
+            "2026-01-20".to_string(),
+            "".to_string(),
+            "".to_string(),
+        )
+        .await
+        .expect("record payment")
+    }
+
+    // ---------------------------------------------------------------
+    // report_sales_summary
+    // ---------------------------------------------------------------
+
+    #[tokio::test]
+    async fn sales_summary_empty_company() {
+        // Input: fresh company with no invoices.
+        // Expected: all counts and amounts are zero.
+        let app = owner_app().await;
+        let summary = report_sales_summary(app.state(), app.state())
+            .await
+            .expect("report");
+        assert_eq!(summary.total_invoices, 0);
+        assert_eq!(summary.total_revenue, 0);
+        assert_eq!(summary.total_paid, 0);
+        assert_eq!(summary.total_outstanding, 0);
+        assert_eq!(summary.finalized_count, 0);
+    }
+
+    #[tokio::test]
+    async fn sales_summary_aggregates_finalized_and_paid() {
+        // Input: one finalized invoice (2×1000) plus a partial 500 payment.
+        // Expected: revenue 2000, paid 500, outstanding 1500, finalized count 1.
+        let app = owner_app().await;
+        let customer = make_customer(&app, "Walk-in").await;
+        let product = make_product(&app, "Widget", 10).await;
+        let invoice = finalized_invoice(&app, &customer.id, &product.id, 2, 1000, 0).await;
+        cash_payment(&app, &invoice.id, 500).await;
+
+        let summary = report_sales_summary(app.state(), app.state())
+            .await
+            .expect("report");
+        assert_eq!(summary.total_invoices, 1);
+        assert_eq!(summary.total_revenue, 2000);
+        assert_eq!(summary.total_tax, 0);
+        assert_eq!(summary.total_discount, 0);
+        assert_eq!(summary.total_paid, 500);
+        assert_eq!(summary.total_outstanding, 1500);
+        assert_eq!(summary.draft_count, 0);
+        assert_eq!(summary.finalized_count, 1);
+        assert_eq!(summary.paid_count, 0);
+        assert_eq!(summary.cancelled_count, 0);
+    }
+
+    #[tokio::test]
+    async fn sales_summary_counts_draft_invoices() {
+        // Input: one draft invoice alongside one finalized invoice.
+        // Expected: total_invoices 2, draft_count 1, finalized_count 1.
+        let app = owner_app().await;
+        let customer = make_customer(&app, "Walk-in").await;
+        let product = make_product(&app, "Widget", 10).await;
+        finalized_invoice(&app, &customer.id, &product.id, 2, 1000, 0).await;
+        make_invoice(&app, &customer.id, "2026-01-15").await;
+
+        let summary = report_sales_summary(app.state(), app.state())
+            .await
+            .expect("report");
+        assert_eq!(summary.total_invoices, 2);
+        assert_eq!(summary.draft_count, 1);
+        assert_eq!(summary.finalized_count, 1);
+    }
+
+    #[tokio::test]
+    async fn sales_summary_requires_login() {
+        // Input: no user logged in.
+        // Expected: Err "You must log in first".
+        let app = setup_app().await;
+        let err = report_sales_summary(app.state(), app.state())
+            .await
+            .unwrap_err();
+        assert_eq!(err, "You must log in first");
+    }
+
+    // ---------------------------------------------------------------
+    // report_sales_by_month
+    // ---------------------------------------------------------------
+
+    #[tokio::test]
+    async fn sales_by_month_empty_company() {
+        // Input: no invoices.
+        // Expected: empty vec.
+        let app = owner_app().await;
+        let rows = report_sales_by_month(app.state(), app.state())
+            .await
+            .expect("report");
+        assert!(rows.is_empty());
+    }
+
+    #[tokio::test]
+    async fn sales_by_month_groups_by_month() {
+        // Input: two invoices dated 2026-01-15 and 2026-01-31.
+        // Expected: one period "2026-01" with invoice_count 2, revenue sum.
+        let app = owner_app().await;
+        let customer = make_customer(&app, "Walk-in").await;
+        let product = make_product(&app, "Widget", 10).await;
+        finalized_invoice(&app, &customer.id, &product.id, 1, 1000, 0).await;
+
+        let invoice2 = make_invoice(&app, &customer.id, "2026-01-31").await;
+        add_item(&app, &invoice2.id, &product.id, 1, 500, 0).await;
+        finalize_invoice(app.state(), app.state(), invoice2.id.clone())
+            .await
+            .expect("finalize 2");
+
+        let rows = report_sales_by_month(app.state(), app.state())
+            .await
+            .expect("report");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].period, "2026-01");
+        assert_eq!(rows[0].invoice_count, 2);
+        assert_eq!(rows[0].revenue, 1500);
+    }
+
+    #[tokio::test]
+    async fn sales_by_month_excludes_cancelled() {
+        // Input: a finalized invoice and a cancelled invoice in the same month.
+        // Expected: cancelled is excluded from both count and revenue.
+        let app = owner_app().await;
+        let customer = make_customer(&app, "Walk-in").await;
+        let product = make_product(&app, "Widget", 10).await;
+        finalized_invoice(&app, &customer.id, &product.id, 2, 1000, 0).await;
+
+        let cancelled = make_invoice(&app, &customer.id, "2026-01-20").await;
+        add_item(&app, &cancelled.id, &product.id, 1, 9999, 0).await;
+        let pool = app.state::<SqlitePool>();
+        sqlx::query("UPDATE invoices SET status = 'cancelled' WHERE id = ?")
+            .bind(&cancelled.id)
+            .execute(&*pool)
+            .await
+            .expect("cancel invoice");
+
+        let rows = report_sales_by_month(app.state(), app.state())
+            .await
+            .expect("report");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].invoice_count, 1);
+        assert_eq!(rows[0].revenue, 2000);
+    }
+
+    // ---------------------------------------------------------------
+    // report_top_products
+    // ---------------------------------------------------------------
+
+    #[tokio::test]
+    async fn top_products_empty_company() {
+        // Input: no invoice items.
+        // Expected: empty vec.
+        let app = owner_app().await;
+        let rows = report_top_products(app.state(), app.state())
+            .await
+            .expect("report");
+        assert!(rows.is_empty());
+    }
+
+    #[tokio::test]
+    async fn top_products_orders_by_revenue() {
+        // Input: product A sold 2×1000, product B sold 1×1000.
+        // Expected: A first with quantity 2 and revenue 2000.
+        let app = owner_app().await;
+        let customer = make_customer(&app, "Walk-in").await;
+        let a = make_product(&app, "Alpha", 10).await;
+        let b = make_product(&app, "Beta", 10).await;
+        finalized_invoice(&app, &customer.id, &a.id, 2, 1000, 0).await;
+
+        let invoice_b = make_invoice(&app, &customer.id, "2026-01-16").await;
+        add_item(&app, &invoice_b.id, &b.id, 1, 1000, 0).await;
+        finalize_invoice(app.state(), app.state(), invoice_b.id.clone())
+            .await
+            .expect("finalize B");
+
+        let rows = report_top_products(app.state(), app.state())
+            .await
+            .expect("report");
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].product_id, a.id);
+        assert_eq!(rows[0].total_quantity_sold, 2);
+        assert_eq!(rows[0].total_revenue, 2000);
+        assert_eq!(rows[1].product_id, b.id);
+    }
+
+    // ---------------------------------------------------------------
+    // report_top_customers
+    // ---------------------------------------------------------------
+
+    #[tokio::test]
+    async fn top_customers_empty_company() {
+        // Input: no customers.
+        // Expected: empty vec.
+        let app = owner_app().await;
+        let rows = report_top_customers(app.state(), app.state())
+            .await
+            .expect("report");
+        assert!(rows.is_empty());
+    }
+
+    #[tokio::test]
+    async fn top_customers_aggregates_invoice_totals() {
+        // Input: one customer with a finalized invoice (2×1000) + 500 payment.
+        // Expected: 1 invoice, revenue 2000, paid 500, balance 1500.
+        let app = owner_app().await;
+        let customer = make_customer(&app, "Walk-in").await;
+        let product = make_product(&app, "Widget", 10).await;
+        let invoice = finalized_invoice(&app, &customer.id, &product.id, 2, 1000, 0).await;
+        cash_payment(&app, &invoice.id, 500).await;
+
+        let rows = report_top_customers(app.state(), app.state())
+            .await
+            .expect("report");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].customer_id, customer.id);
+        assert_eq!(rows[0].total_invoices, 1);
+        assert_eq!(rows[0].total_revenue, 2000);
+        assert_eq!(rows[0].total_paid, 500);
+        assert_eq!(rows[0].balance_due, 1500);
+    }
+
+    #[tokio::test]
+    async fn top_customers_includes_customer_without_invoices() {
+        // Input: a customer that has never been invoiced.
+        // Expected: still listed with zero totals (LEFT JOIN).
+        let app = owner_app().await;
+        let customer = make_customer(&app, "Walk-in").await;
+
+        let rows = report_top_customers(app.state(), app.state())
+            .await
+            .expect("report");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].customer_id, customer.id);
+        assert_eq!(rows[0].total_invoices, 0);
+        assert_eq!(rows[0].total_revenue, 0);
+    }
+
+    // ---------------------------------------------------------------
+    // report_stock
+    // ---------------------------------------------------------------
+
+    #[tokio::test]
+    async fn stock_report_empty_company() {
+        // Input: no products.
+        // Expected: all zeros and no items.
+        let app = owner_app().await;
+        let summary = report_stock(app.state(), app.state(), 10)
+            .await
+            .expect("report");
+        assert_eq!(summary.total_products, 0);
+        assert_eq!(summary.total_stock_units, 0);
+        assert!(summary.items.is_empty());
+    }
+
+    #[tokio::test]
+    async fn stock_report_flags_low_and_out_of_stock() {
+        // Input: products with stock 5, 15 and 0; threshold 10.
+        // Expected: 2 low (5, 0), 1 out of stock (0), totals summed.
+        let app = owner_app().await;
+        make_product(&app, "Low", 5).await;
+        make_product(&app, "Ok", 15).await;
+        make_product(&app, "Empty", 0).await;
+
+        let summary = report_stock(app.state(), app.state(), 10)
+            .await
+            .expect("report");
+        assert_eq!(summary.total_products, 3);
+        assert_eq!(summary.total_stock_units, 20);
+        assert_eq!(summary.low_stock_count, 2);
+        assert_eq!(summary.out_of_stock_count, 1);
+        assert_eq!(summary.total_value_at_cost, 5 * 500 + 15 * 500);
+        assert_eq!(summary.total_value_at_sell, 5 * 700 + 15 * 700);
+
+        let low = summary.items.iter().find(|i| i.product_name == "Low").unwrap();
+        assert!(low.is_low_stock);
+        let ok = summary.items.iter().find(|i| i.product_name == "Ok").unwrap();
+        assert!(!ok.is_low_stock);
+        let empty = summary.items.iter().find(|i| i.product_name == "Empty").unwrap();
+        assert!(empty.is_low_stock);
+        assert_eq!(empty.stock_value_at_cost, 0);
+    }
+
+    #[tokio::test]
+    async fn stock_report_defaults_threshold_to_ten() {
+        // Input: product with stock 10 and threshold 0.
+        // Expected: threshold falls back to 10, so stock 10 IS low.
+        let app = owner_app().await;
+        make_product(&app, "Edge", 10).await;
+
+        let summary = report_stock(app.state(), app.state(), 0)
+            .await
+            .expect("report");
+        assert_eq!(summary.low_stock_count, 1);
+        assert!(summary.items[0].is_low_stock);
+    }
+
+    // ---------------------------------------------------------------
+    // report_profit_loss
+    // ---------------------------------------------------------------
+
+    #[tokio::test]
+    async fn profit_loss_empty_company() {
+        // Input: no finalized/paid invoices.
+        // Expected: all zero, margin 0.
+        let app = owner_app().await;
+        let report = report_profit_loss(app.state(), app.state())
+            .await
+            .expect("report");
+        assert_eq!(report.total_revenue, 0);
+        assert_eq!(report.total_cost, 0);
+        assert_eq!(report.gross_profit, 0);
+        assert_eq!(report.profit_margin_pct, 0.0);
+    }
+
+    #[tokio::test]
+    async fn profit_loss_computes_margin() {
+        // Input: finalized invoice 2×1000 sold (revenue 2000); cost price 500/unit.
+        // Expected: cost 1000, gross profit 1000, margin 50%.
+        let app = owner_app().await;
+        let customer = make_customer(&app, "Walk-in").await;
+        let product = make_product(&app, "Widget", 10).await;
+        finalized_invoice(&app, &customer.id, &product.id, 2, 1000, 0).await;
+
+        let report = report_profit_loss(app.state(), app.state())
+            .await
+            .expect("report");
+        assert_eq!(report.total_revenue, 2000);
+        assert_eq!(report.total_cost, 1000);
+        assert_eq!(report.gross_profit, 1000);
+        assert_eq!(report.profit_margin_pct, 50.0);
+        assert_eq!(report.total_tax_collected, 0);
+        assert_eq!(report.total_discounts_given, 0);
+    }
+
+    #[tokio::test]
+    async fn profit_loss_ignores_drafts() {
+        // Input: a draft invoice with items (not finalized).
+        // Expected: revenue stays 0 — drafts are excluded.
+        let app = owner_app().await;
+        let customer = make_customer(&app, "Walk-in").await;
+        let product = make_product(&app, "Widget", 10).await;
+        let invoice = make_invoice(&app, &customer.id, "2026-01-15").await;
+        add_item(&app, &invoice.id, &product.id, 2, 1000, 0).await;
+
+        let report = report_profit_loss(app.state(), app.state())
+            .await
+            .expect("report");
+        assert_eq!(report.total_revenue, 0);
+    }
+
+    // ---------------------------------------------------------------
+    // report_customer_ledger
+    // ---------------------------------------------------------------
+
+    #[tokio::test]
+    async fn customer_ledger_empty_company() {
+        // Input: a customer with no invoices.
+        // Expected: excluded by HAVING SUM(grand_total) > 0.
+        let app = owner_app().await;
+        make_customer(&app, "Walk-in").await;
+
+        let rows = report_customer_ledger(app.state(), app.state())
+            .await
+            .expect("report");
+        assert!(rows.is_empty());
+    }
+
+    #[tokio::test]
+    async fn customer_ledger_lists_balances() {
+        // Input: customer with a finalized 2×1000 invoice and 500 payment.
+        // Expected: invoiced 2000, paid 500, balance 1500, invoice_count 1.
+        let app = owner_app().await;
+        let customer = make_customer(&app, "Walk-in").await;
+        let product = make_product(&app, "Widget", 10).await;
+        let invoice = finalized_invoice(&app, &customer.id, &product.id, 2, 1000, 0).await;
+        cash_payment(&app, &invoice.id, 500).await;
+
+        let rows = report_customer_ledger(app.state(), app.state())
+            .await
+            .expect("report");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].customer_id, customer.id);
+        assert_eq!(rows[0].total_invoiced, 2000);
+        assert_eq!(rows[0].total_paid, 500);
+        assert_eq!(rows[0].balance_due, 1500);
+        assert_eq!(rows[0].invoice_count, 1);
+        assert_eq!(rows[0].last_invoice_date.as_deref(), Some("2026-01-15"));
+    }
+
+    // ---------------------------------------------------------------
+    // report_product_movements
+    // ---------------------------------------------------------------
+
+    #[tokio::test]
+    async fn product_movements_empty_company() {
+        // Input: no products.
+        // Expected: empty vec.
+        let app = owner_app().await;
+        let rows = report_product_movements(app.state(), app.state())
+            .await
+            .expect("report");
+        assert!(rows.is_empty());
+    }
+
+    #[tokio::test]
+    async fn product_movements_sums_purchases_and_sales() {
+        // Input: product with a 2-unit sale (finalized invoice) and a 5-unit
+        // purchase (adjust_stock).
+        // Expected: total_sold 2, total_purchased 5, current_stock 13.
+        let app = owner_app().await;
+        let customer = make_customer(&app, "Walk-in").await;
+        let product = make_product(&app, "Widget", 10).await;
+        finalized_invoice(&app, &customer.id, &product.id, 2, 1000, 0).await;
+
+        crate::commands::inventory::adjust_stock(
+            app.state(),
+            app.state(),
+            product.id.clone(),
+            "purchase".to_string(),
+            5,
+            "restock".to_string(),
+            None,
+        )
+        .await
+        .expect("adjust stock");
+
+        let rows = report_product_movements(app.state(), app.state())
+            .await
+            .expect("report");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].product_id, product.id);
+        assert_eq!(rows[0].total_sold, 2);
+        assert_eq!(rows[0].total_purchased, 5);
+        assert_eq!(rows[0].current_stock, 13);
+    }
 }
