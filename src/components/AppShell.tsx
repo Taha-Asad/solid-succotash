@@ -35,9 +35,10 @@ import {
   DatabaseBackup,
   Settings2,
   Download,
+  ContactRound,
 } from "lucide-react";
 
-import { createBackup, getErrorMessage } from "../api/backend";
+import { createBackup, getErrorMessage, saveFileDialog } from "../api/backend";
 import { checkForUpdates, installUpdate } from "../api/updater";
 import type { UpdateResult } from "../api/updater";
 import type { PublicUser } from "../types/backend";
@@ -48,6 +49,8 @@ import InvoicePage from "../features/invoices/InvoicePage";
 import PurchaseOrderPage from "../features/purchase-orders/PurchaseOrderPage";
 import ReportsPage from "../features/reports/ReportsPage";
 import UserManagementView from "../features/dashboard/UserManagement";
+import SettingsPage from "../features/settings/SettingsPage";
+import CustomersPage from "../features/customers/CustomersPage";
 import { INK } from "../theme";
 
 // ==========================================
@@ -58,9 +61,11 @@ export type DashboardView =
   | "home"
   | "inventory"
   | "invoices"
+  | "customers"
   | "purchasing"
   | "reports"
-  | "users";
+  | "users"
+  | "settings";
 
 const NAV_ITEMS: {
   key: DashboardView;
@@ -91,6 +96,13 @@ const NAV_ITEMS: {
     roles: ["owner", "admin", "employee"],
   },
   {
+    key: "customers",
+    label: "Customers",
+    description: "Customer directory & accounts",
+    icon: <ContactRound size={18} />,
+    roles: ["owner", "admin", "employee"],
+  },
+  {
     key: "purchasing",
     label: "Purchasing",
     description: "Purchase orders from suppliers",
@@ -110,6 +122,13 @@ const NAV_ITEMS: {
     description: "Manage company users",
     icon: <Users size={18} />,
     roles: ["owner", "admin"],
+  },
+  {
+    key: "settings",
+    label: "Settings",
+    description: "Profile, invoices, backups & audit",
+    icon: <Settings2 size={18} />,
+    roles: ["owner", "admin", "employee"],
   },
 ];
 
@@ -190,7 +209,12 @@ export default function AppShell({
     setBacking(true);
     setBackupMsg(null);
     try {
-      const path = await createBackup();
+      const savePath = await saveFileDialog({
+        title: "Save Backup",
+        defaultPath: `backup-${new Date().toISOString().slice(0, 10)}.db`,
+      });
+      if (!savePath) return;
+      const path = await createBackup(savePath);
       setBackupMsg(`Backup saved: ${path}`);
     } catch (err) {
       setBackupMsg(`Error: ${getErrorMessage(err)}`);
@@ -490,12 +514,12 @@ export default function AppShell({
                 Backup
               </Button>
             </Tooltip>
-            <Tooltip label="Settings (coming soon)">
+            <Tooltip label="Settings">
               <Button
                 variant="subtle"
                 size="sm"
                 leftSection={<Settings2 size={15} />}
-                disabled
+                onClick={() => setView("settings")}
                 styles={{ root: { fontWeight: 600 } }}
               >
                 Settings
@@ -518,9 +542,13 @@ export default function AppShell({
               {view === "home" && <DashboardHome user={user} />}
               {view === "inventory" && <InventoryPage user={user} />}
               {view === "invoices" && <InvoicePage user={user} />}
+              {view === "customers" && <CustomersPage user={user} />}
               {view === "purchasing" && <PurchaseOrderPage user={user} />}
               {view === "reports" && <ReportsPage />}
               {view === "users" && <UserManagementView currentUser={user} />}
+              {view === "settings" && (
+                <SettingsPage user={user} onLogout={onLogout} />
+              )}
             </motion.div>
           </AnimatePresence>
         </Box>

@@ -101,6 +101,7 @@ export type PublicCategory = {
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
+  version: number;
 };
 
 // Supplier
@@ -116,6 +117,7 @@ export type PublicSupplier = {
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
+  version: number;
 };
 
 // Product
@@ -138,6 +140,7 @@ export type PublicProduct = {
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
+  version: number;
 };
 
 // Stock movement (audit trail entry)
@@ -168,6 +171,7 @@ export type ProductInput = {
 // Input for updating a product (no quantity change)
 export type UpdateProductInput = {
   productId: string;
+  expectedVersion: number;
   sku: string;
   name: string;
   categoryId: string;
@@ -280,6 +284,7 @@ export type PublicCustomer = {
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
+  version: number;
 };
 
 export type PublicInvoice = {

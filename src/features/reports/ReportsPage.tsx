@@ -29,6 +29,7 @@ import {
 import {
   Badge,
   Box,
+  Button,
   Card,
   Divider,
   Group,
@@ -50,6 +51,10 @@ import {
   reportProfitLoss,
   reportCustomerLedger,
   reportProductMovements,
+  exportStockCsv,
+  exportCustomerLedgerCsv,
+  exportSalesCsv,
+  saveFileDialog,
   getErrorMessage,
 } from "../../api/backend";
 
@@ -84,6 +89,24 @@ function pct(value: number): string {
 
 // Recharts-safe money formatter (tooltip values may be undefined).
 const fmtMoney = (value: unknown): string => p(Math.round(Number(value ?? 0) * 100));
+
+// Opens a save dialog and exports the chosen report as CSV.
+async function exportReport(kind: "sales" | "stock" | "ledger"): Promise<void> {
+  const path = await saveFileDialog({
+    title: `Export ${kind} report as CSV`,
+    defaultPath: `${kind}-report.csv`,
+    filters: [{ name: "CSV", extensions: ["csv"] }],
+  });
+  if (!path) return;
+
+  try {
+    if (kind === "sales") await exportSalesCsv(path);
+    else if (kind === "stock") await exportStockCsv(path);
+    else await exportCustomerLedgerCsv(path);
+  } catch (err) {
+    alert(getErrorMessage(err));
+  }
+}
 
 const fadeUp = {
   initial: { opacity: 0, y: 16 },
@@ -303,6 +326,12 @@ function SalesReport() {
         <StatCard label="Invoices" value={summary.totalInvoices} tint={INK.chart.violet} footer="across all statuses" />
       </SimpleGrid>
 
+      <Group justify="flex-end">
+        <Button size="xs" variant="outline" onClick={() => exportReport("sales")}>
+          Export Sales CSV
+        </Button>
+      </Group>
+
       <motion.div {...fadeUp} transition={{ duration: 0.5, delay: 0.1 }}>
         <Card withBorder shadow="sm" p="lg">
           <Group justify="space-between" mb="md">
@@ -465,6 +494,9 @@ function StockReport() {
           min={1}
           w={160}
         />
+        <Button size="xs" variant="outline" onClick={() => exportReport("stock")}>
+          Export Stock CSV
+        </Button>
       </Group>
 
       <motion.div {...fadeUp} transition={{ duration: 0.5, delay: 0.1 }}>
@@ -797,7 +829,12 @@ function CustomerLedgerReport() {
           <Card withBorder shadow="sm" p="lg" style={{ height: "100%" }}>
             <Group justify="space-between" mb="md">
               <Text fw={700} style={{ color: INK.navy }}>Customer Balances</Text>
-              <Badge color="gold" variant="light">{data.length} customers</Badge>
+              <Group>
+                <Button size="xs" variant="outline" onClick={() => exportReport("ledger")}>
+                  Export Ledger CSV
+                </Button>
+                <Badge color="gold" variant="light">{data.length} customers</Badge>
+              </Group>
             </Group>
             {data.length === 0 ? (
               <Box style={{ height: 210, display: "grid", placeItems: "center" }}>

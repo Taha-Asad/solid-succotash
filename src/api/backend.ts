@@ -91,8 +91,8 @@ export function updateMyProfile(fullName: string): Promise<PublicUser> {
 export function changeMyPassword(
   currentPassword: string,
   newPassword: string,
-): Promise<PublicUser> {
-  return invoke<PublicUser>("change_my_password", {
+): Promise<void> {
+  return invoke<void>("change_my_password", {
     currentPassword,
     newPassword,
   });
@@ -158,6 +158,7 @@ export function createCategory(input: {
 
 export function updateCategory(input: {
   categoryId: string;
+  expectedVersion: number;
   name: string;
   description: string;
 }): Promise<PublicCategory> {
@@ -169,6 +170,10 @@ export function setCategoryActive(input: {
   active: boolean;
 }): Promise<PublicCategory> {
   return invoke<PublicCategory>("set_category_active", input);
+}
+
+export function deleteCategory(categoryId: string): Promise<void> {
+  return invoke<void>("delete_category", { categoryId });
 }
 
 // ==========================================
@@ -192,6 +197,7 @@ export function createSupplier(input: {
 
 export function updateSupplier(input: {
   supplierId: string;
+  expectedVersion: number;
   name: string;
   contactPerson: string;
   email: string;
@@ -207,6 +213,10 @@ export function setSupplierActive(input: {
   active: boolean;
 }): Promise<PublicSupplier> {
   return invoke<PublicSupplier>("set_supplier_active", input);
+}
+
+export function deleteSupplier(supplierId: string): Promise<void> {
+  return invoke<void>("delete_supplier", { supplierId });
 }
 
 // ==========================================
@@ -225,6 +235,10 @@ export function updateProduct(
   input: UpdateProductInput,
 ): Promise<PublicProduct> {
   return invoke<PublicProduct>("update_product", input);
+}
+
+export function deleteProduct(productId: string): Promise<void> {
+  return invoke<void>("delete_product", { productId });
 }
 
 export function adjustStock(
@@ -314,6 +328,10 @@ export function createCustomer(input: {
   buyerType: string;
 }): Promise<PublicCustomer> {
   return invoke<PublicCustomer>("create_customer", input);
+}
+
+export function deleteCustomer(customerId: string): Promise<void> {
+  return invoke<void>("delete_customer", { customerId });
 }
 
 // ==========================================
@@ -528,15 +546,105 @@ export function reportProductMovements(): Promise<ProductMovement[]> {
 }
 
 // ==========================================
-// BACKUP
+// REPORT EXPORT (CSV)
 // ==========================================
 
-export function createBackup(): Promise<string> {
-  return invoke<string>("create_backup");
+export function exportStockCsv(savePath: string): Promise<string> {
+  return invoke<string>("export_stock_csv", { savePath });
 }
 
-export function listBackups(): Promise<string[]> {
-  return invoke<string[]>("list_backups");
+export function exportCustomerLedgerCsv(savePath: string): Promise<string> {
+  return invoke<string>("export_customer_ledger_csv", { savePath });
+}
+
+export function exportSalesCsv(savePath: string): Promise<string> {
+  return invoke<string>("export_sales_csv", { savePath });
+}
+
+// ==========================================
+// BACKUP & RESTORE
+// ==========================================
+
+export type BackupInfo = {
+  path: string;
+  filename: string;
+  sizeBytes: number;
+  createdAt: string;
+};
+
+// Saves a backup to the user-chosen path (frontend opens the Save dialog)
+export function createBackup(savePath: string): Promise<string> {
+  return invoke<string>("create_backup", { savePath });
+}
+
+// Replaces the database from the user-chosen backup file. App must restart.
+export function restoreBackup(backupPath: string): Promise<string> {
+  return invoke<string>("restore_backup", { backupPath });
+}
+
+// Lists existing backup files in the given directory
+export function listBackups(directory: string): Promise<BackupInfo[]> {
+  return invoke<BackupInfo[]>("list_backups", { directory });
+}
+
+// ==========================================
+// FILE DIALOGS
+// ==========================================
+
+export type DialogFilters = {
+  name: string;
+  extensions: string[];
+};
+
+export async function openFileDialog(options?: {
+  multiple?: boolean;
+  directory?: boolean;
+  title?: string;
+  filters?: DialogFilters[];
+}): Promise<string | string[] | null> {
+  try {
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    return await open(options);
+  } catch {
+    return null;
+  }
+}
+
+export async function saveFileDialog(options?: {
+  defaultPath?: string;
+  title?: string;
+  filters?: DialogFilters[];
+}): Promise<string | null> {
+  try {
+    const { save } = await import("@tauri-apps/plugin-dialog");
+    return await save(options);
+  } catch {
+    return null;
+  }
+}
+
+// ==========================================
+// AUDIT LOG
+// ==========================================
+
+export type AuditEntry = {
+  id: string;
+  companyId: string;
+  userId: string;
+  userEmail: string;
+  userRole: string;
+  action: string;
+  resource: string;
+  resourceId: string | null;
+  details: string | null;
+  createdAt: string;
+};
+
+export function listAuditEntries(
+  limit: number,
+  offset: number,
+): Promise<AuditEntry[]> {
+  return invoke<AuditEntry[]>("list_audit_logs", { limit, offset });
 }
 
 // ==========================================

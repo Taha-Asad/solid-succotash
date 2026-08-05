@@ -34,26 +34,22 @@ pub async fn check_for_updates(app: AppHandle) -> Result<UpdateResult, String> {
     let current_version = app.package_info().version.to_string();
 
     match updater.check().await {
-        Ok(Some(update)) => {
-            Ok(UpdateResult {
-                available: true,
-                current_version,
-                update: Some(UpdateInfo {
-                    version: update.version.to_string(),
-                    date: update.date.map(|d| d.to_string()),
-                    body: update.body.clone(),
-                }),
-                error: None,
-            })
-        }
-        Ok(None) => {
-            Ok(UpdateResult {
-                available: false,
-                current_version,
-                update: None,
-                error: None,
-            })
-        }
+        Ok(Some(update)) => Ok(UpdateResult {
+            available: true,
+            current_version,
+            update: Some(UpdateInfo {
+                version: update.version.to_string(),
+                date: update.date.map(|d| d.to_string()),
+                body: update.body.clone(),
+            }),
+            error: None,
+        }),
+        Ok(None) => Ok(UpdateResult {
+            available: false,
+            current_version,
+            update: None,
+            error: None,
+        }),
         Err(e) => {
             // Not a critical failure — but classify the cause so the frontend
             // can react differently to a network error vs. a missing config.
