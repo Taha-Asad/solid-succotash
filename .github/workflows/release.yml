@@ -44,6 +44,25 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Delete existing release for tag (fresh slate)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${{ github.ref_name }}"
+          api="https://api.github.com/repos/${{ github.repository }}"
+          code=$(curl -s -o /tmp/release.json -w "%{http_code}" \
+            -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+            "$api/releases/tags/$tag" || true)
+          if [ "$code" = "200" ]; then
+            id=$(python3 -c "import json;print(json.load(open('/tmp/release.json'))['id'])")
+            curl -fsSL -X DELETE -H "Authorization: Bearer $GH_TOKEN" "$api/releases/$id"
+            echo "Deleted existing release $id for tag $tag"
+          else
+            echo "No existing release for $tag (HTTP $code) - starting fresh"
+          fi
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -190,6 +209,31 @@ jobs:
               sys.exit("latest.json not on the release yet - Windows job must finish first")
           urllib.request.urlretrieve(target["browser_download_url"], sys.argv[2])
           print("Saved Windows latest.json")
+          PY
+
+      - name: Clean stale Linux assets from release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${{ github.ref_name }}"
+          api="https://api.github.com/repos/${{ github.repository }}"
+          curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "$api/releases/tags/$tag" > "$RUNNER_TEMP/release.json"
+          python3 - "$RUNNER_TEMP/release.json" "$api" "$GH_TOKEN" <<'PY'
+          import json, sys, urllib.request
+          release = json.load(open(sys.argv[1]))
+          api, token = sys.argv[2], sys.argv[3]
+          for a in release["assets"]:
+              low = a["name"].lower()
+              skip = low == "latest.json" or low.endswith(".exe") or low.endswith(".exe.sig")
+              if not skip:
+                  req = urllib.request.Request(f"{api}/releases/assets/{a['id']}", method="DELETE")
+                  req.add_header("Authorization", f"Bearer {token}")
+                  urllib.request.urlopen(req)
+                  print("Deleted stale Linux asset:", a["name"])
           PY
 
       - name: Build and release (Linux)
