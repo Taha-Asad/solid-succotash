@@ -80,6 +80,7 @@ jobs:
             Your data is preserved — no need to uninstall the previous version.
           releaseDraft: false
           prerelease: false
+          includeUpdaterJson: false
 
       - name: Generate and upload updater latest.json
         shell: pwsh
@@ -211,6 +212,7 @@ jobs:
           releaseDraft: false
           prerelease: false
           args: --bundles deb,appimage
+          includeUpdaterJson: false
 
       - name: Merge Windows + Linux entries into latest.json
         shell: bash
