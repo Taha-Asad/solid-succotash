@@ -31,6 +31,7 @@ import {
   ShoppingCart,
   ChartPie,
   Users,
+  BookOpen,
   LogOut,
   DatabaseBackup,
   Settings2,
@@ -38,7 +39,14 @@ import {
   ContactRound,
 } from "lucide-react";
 
-import { createBackup, getErrorMessage, saveFileDialog } from "../api/backend";
+import {
+  createBackup,
+  getCompany,
+  getErrorMessage,
+  getTheme,
+  saveFileDialog,
+  type CompanyTheme,
+} from "../api/backend";
 import { checkForUpdates, installUpdate } from "../api/updater";
 import type { UpdateResult } from "../api/updater";
 import type { PublicUser } from "../types/backend";
@@ -51,6 +59,7 @@ import ReportsPage from "../features/reports/ReportsPage";
 import UserManagementView from "../features/dashboard/UserManagement";
 import SettingsPage from "../features/settings/SettingsPage";
 import CustomersPage from "../features/customers/CustomersPage";
+import AccountsPage from "../features/accounts/AccountsPage";
 import SearchBar from "./SearchBar";
 import NotificationBell from "./NotificationBell";
 import { INK } from "../theme";
@@ -66,6 +75,7 @@ export type DashboardView =
   | "customers"
   | "purchasing"
   | "reports"
+  | "accounts"
   | "users"
   | "settings";
 
@@ -119,6 +129,13 @@ const NAV_ITEMS: {
     roles: ["owner", "admin", "employee"],
   },
   {
+    key: "accounts",
+    label: "Accounts",
+    description: "Chart of accounts & journal",
+    icon: <BookOpen size={18} />,
+    roles: ["owner", "admin", "employee"],
+  },
+  {
     key: "users",
     label: "Team",
     description: "Manage company users",
@@ -138,6 +155,37 @@ const ROLE_COLORS: Record<string, string> = {
   owner: "gold",
   admin: "blue",
   employee: "teal",
+};
+
+// ==========================================
+// BRANDING HELPERS
+// ==========================================
+
+function hexToRgba(hex: string, alpha: number): string {
+  const h = hex.replace("#", "");
+  const full = h.length === 3 ? h.split("").map((c) => c + c).join("") : h;
+  const r = parseInt(full.slice(0, 2), 16);
+  const g = parseInt(full.slice(2, 4), 16);
+  const b = parseInt(full.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function contrastText(hex: string): string {
+  const h = hex.replace("#", "");
+  const full = h.length === 3 ? h.split("").map((c) => c + c).join("") : h;
+  const r = parseInt(full.slice(0, 2), 16);
+  const g = parseInt(full.slice(2, 4), 16);
+  const b = parseInt(full.slice(4, 6), 16);
+  const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return lum > 0.6 ? "#131C39" : "#FFFFFF";
+}
+
+const DEFAULT_PRIMARY = "#C9952A";
+const DEFAULT_SECONDARY = "#E6C965";
+
+type Branding = {
+  companyName: string;
+  theme: CompanyTheme | null;
 };
 
 // ==========================================
@@ -178,6 +226,20 @@ export default function AppShell({
   const [updateOpen, setUpdateOpen] = useState(false);
   const [installing, setInstalling] = useState(false);
   const [updateMsg, setUpdateMsg] = useState<string | null>(null);
+  const [branding, setBranding] = useState<Branding>({
+    companyName: "Ijaz & Company",
+    theme: null,
+  });
+
+  useEffect(() => {
+    Promise.all([getCompany(), getTheme()])
+      .then(([company, theme]) => {
+        setBranding({ companyName: company.name, theme });
+      })
+      .catch(() => {
+        // Keep default branding if the theme/company cannot be loaded.
+      });
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -234,6 +296,25 @@ export default function AppShell({
     year: "numeric",
   });
 
+  const theme = branding.theme;
+  const primary = theme?.primaryColor ?? DEFAULT_PRIMARY;
+  const secondary = theme?.secondaryColor ?? DEFAULT_SECONDARY;
+  // The accent is the highlight color (default antique gold) and drives the
+  // sidebar accents; primary/secondary form the brand gradient used on buttons.
+  const accent = theme?.accentColor ?? DEFAULT_PRIMARY;
+  const accentGradient = `linear-gradient(135deg, ${accent} 0%, ${accent} 100%)`;
+  const brandGradient = `linear-gradient(135deg, ${primary} 0%, ${secondary} 100%)`;
+  const brandGlow = `0 6px 18px -6px ${hexToRgba(accent, 0.55)}`;
+  const onAccent = contrastText(accent);
+  const onPrimary = contrastText(primary);
+  const accentLabel = accent;
+  const navPillBackground = `linear-gradient(90deg, ${hexToRgba(accent, 0.22)} 0%, ${hexToRgba(accent, 0.06)} 100%)`;
+  const navPillBorder = hexToRgba(accent, 0.35);
+  const navPillShadow = `inset 0 0 24px -8px ${hexToRgba(accent, 0.4)}`;
+  const logoImage = theme?.logoBase64 ?? null;
+  const tagline = theme?.companyTagline ?? "ERP SUITE";
+  const watermark = theme?.erpWatermark ?? "Powered by Ijaz & Company ERP";
+
   return (
     <Box
       style={{
@@ -271,22 +352,30 @@ export default function AppShell({
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              background:
-                "linear-gradient(135deg, #C9952A 0%, #E6C965 100%)",
-              color: "#131C39",
+              overflow: "hidden",
+              background: logoImage ? "transparent" : accentGradient,
+              color: onAccent,
               fontWeight: 800,
               fontSize: 15,
-              boxShadow: "0 6px 18px -6px rgba(201,149,42,0.55)",
+              boxShadow: brandGlow,
             }}
           >
-            I&
+            {logoImage ? (
+              <img
+                src={logoImage}
+                alt={branding.companyName}
+                style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: 12 }}
+              />
+            ) : (
+              <span>{branding.companyName.charAt(0).toUpperCase()}</span>
+            )}
           </motion.div>
           <Stack gap={0}>
-            <Text fw={800} size="lg" style={{ letterSpacing: -0.2 }}>
-              Ijaz &amp; Company
+            <Text fw={800} size="lg" style={{ letterSpacing: -0.2, lineHeight: 1.25 }}>
+              {branding.companyName}
             </Text>
-            <Text size="xs" style={{ color: "#A9B6D6", letterSpacing: 1.5 }}>
-              ERP SUITE
+            <Text size="xs" style={{ color: "#A9B6D6", letterSpacing: 1.5, lineHeight: 1.3 }}>
+              {tagline}
             </Text>
           </Stack>
         </Group>
@@ -344,11 +433,9 @@ export default function AppShell({
                         position: "absolute",
                         inset: 0,
                         borderRadius: 12,
-                        background:
-                          "linear-gradient(90deg, rgba(201,149,42,0.22) 0%, rgba(201,149,42,0.06) 100%)",
-                        border: "1px solid rgba(201,149,42,0.35)",
-                        boxShadow:
-                          "inset 0 0 24px -8px rgba(201,149,42,0.4)",
+                        background: navPillBackground,
+                        border: `1px solid ${navPillBorder}`,
+                        boxShadow: navPillShadow,
                       }}
                     />
                   )}
@@ -361,10 +448,8 @@ export default function AppShell({
                       width: 34,
                       height: 34,
                       borderRadius: 10,
-                      background: active
-                        ? "linear-gradient(135deg, #C9952A 0%, #E6C965 100%)"
-                        : "rgba(255,255,255,0.06)",
-                      color: active ? "#131C39" : "#A9B6D6",
+                      background: active ? accentGradient : "rgba(255,255,255,0.06)",
+                      color: active ? onAccent : "#A9B6D6",
                       flexShrink: 0,
                       transition: "background 0.2s ease, color 0.2s ease",
                     }}
@@ -440,6 +525,13 @@ export default function AppShell({
             </Box>
           </motion.div>
         </Box>
+
+        {/* Platform watermark — secondary, below the user card */}
+        <Box px="sm" pb="sm" style={{ textAlign: "center" }}>
+          <Text size="xs" style={{ color: "#5A6B96", letterSpacing: 0.5, fontSize: 11 }}>
+            {watermark}
+          </Text>
+        </Box>
       </Box>
 
       {/* ==================== CONTENT ==================== */}
@@ -466,7 +558,7 @@ export default function AppShell({
             transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
           >
             <Stack gap={0}>
-              <Text size="sm" style={{ color: INK.chart.gold, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase" }}>
+              <Text size="sm" style={{ color: accentLabel, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase" }}>
                 {current?.label}
               </Text>
               <Text fw={800} size="lg" style={{ color: INK.navy, letterSpacing: -0.3 }}>
@@ -500,8 +592,8 @@ export default function AppShell({
                   styles={{
                     root: {
                       fontWeight: 700,
-                      background: "linear-gradient(135deg, #C9952A 0%, #E6C965 100%)",
-                      color: "#131C39",
+                      background: brandGradient,
+                      color: onPrimary,
                       "&:hover": { filter: "brightness(1.06)" },
                     },
                   }}
@@ -556,6 +648,7 @@ export default function AppShell({
               {view === "customers" && <CustomersPage user={user} />}
               {view === "purchasing" && <PurchaseOrderPage user={user} />}
               {view === "reports" && <ReportsPage />}
+              {view === "accounts" && <AccountsPage />}
               {view === "users" && <UserManagementView currentUser={user} />}
               {view === "settings" && (
                 <SettingsPage user={user} onLogout={onLogout} />

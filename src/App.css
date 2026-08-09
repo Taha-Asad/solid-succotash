@@ -106,3 +106,78 @@ h6 {
   outline: 2px solid rgba(201, 149, 42, 0.6);
   outline-offset: 2px;
 }
+
+/* ==========================================
+   MANTINE DATE CALENDAR — ledger style
+   Matches the navy / antique-gold identity.
+   ========================================== */
+
+.mantine-DateInput-calendarHeader {
+  margin-bottom: 4px;
+  padding: 2px 4px 6px;
+  border-bottom: 1px solid #e3e8f1;
+}
+
+.mantine-DateInput-calendarHeaderLevel {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: #1d2b54;
+  border-radius: 6px;
+}
+.mantine-DateInput-calendarHeaderLevel:hover {
+  background: #eef2f9;
+}
+
+.mantine-DateInput-calendarHeaderControl {
+  border-radius: 6px;
+  color: #1d2b54;
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+.mantine-DateInput-calendarHeaderControl:hover {
+  background: #eef2f9;
+  color: #c9952a;
+}
+.mantine-DateInput-calendarHeaderControlIcon {
+  color: inherit;
+}
+
+.mantine-DateInput-weekdaysRow {
+  border-bottom: 1px solid #e3e8f1;
+}
+.mantine-DateInput-weekday {
+  padding-bottom: 6px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: #8c611c;
+}
+
+.mantine-DateInput-day {
+  border-radius: 8px;
+  font-size: 12.5px;
+  font-weight: 500;
+  transition: background-color 0.12s ease, color 0.12s ease,
+    box-shadow 0.12s ease;
+}
+.mantine-DateInput-day:hover {
+  background: #eef2f9;
+}
+.mantine-DateInput-day[data-weekend] {
+  color: #c9952a;
+}
+.mantine-DateInput-day[data-today] {
+  box-shadow: inset 0 0 0 1.5px #c9952a;
+  font-weight: 700;
+}
+.mantine-DateInput-day[data-selected],
+.mantine-DateInput-day[data-selected]:hover {
+  background: #1d2b54;
+  color: #ffffff;
+  font-weight: 700;
+}
+.mantine-DateInput-day[data-selected][data-weekend] {
+  color: #ffffff;
+}

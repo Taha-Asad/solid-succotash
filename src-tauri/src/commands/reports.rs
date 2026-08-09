@@ -352,7 +352,7 @@ pub async fn report_stock(
             p.sell_price
         FROM products p
         LEFT JOIN categories c ON c.id = p.category_id
-        WHERE p.company_id = ? AND p.is_active = 1
+        WHERE p.company_id = ? AND p.is_active = 1 AND p.deleted_at IS NULL
         ORDER BY p.name
         "#,
     )
@@ -563,7 +563,7 @@ pub async fn report_product_movements(
         r#"
         SELECT id, name, sku, quantity_in_stock
         FROM products
-        WHERE company_id = ? AND is_active = 1
+        WHERE company_id = ? AND is_active = 1 AND deleted_at IS NULL
         ORDER BY name
         "#,
     )
@@ -1026,11 +1026,23 @@ mod tests {
         assert_eq!(summary.total_value_at_cost, 5 * 500 + 15 * 500);
         assert_eq!(summary.total_value_at_sell, 5 * 700 + 15 * 700);
 
-        let low = summary.items.iter().find(|i| i.product_name == "Low").unwrap();
+        let low = summary
+            .items
+            .iter()
+            .find(|i| i.product_name == "Low")
+            .unwrap();
         assert!(low.is_low_stock);
-        let ok = summary.items.iter().find(|i| i.product_name == "Ok").unwrap();
+        let ok = summary
+            .items
+            .iter()
+            .find(|i| i.product_name == "Ok")
+            .unwrap();
         assert!(!ok.is_low_stock);
-        let empty = summary.items.iter().find(|i| i.product_name == "Empty").unwrap();
+        let empty = summary
+            .items
+            .iter()
+            .find(|i| i.product_name == "Empty")
+            .unwrap();
         assert!(empty.is_low_stock);
         assert_eq!(empty.stock_value_at_cost, 0);
     }
@@ -1047,6 +1059,35 @@ mod tests {
             .expect("report");
         assert_eq!(summary.low_stock_count, 1);
         assert!(summary.items[0].is_low_stock);
+    }
+
+    #[tokio::test]
+    async fn stock_report_excludes_soft_deleted_products() {
+        // Input: two products, one soft-deleted.
+        // Expected: only the live product is counted — deleted stock must
+        // not leak into reports (matches the inventory list).
+        let app = owner_app().await;
+        let live = make_product(&app, "Live", 40).await;
+        let gone = make_product(&app, "Gone", 999).await;
+
+        crate::commands::inventory::delete_product(app.state(), app.state(), gone.id.clone())
+            .await
+            .expect("delete product");
+
+        let summary = report_stock(app.state(), app.state(), 10)
+            .await
+            .expect("report");
+        assert_eq!(summary.total_products, 1);
+        assert_eq!(summary.total_stock_units, 40);
+        assert_eq!(summary.items.len(), 1);
+        assert_eq!(summary.items[0].product_id, live.id);
+
+        let movements = report_product_movements(app.state(), app.state())
+            .await
+            .expect("movements");
+        assert_eq!(movements.len(), 1);
+        assert_eq!(movements[0].product_id, live.id);
+        assert_eq!(movements[0].current_stock, 40);
     }
 
     // ---------------------------------------------------------------
@@ -1174,6 +1215,7 @@ mod tests {
             "purchase".to_string(),
             5,
             "restock".to_string(),
+            None,
             None,
         )
         .await

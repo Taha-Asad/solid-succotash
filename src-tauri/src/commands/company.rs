@@ -721,7 +721,9 @@ mod tests {
         // Input: empty session.
         // Expected: Err "You must log in first".
         let app = setup_app().await;
-        let err = get_company(state_of(&app), state_of(&app)).await.unwrap_err();
+        let err = get_company(state_of(&app), state_of(&app))
+            .await
+            .unwrap_err();
         assert!(err.contains("log in first"), "got: {err}");
     }
 
@@ -757,12 +759,11 @@ mod tests {
         assert_eq!(updated.currency_code, "USD");
         assert_eq!(updated.email.as_deref(), Some("new@test.com"));
 
-        let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM audit_logs WHERE resource = 'company'",
-        )
-        .fetch_one(&*pool)
-        .await
-        .unwrap();
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM audit_logs WHERE resource = 'company'")
+                .fetch_one(&*pool)
+                .await
+                .unwrap();
         assert_eq!(count, 1, "company update must be audited");
     }
 
@@ -800,7 +801,8 @@ mod tests {
         let result = register(&app).await;
         let pool = state_of::<SqlitePool>(&app);
         let company_id = result.user.company_id.as_deref().unwrap();
-        let employee = insert_user(&pool, company_id, "emp@test.com", "Emp", "employee", true).await;
+        let employee =
+            insert_user(&pool, company_id, "emp@test.com", "Emp", "employee", true).await;
         set_session_user(&app, employee).await;
 
         let err = update_company(

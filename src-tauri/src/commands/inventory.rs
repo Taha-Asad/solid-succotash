@@ -111,6 +111,21 @@ fn clean_optional(input: &str) -> Option<String> {
     }
 }
 
+/// Maps SQLite insert/update errors for products to friendly messages so
+/// users never see a raw constraint string like "NOT NULL constraint failed".
+fn map_product_db_error(e: sqlx::Error, sku: &str) -> String {
+    let msg = e.to_string();
+    if msg.contains("UNIQUE") {
+        format!("SKU '{sku}' already exists")
+    } else if msg.contains("NOT NULL") {
+        "A required field is missing".to_string()
+    } else if msg.contains("FOREIGN KEY") {
+        "The selected category or supplier no longer exists".to_string()
+    } else {
+        format!("Database error: {msg}")
+    }
+}
+
 /// Builds a short, uppercase, alphanumeric SKU prefix from a category name.
 /// "Electronics" → "ELEC", "Mobile Phones" → "MOBI".
 fn derive_sku_prefix(name: &str) -> String {
@@ -839,14 +854,7 @@ pub async fn create_product(
     .bind(&trimmed_unit)
     .execute(pool.inner())
     .await
-    .map_err(|e| {
-        let msg = e.to_string();
-        if msg.contains("UNIQUE") {
-            format!("SKU '{}' already exists", final_sku)
-        } else {
-            format!("Database error: {msg}")
-        }
-    })?;
+    .map_err(|e| map_product_db_error(e, &final_sku))?;
 
     // ---- Record initial stock as a movement (if > 0) ----
     if quantity_in_stock > 0 {
@@ -974,14 +982,7 @@ pub async fn update_product(
     .bind(company_id)
     .execute(pool.inner())
     .await
-    .map_err(|e| {
-        let msg = e.to_string();
-        if msg.contains("UNIQUE") {
-            format!("SKU '{}' already exists", final_sku)
-        } else {
-            format!("Database error: {msg}")
-        }
-    })?;
+    .map_err(|e| map_product_db_error(e, &final_sku))?;
 
     if rows.rows_affected() == 0 {
         return Err("Product not found".to_string());
@@ -1031,6 +1032,10 @@ pub async fn update_product(
 ///   This makes the product "expiry-tracked". Subsequent stock OUT
 ///   is deducted FIFO (soonest-expiring batch first).
 ///   Never defaulted — leave null when you don't track expiry.
+///
+/// batch_number (optional, stock IN only):
+///   Labels the batch being created. Blank auto-generates "B-0001",
+///   "B-0002", … so every batch has a human-readable number.
 #[tauri::command]
 pub async fn adjust_stock(
     pool: State<'_, SqlitePool>,
@@ -1040,6 +1045,7 @@ pub async fn adjust_stock(
     quantity: i64,
     reference_note: String,
     expiry_date: Option<String>,
+    batch_number: Option<String>,
 ) -> Result<PublicProduct, String> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
 
@@ -1081,8 +1087,16 @@ pub async fn adjust_stock(
             }
         }
         "adjustment" => {
-            if quantity == 0 {
-                return Err("Adjustment quantity cannot be zero".to_string());
+            if quantity == 0
+                && expiry_date
+                    .as_deref()
+                    .map(str::trim)
+                    .unwrap_or("")
+                    .is_empty()
+            {
+                return Err(
+                    "Adjustment quantity cannot be zero — set an Expiry Date to attach it to current stock without changing quantity".to_string(),
+                );
             }
         }
         _ => unreachable!(),
@@ -1169,6 +1183,62 @@ pub async fn adjust_stock(
                 unit_cost,
                 expiry,
                 &movement_type,
+                batch_number.as_deref(),
+            )
+            .await?;
+        }
+    }
+
+    // 3a.2 Expiry-only adjustment (quantity 0): attach the expiry to the
+    //      product's current UNBATCHED stock without changing quantity.
+    //      The unbatched portion becomes a single expiry batch, so the
+    //      product becomes expiry-tracked and future stock OUT is FIFO.
+    if quantity == 0 {
+        if let Some(expiry) = &normalized_expiry {
+            let unbatched: i64 = sqlx::query_scalar(
+                r#"
+                SELECT p.quantity_in_stock - COALESCE(
+                    (SELECT SUM(quantity) FROM stock_batches
+                     WHERE company_id = ? AND product_id = ?),
+                    0
+                )
+                FROM products p
+                WHERE p.id = ? AND p.company_id = ?
+                "#,
+            )
+            .bind(company_id)
+            .bind(&product_id)
+            .bind(&product_id)
+            .bind(company_id)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|e| format!("Product lookup error: {e}"))?;
+
+            if unbatched <= 0 {
+                return Err(
+                    "All current stock already has an expiry date — nothing left to attach it to"
+                        .to_string(),
+                );
+            }
+
+            let unit_cost: i64 = sqlx::query_scalar(
+                "SELECT cost_price FROM products WHERE id = ? AND company_id = ?",
+            )
+            .bind(&product_id)
+            .bind(company_id)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|e| format!("Product lookup error: {e}"))?;
+
+            crate::commands::inventory::add_batch(
+                &mut tx,
+                company_id,
+                &product_id,
+                unbatched,
+                unit_cost,
+                expiry,
+                "adjustment",
+                batch_number.as_deref(),
             )
             .await?;
         }
@@ -1201,7 +1271,11 @@ pub async fn adjust_stock(
     }
 
     let company_id = current_user.company_id.as_deref().unwrap_or("system");
-    let mut details = format!("{} {} unit(s)", quantity, movement_type);
+    let mut details = if quantity == 0 && normalized_expiry.is_some() {
+        format!("Set expiry on existing stock ({movement_type})")
+    } else {
+        format!("{} {} unit(s)", quantity, movement_type)
+    };
     if let Some(n) = note.as_deref() {
         if !n.is_empty() {
             details.push_str(&format!(" — {n}"));
@@ -1344,6 +1418,9 @@ pub struct PublicStockBatch {
     pub product_id: String,
     pub product_name: String,
     pub product_sku: String,
+    /// Human-readable identifier for this batch (e.g. "B-0001").
+    /// Auto-generated on creation when the user does not supply one.
+    pub batch_number: Option<String>,
     pub quantity: i64,
     pub unit_cost: i64,
     pub expiry_date: String,
@@ -1361,6 +1438,7 @@ struct RawBatch {
     product_id: String,
     product_name: String,
     product_sku: String,
+    batch_number: Option<String>,
     quantity: i64,
     unit_cost: i64,
     expiry_date: String,
@@ -1391,6 +1469,7 @@ fn to_public(raw: RawBatch, status: String) -> PublicStockBatch {
         product_id: raw.product_id,
         product_name: raw.product_name,
         product_sku: raw.product_sku,
+        batch_number: raw.batch_number,
         quantity: raw.quantity,
         unit_cost: raw.unit_cost,
         expiry_date: raw.expiry_date,
@@ -1400,8 +1479,53 @@ fn to_public(raw: RawBatch, status: String) -> PublicStockBatch {
     }
 }
 
+/// Builds the next sequential batch number for a company: "B-0001",
+/// "B-0002", … Works against any connection (a transaction or a pooled
+/// connection), so stock-ins and file imports never hand out the same number.
+pub async fn generate_batch_number(
+    conn: &mut sqlx::SqliteConnection,
+    company_id: &str,
+) -> Result<String, String> {
+    let start: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COALESCE(MAX(CAST(SUBSTR(batch_number, 3) AS INTEGER)), 0)
+        FROM stock_batches
+        WHERE company_id = ? AND batch_number LIKE 'B-%'
+        "#,
+    )
+    .bind(company_id)
+    .fetch_one(&mut *conn)
+    .await
+    .map_err(|e| format!("Batch number lookup error: {e}"))?;
+
+    let mut next = start;
+    loop {
+        next += 1;
+        let candidate = format!("B-{:04}", next);
+        let exists: Option<i64> = sqlx::query_scalar(
+            "SELECT 1 FROM stock_batches WHERE company_id = ? AND batch_number = ?",
+        )
+        .bind(company_id)
+        .bind(&candidate)
+        .fetch_optional(&mut *conn)
+        .await
+        .map_err(|e| format!("Batch number lookup error: {e}"))?;
+        if exists.is_none() {
+            return Ok(candidate);
+        }
+    }
+}
+
 /// Creates a stock batch inside the caller's transaction.
 /// Used by stock IN with an expiry date (manual adjustments, purchases).
+///
+/// All stock of a product received with the same expiry date accumulates
+/// into ONE batch — repeated additions merge into the existing batch
+/// instead of fragmenting into many rows.
+///
+/// When `batch_number` is blank/None a sequential "B-XXXX" number is
+/// generated for the company; a supplied number is validated for
+/// uniqueness within the company before insert.
 pub async fn add_batch(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     company_id: &str,
@@ -1410,13 +1534,93 @@ pub async fn add_batch(
     unit_cost: i64,
     expiry_date: &str,
     source: &str,
+    batch_number: Option<&str>,
 ) -> Result<(), String> {
+    upsert_batch(
+        &mut **tx,
+        company_id,
+        product_id,
+        quantity,
+        unit_cost,
+        expiry_date,
+        source,
+        batch_number,
+    )
+    .await
+}
+
+/// Connection-level version of [`add_batch`] — works against a
+/// transaction or a pooled connection. If a batch already exists for the
+/// product at the same expiry date, the new stock is added to it
+/// (quantity accumulates, unit cost becomes the weighted average) so the
+/// product keeps a single batch for everything received together.
+/// Otherwise a new batch row is inserted.
+pub async fn upsert_batch(
+    conn: &mut sqlx::SqliteConnection,
+    company_id: &str,
+    product_id: &str,
+    quantity: i64,
+    unit_cost: i64,
+    expiry_date: &str,
+    source: &str,
+    batch_number: Option<&str>,
+) -> Result<(), String> {
+    let existing: Option<(String, i64, i64)> = sqlx::query_as(
+        r#"
+        SELECT id, quantity, unit_cost
+        FROM stock_batches
+        WHERE company_id = ? AND product_id = ? AND expiry_date = ?
+        LIMIT 1
+        "#,
+    )
+    .bind(company_id)
+    .bind(product_id)
+    .bind(expiry_date)
+    .fetch_optional(&mut *conn)
+    .await
+    .map_err(|e| format!("Batch lookup error: {e}"))?;
+
+    if let Some((batch_id, old_qty, old_cost)) = existing {
+        let new_qty = old_qty + quantity;
+        let new_cost = if new_qty > 0 {
+            (old_cost * old_qty + unit_cost * quantity) / new_qty
+        } else {
+            unit_cost
+        };
+        sqlx::query("UPDATE stock_batches SET quantity = ?, unit_cost = ? WHERE id = ?")
+            .bind(new_qty)
+            .bind(new_cost)
+            .bind(&batch_id)
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| format!("Batch update error: {e}"))?;
+        return Ok(());
+    }
+
+    let final_number = match batch_number.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(provided) => {
+            let exists: Option<i64> = sqlx::query_scalar(
+                "SELECT 1 FROM stock_batches WHERE company_id = ? AND batch_number = ?",
+            )
+            .bind(company_id)
+            .bind(provided)
+            .fetch_optional(&mut *conn)
+            .await
+            .map_err(|e| format!("Batch number lookup error: {e}"))?;
+            if exists.is_some() {
+                return Err(format!("A batch with number '{provided}' already exists"));
+            }
+            provided.to_string()
+        }
+        None => generate_batch_number(&mut *conn, company_id).await?,
+    };
+
     let id = uuid::Uuid::new_v4().to_string();
     sqlx::query(
         r#"
         INSERT INTO stock_batches
-            (id, company_id, product_id, quantity, unit_cost, expiry_date, source)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+            (id, company_id, product_id, quantity, unit_cost, expiry_date, source, batch_number)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         "#,
     )
     .bind(&id)
@@ -1426,7 +1630,8 @@ pub async fn add_batch(
     .bind(unit_cost)
     .bind(expiry_date)
     .bind(source)
-    .execute(&mut **tx)
+    .bind(&final_number)
+    .execute(&mut *conn)
     .await
     .map_err(|e| format!("Failed to create stock batch: {e}"))?;
     Ok(())
@@ -1571,7 +1776,7 @@ pub async fn list_product_batches(
         r#"
         SELECT b.id, b.company_id, b.product_id,
                p.name AS product_name, p.sku AS product_sku,
-               b.quantity, b.unit_cost, b.expiry_date, b.source, b.created_at
+               b.batch_number, b.quantity, b.unit_cost, b.expiry_date, b.source, b.created_at
         FROM stock_batches b
         JOIN products p ON p.id = b.product_id AND p.company_id = b.company_id
         WHERE b.company_id = ? AND b.product_id = ?
@@ -1614,7 +1819,7 @@ pub async fn list_expiring_batches(
         r#"
         SELECT b.id, b.company_id, b.product_id,
                p.name AS product_name, p.sku AS product_sku,
-               b.quantity, b.unit_cost, b.expiry_date, b.source, b.created_at
+               b.batch_number, b.quantity, b.unit_cost, b.expiry_date, b.source, b.created_at
         FROM stock_batches b
         JOIN products p ON p.id = b.product_id AND p.company_id = b.company_id
         WHERE b.company_id = ? AND b.quantity > 0 AND b.expiry_date <= ?
@@ -1740,7 +1945,7 @@ pub async fn write_off_batch(
         r#"
         SELECT b.id, b.company_id, b.product_id,
                p.name AS product_name, p.sku AS product_sku,
-               b.quantity, b.unit_cost, b.expiry_date, b.source, b.created_at
+               b.batch_number, b.quantity, b.unit_cost, b.expiry_date, b.source, b.created_at
         FROM stock_batches b
         JOIN products p ON p.id = b.product_id AND p.company_id = b.company_id
         WHERE b.id = ? AND b.company_id = ?
@@ -1897,9 +2102,7 @@ pub async fn delete_product(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::test_helpers::{
-        insert_user, register_owner, set_session_user, setup_app,
-    };
+    use crate::commands::test_helpers::{insert_user, register_owner, set_session_user, setup_app};
     use tauri::Manager;
     use uuid::Uuid;
 
@@ -1911,7 +2114,10 @@ mod tests {
     }
 
     /// Creates a category through the real command.
-    async fn make_category(app: &tauri::App<tauri::test::MockRuntime>, name: &str) -> PublicCategory {
+    async fn make_category(
+        app: &tauri::App<tauri::test::MockRuntime>,
+        name: &str,
+    ) -> PublicCategory {
         create_category(
             app.state(),
             app.state(),
@@ -1924,7 +2130,10 @@ mod tests {
     }
 
     /// Creates a supplier through the real command.
-    async fn make_supplier(app: &tauri::App<tauri::test::MockRuntime>, name: &str) -> PublicSupplier {
+    async fn make_supplier(
+        app: &tauri::App<tauri::test::MockRuntime>,
+        name: &str,
+    ) -> PublicSupplier {
         create_supplier(
             app.state(),
             app.state(),
@@ -1985,6 +2194,92 @@ mod tests {
         // Input: "  Lahore  ".
         // Expected: Some("Lahore").
         assert_eq!(clean_optional("  Lahore  "), Some("Lahore".to_string()));
+    }
+
+    // ---------------------------------------------------------------
+    // map_product_db_error (DB-backed)
+    // ---------------------------------------------------------------
+
+    #[tokio::test]
+    async fn create_product_allows_optional_category_and_supplier() {
+        // Input: empty category + supplier.
+        // Expected: product saved with NULL category/supplier — no "null" error.
+        let app = owner_app().await;
+        let p = make_product(&app, "No Category Product", None).await;
+        assert_eq!(p.category_id, None);
+        assert_eq!(p.supplier_id, None);
+    }
+
+    #[tokio::test]
+    async fn create_product_duplicate_sku_gets_friendly_message() {
+        // Input: the same SKU twice.
+        // Expected: "SKU 'X' already exists", not a raw constraint string.
+        let app = owner_app().await;
+        create_product(
+            app.state(),
+            app.state(),
+            "DUP-001".to_string(),
+            "First".to_string(),
+            "".to_string(),
+            "".to_string(),
+            1,
+            1,
+            0,
+            0,
+            "pcs".to_string(),
+        )
+        .await
+        .expect("first insert");
+
+        let err = create_product(
+            app.state(),
+            app.state(),
+            "DUP-001".to_string(),
+            "Second".to_string(),
+            "".to_string(),
+            "".to_string(),
+            1,
+            1,
+            0,
+            0,
+            "pcs".to_string(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err, "SKU 'DUP-001' already exists");
+    }
+
+    #[tokio::test]
+    async fn map_product_db_error_not_null_is_friendly() {
+        // Input: a real NOT NULL constraint error.
+        // Expected: generic missing-field message, not a raw SQL string.
+        let app = owner_app().await;
+        let pool: &SqlitePool = app.state::<SqlitePool>().inner();
+        sqlx::query("CREATE TABLE tmp_required (id TEXT NOT NULL)")
+            .execute(pool)
+            .await
+            .expect("create table");
+        let err = sqlx::query("INSERT INTO tmp_required (id) VALUES (NULL)")
+            .execute(pool)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            map_product_db_error(err, "X"),
+            "A required field is missing"
+        );
+    }
+
+    #[tokio::test]
+    async fn map_product_db_error_other_is_wrapped() {
+        // Input: a generic failure.
+        // Expected: raw error preserved under a prefix.
+        let app = owner_app().await;
+        let pool: &SqlitePool = app.state::<SqlitePool>().inner();
+        let err = sqlx::query("INSERT INTO does_not_exist (x) VALUES (1)")
+            .execute(pool)
+            .await
+            .unwrap_err();
+        assert!(map_product_db_error(err, "X").starts_with("Database error:"));
     }
 
     // ---------------------------------------------------------------
@@ -2105,7 +2400,10 @@ mod tests {
     fn expiry_rejects_empty() {
         // Input: "   ".
         // Expected: Err "Expiry date is empty".
-        assert_eq!(parse_expiry_date("   ").unwrap_err(), "Expiry date is empty");
+        assert_eq!(
+            parse_expiry_date("   ").unwrap_err(),
+            "Expiry date is empty"
+        );
     }
 
     #[test]
@@ -2131,7 +2429,9 @@ mod tests {
         // Input: fresh company.
         // Expected: Ok([]).
         let app = owner_app().await;
-        let cats = list_categories(app.state(), app.state()).await.expect("list");
+        let cats = list_categories(app.state(), app.state())
+            .await
+            .expect("list");
         assert!(cats.is_empty());
     }
 
@@ -2141,7 +2441,9 @@ mod tests {
         // Expected: the category is returned.
         let app = owner_app().await;
         make_category(&app, "Electronics").await;
-        let cats = list_categories(app.state(), app.state()).await.expect("list");
+        let cats = list_categories(app.state(), app.state())
+            .await
+            .expect("list");
         assert_eq!(cats.len(), 1);
         assert_eq!(cats[0].name, "Electronics");
     }
@@ -2219,7 +2521,15 @@ mod tests {
         // Expected: Err "Access denied: employee cannot create inventory".
         let app = owner_app().await;
         let pool = app.state::<SqlitePool>();
-        let employee = insert_user(&pool, &register_owner_company_id(&app).await, "e@test.com", "Emp", "employee", true).await;
+        let employee = insert_user(
+            &pool,
+            &register_owner_company_id(&app).await,
+            "e@test.com",
+            "Emp",
+            "employee",
+            true,
+        )
+        .await;
         set_session_user(&app, employee).await;
 
         let err = create_category(
@@ -2386,7 +2696,9 @@ mod tests {
             .await
             .expect("delete");
 
-        let cats = list_categories(app.state(), app.state()).await.expect("list");
+        let cats = list_categories(app.state(), app.state())
+            .await
+            .expect("list");
         assert!(cats.is_empty(), "deleted category must disappear");
     }
 
@@ -2407,7 +2719,15 @@ mod tests {
         // Expected: Err "Access denied".
         let app = owner_app().await;
         let cat = make_category(&app, "Tools").await;
-        let employee = insert_user(&app.state::<SqlitePool>(), &register_owner_company_id(&app).await, "e@test.com", "Emp", "employee", true).await;
+        let employee = insert_user(
+            &app.state::<SqlitePool>(),
+            &register_owner_company_id(&app).await,
+            "e@test.com",
+            "Emp",
+            "employee",
+            true,
+        )
+        .await;
         set_session_user(&app, employee).await;
 
         let err = delete_category(app.state(), app.state(), cat.id.clone())
@@ -2440,7 +2760,9 @@ mod tests {
         .expect("create");
         assert_eq!(sup.email.as_deref(), Some("john@acme.com"));
 
-        let listed = list_suppliers(app.state(), app.state()).await.expect("list");
+        let listed = list_suppliers(app.state(), app.state())
+            .await
+            .expect("list");
         assert_eq!(listed.len(), 1);
 
         let updated = update_supplier(
@@ -2468,7 +2790,9 @@ mod tests {
         delete_supplier(app.state(), app.state(), sup.id.clone())
             .await
             .expect("delete");
-        let listed = list_suppliers(app.state(), app.state()).await.expect("list");
+        let listed = list_suppliers(app.state(), app.state())
+            .await
+            .expect("list");
         assert!(listed.is_empty());
     }
 
@@ -2719,7 +3043,15 @@ mod tests {
         // Input: employee logged in.
         // Expected: Err "Access denied".
         let app = owner_app().await;
-        let employee = insert_user(&app.state::<SqlitePool>(), &register_owner_company_id(&app).await, "e@test.com", "Emp", "employee", true).await;
+        let employee = insert_user(
+            &app.state::<SqlitePool>(),
+            &register_owner_company_id(&app).await,
+            "e@test.com",
+            "Emp",
+            "employee",
+            true,
+        )
+        .await;
         set_session_user(&app, employee).await;
 
         let err = create_product(
@@ -2893,6 +3225,7 @@ mod tests {
             10,
             "from supplier".to_string(),
             None,
+            None,
         )
         .await
         .expect("purchase");
@@ -2905,6 +3238,7 @@ mod tests {
             "sale".to_string(),
             -3,
             "walk-in".to_string(),
+            None,
             None,
         )
         .await
@@ -2931,6 +3265,7 @@ mod tests {
             5,
             "".to_string(),
             None,
+            None,
         )
         .await
         .unwrap_err();
@@ -2951,6 +3286,7 @@ mod tests {
             5,
             "".to_string(),
             None,
+            None,
         )
         .await
         .unwrap_err();
@@ -2959,8 +3295,9 @@ mod tests {
 
     #[tokio::test]
     async fn adjust_stock_rejects_zero_adjustment() {
-        // Input: adjustment with 0.
-        // Expected: Err "Adjustment quantity cannot be zero".
+        // Input: adjustment with 0 and no expiry date.
+        // Expected: Err — zero quantity is only meaningful as an expiry-only
+        // adjustment, which requires an expiry date.
         let app = owner_app().await;
         let p = make_product(&app, "Widget", None).await;
         let err = adjust_stock(
@@ -2971,10 +3308,185 @@ mod tests {
             0,
             "".to_string(),
             None,
+            None,
         )
         .await
         .unwrap_err();
-        assert_eq!(err, "Adjustment quantity cannot be zero");
+        assert!(
+            err.contains("Adjustment quantity cannot be zero"),
+            "got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn adjust_stock_expiry_only_attaches_to_unbatched_stock() {
+        // Input: product has 10 unbatched units; adjustment 0 with expiry.
+        // Expected: quantity stays 10; one batch covering the 10 units exists.
+        let app = owner_app().await;
+        let p = make_product(&app, "Medicine", None).await;
+
+        adjust_stock(
+            app.state(),
+            app.state(),
+            p.id.clone(),
+            "purchase".to_string(),
+            10,
+            "first batch".to_string(),
+            None,
+            None,
+        )
+        .await
+        .expect("plain stock in");
+
+        let p = adjust_stock(
+            app.state(),
+            app.state(),
+            p.id.clone(),
+            "adjustment".to_string(),
+            0,
+            "attach expiry".to_string(),
+            Some("2026-12-31".to_string()),
+            None,
+        )
+        .await
+        .expect("expiry-only adjustment");
+        assert_eq!(
+            p.quantity_in_stock, 10,
+            "expiry-only must not change quantity"
+        );
+
+        let batches = list_product_batches(app.state(), app.state(), p.id.clone())
+            .await
+            .expect("batches");
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0].expiry_date, "2026-12-31");
+        assert_eq!(batches[0].quantity, 10);
+    }
+
+    #[tokio::test]
+    async fn adjust_stock_expiry_only_rejected_when_all_batched() {
+        // Input: product already fully batched (10 units with an expiry);
+        // adjustment 0 with another expiry.
+        // Expected: Err — there is no unbatched stock left to attach it to.
+        let app = owner_app().await;
+        let p = make_product(&app, "Medicine", None).await;
+
+        adjust_stock(
+            app.state(),
+            app.state(),
+            p.id.clone(),
+            "purchase".to_string(),
+            10,
+            "".to_string(),
+            Some("2026-01-01".to_string()),
+            None,
+        )
+        .await
+        .expect("batched stock in");
+
+        let err = adjust_stock(
+            app.state(),
+            app.state(),
+            p.id.clone(),
+            "adjustment".to_string(),
+            0,
+            "".to_string(),
+            Some("2026-12-31".to_string()),
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            err.contains("already has an expiry date"),
+            "got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn adjust_stock_same_expiry_merges_into_single_batch() {
+        // Input: +5 then +5 for the same product with the same expiry date.
+        // Expected: ONE batch of 10 (not two batches), with a stable batch
+        // number and weighted-average unit cost.
+        let app = owner_app().await;
+        let p = make_product(&app, "Medicine", None).await;
+
+        adjust_stock(
+            app.state(),
+            app.state(),
+            p.id.clone(),
+            "purchase".to_string(),
+            5,
+            "first lot".to_string(),
+            Some("2026-12-31".to_string()),
+            None,
+        )
+        .await
+        .expect("first stock in");
+
+        adjust_stock(
+            app.state(),
+            app.state(),
+            p.id.clone(),
+            "purchase".to_string(),
+            5,
+            "second lot".to_string(),
+            Some("2026-12-31".to_string()),
+            None,
+        )
+        .await
+        .expect("second stock in");
+
+        let batches = list_product_batches(app.state(), app.state(), p.id.clone())
+            .await
+            .expect("batches");
+        assert_eq!(batches.len(), 1, "same expiry must stay one batch");
+        assert_eq!(batches[0].quantity, 10);
+        assert_eq!(batches[0].expiry_date, "2026-12-31");
+        assert!(
+            batches[0].batch_number.as_deref().unwrap_or("").starts_with("B-"),
+            "batch number should be generated"
+        );
+    }
+
+    #[tokio::test]
+    async fn adjust_stock_different_expiry_keeps_separate_batches() {
+        // Input: +5 expiring 2026-12-31 then +5 expiring 2027-06-30.
+        // Expected: two batches — different expiries must stay apart for FIFO.
+        let app = owner_app().await;
+        let p = make_product(&app, "Medicine", None).await;
+
+        adjust_stock(
+            app.state(),
+            app.state(),
+            p.id.clone(),
+            "purchase".to_string(),
+            5,
+            "".to_string(),
+            Some("2026-12-31".to_string()),
+            None,
+        )
+        .await
+        .expect("first expiry");
+
+        adjust_stock(
+            app.state(),
+            app.state(),
+            p.id.clone(),
+            "purchase".to_string(),
+            5,
+            "".to_string(),
+            Some("2027-06-30".to_string()),
+            None,
+        )
+        .await
+        .expect("second expiry");
+
+        let batches = list_product_batches(app.state(), app.state(), p.id.clone())
+            .await
+            .expect("batches");
+        assert_eq!(batches.len(), 2, "different expiries stay separate");
+        assert_eq!(batches[0].expiry_date, "2026-12-31");
+        assert_eq!(batches[1].expiry_date, "2027-06-30");
     }
 
     #[tokio::test]
@@ -2989,6 +3501,7 @@ mod tests {
             "purchase".to_string(),
             5,
             "".to_string(),
+            None,
             None,
         )
         .await
@@ -3010,6 +3523,7 @@ mod tests {
             5,
             "".to_string(),
             Some("not-a-date".to_string()),
+            None,
         )
         .await
         .unwrap_err();
@@ -3035,6 +3549,7 @@ mod tests {
             10,
             "batch 1".to_string(),
             Some("2026-01-01".to_string()),
+            None,
         )
         .await
         .expect("stock in with expiry");
@@ -3052,6 +3567,72 @@ mod tests {
         assert_eq!(batches.len(), 1);
         assert_eq!(batches[0].expiry_date, "2026-01-01");
         assert_eq!(batches[0].quantity, 10);
+        assert_eq!(
+            batches[0].batch_number.as_deref(),
+            Some("B-0001"),
+            "blank batch number must auto-generate B-0001"
+        );
+    }
+
+    #[tokio::test]
+    async fn adjust_stock_accepts_user_batch_number() {
+        // Input: purchase +10 with expiry AND an explicit batch number.
+        // Expected: the supplied number is stored on the batch.
+        let app = owner_app().await;
+        let p = make_product(&app, "Medicine", None).await;
+
+        adjust_stock(
+            app.state(),
+            app.state(),
+            p.id.clone(),
+            "purchase".to_string(),
+            10,
+            "LOT A".to_string(),
+            Some("2026-01-01".to_string()),
+            Some("LOT-2026-A".to_string()),
+        )
+        .await
+        .expect("stock in with named batch");
+
+        let batches = list_product_batches(app.state(), app.state(), p.id.clone())
+            .await
+            .expect("batches");
+        assert_eq!(batches[0].batch_number.as_deref(), Some("LOT-2026-A"));
+    }
+
+    #[tokio::test]
+    async fn adjust_stock_rejects_duplicate_batch_number() {
+        // Input: two purchases with the same explicit batch number.
+        // Expected: second Err "A batch with number 'X' already exists".
+        let app = owner_app().await;
+        let p = make_product(&app, "Medicine", None).await;
+
+        adjust_stock(
+            app.state(),
+            app.state(),
+            p.id.clone(),
+            "purchase".to_string(),
+            10,
+            "".to_string(),
+            Some("2026-01-01".to_string()),
+            Some("DUP-1".to_string()),
+        )
+        .await
+        .expect("first named batch");
+
+        let err = adjust_stock(
+            app.state(),
+            app.state(),
+            p.id.clone(),
+            "purchase".to_string(),
+            5,
+            "".to_string(),
+            Some("2026-06-01".to_string()),
+            Some("DUP-1".to_string()),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err, "A batch with number 'DUP-1' already exists");
     }
 
     #[tokio::test]
@@ -3070,6 +3651,7 @@ mod tests {
             10,
             "".to_string(),
             Some("2026-01-01".to_string()),
+            None,
         )
         .await
         .expect("batch a");
@@ -3082,6 +3664,7 @@ mod tests {
             10,
             "".to_string(),
             Some("2026-06-01".to_string()),
+            None,
         )
         .await
         .expect("batch b");
@@ -3093,6 +3676,7 @@ mod tests {
             "sale".to_string(),
             -5,
             "".to_string(),
+            None,
             None,
         )
         .await
@@ -3126,6 +3710,7 @@ mod tests {
             5,
             "".to_string(),
             Some(yesterday.clone()),
+            None,
         )
         .await
         .expect("expired batch");
@@ -3138,6 +3723,7 @@ mod tests {
             5,
             "".to_string(),
             Some(tomorrow.clone()),
+            None,
         )
         .await
         .expect("expiring batch");
@@ -3170,6 +3756,7 @@ mod tests {
             10,
             "".to_string(),
             Some("2025-01-01".to_string()),
+            None,
         )
         .await
         .expect("batch");
@@ -3216,6 +3803,7 @@ mod tests {
             10,
             "".to_string(),
             Some("2025-01-01".to_string()),
+            None,
         )
         .await
         .expect("batch");
@@ -3225,14 +3813,26 @@ mod tests {
             .expect("batches");
         let batch = &batches[0];
 
-        let err = write_off_batch(app.state(), app.state(), batch.id.clone(), 0, "x".to_string())
-            .await
-            .unwrap_err();
+        let err = write_off_batch(
+            app.state(),
+            app.state(),
+            batch.id.clone(),
+            0,
+            "x".to_string(),
+        )
+        .await
+        .unwrap_err();
         assert!(err.contains("Invalid write-off quantity"), "got: {err}");
 
-        let err = write_off_batch(app.state(), app.state(), batch.id.clone(), 99, "x".to_string())
-            .await
-            .unwrap_err();
+        let err = write_off_batch(
+            app.state(),
+            app.state(),
+            batch.id.clone(),
+            99,
+            "x".to_string(),
+        )
+        .await
+        .unwrap_err();
         assert!(err.contains("Invalid write-off quantity"), "got: {err}");
     }
 
@@ -3277,7 +3877,9 @@ mod tests {
         let p = make_product(&app, "Widget", None).await;
 
         let mut tx = pool.begin().await.unwrap();
-        deduct_fifo(&mut tx, "company-x", &p.id, 5).await.expect("noop");
+        deduct_fifo(&mut tx, "company-x", &p.id, 5)
+            .await
+            .expect("noop");
         tx.commit().await.unwrap();
     }
 
@@ -3297,14 +3899,14 @@ mod tests {
     #[tokio::test]
     async fn add_batch_inserts_row() {
         // Input: add_batch for a company/product.
-        // Expected: Ok; the row exists afterwards.
+        // Expected: Ok; the row exists afterwards with a generated number.
         let app = owner_app().await;
         let pool = app.state::<SqlitePool>();
         let p = make_product(&app, "Medicine", None).await;
         let cid = register_owner_company_id(&app).await;
 
         let mut tx = pool.begin().await.unwrap();
-        add_batch(&mut tx, &cid, &p.id, 7, 500, "2026-03-01", "purchase")
+        add_batch(&mut tx, &cid, &p.id, 7, 500, "2026-03-01", "purchase", None)
             .await
             .expect("add batch");
         tx.commit().await.unwrap();
@@ -3315,6 +3917,79 @@ mod tests {
         assert_eq!(batches.len(), 1);
         assert_eq!(batches[0].quantity, 7);
         assert_eq!(batches[0].unit_cost, 500);
+        assert_eq!(
+            batches[0].batch_number.as_deref(),
+            Some("B-0001"),
+            "blank number must auto-generate a sequential batch number"
+        );
+    }
+
+    #[tokio::test]
+    async fn add_batch_keeps_user_supplied_number() {
+        // Input: add_batch with an explicit "LOT-7".
+        // Expected: the supplied number is stored verbatim.
+        let app = owner_app().await;
+        let pool = app.state::<SqlitePool>();
+        let p = make_product(&app, "Medicine", None).await;
+        let cid = register_owner_company_id(&app).await;
+
+        let mut tx = pool.begin().await.unwrap();
+        add_batch(
+            &mut tx,
+            &cid,
+            &p.id,
+            7,
+            500,
+            "2026-03-01",
+            "purchase",
+            Some("LOT-7"),
+        )
+        .await
+        .expect("add batch");
+        tx.commit().await.unwrap();
+
+        let batches = list_product_batches(app.state(), app.state(), p.id.clone())
+            .await
+            .expect("batches");
+        assert_eq!(batches[0].batch_number.as_deref(), Some("LOT-7"));
+    }
+
+    #[tokio::test]
+    async fn add_batch_rejects_duplicate_number() {
+        // Input: two add_batch calls with the same explicit number.
+        // Expected: second Err "A batch with number 'X' already exists".
+        let app = owner_app().await;
+        let pool = app.state::<SqlitePool>();
+        let p = make_product(&app, "Medicine", None).await;
+        let cid = register_owner_company_id(&app).await;
+
+        let mut tx = pool.begin().await.unwrap();
+        add_batch(
+            &mut tx,
+            &cid,
+            &p.id,
+            5,
+            500,
+            "2026-03-01",
+            "purchase",
+            Some("DUP"),
+        )
+        .await
+        .expect("first add batch");
+        let err = add_batch(
+            &mut tx,
+            &cid,
+            &p.id,
+            3,
+            500,
+            "2026-03-02",
+            "purchase",
+            Some("DUP"),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err, "A batch with number 'DUP' already exists");
+        tx.rollback().await.unwrap();
     }
 
     /// Extracts the current user's company id from the DB (owner registered).

@@ -15,6 +15,8 @@
 use crate::commands::audit::log_audit;
 use crate::commands::auth::{require_current_user, SessionState};
 use crate::commands::permissions::{check_permission, soft_delete};
+use qrcode::render::svg;
+use qrcode::QrCode;
 use serde::Serialize;
 use sqlx::SqlitePool;
 use tauri::State;
@@ -1016,6 +1018,26 @@ pub async fn finalize_invoice(
     .await
     .map_err(|e| format!("Finalize error: {e}"))?;
 
+    // Double-entry: Dr Accounts Receivable / Cr Sales Revenue.
+    let (invoice_number, invoice_date) = sqlx::query_as::<_, (String, String)>(
+        "SELECT invoice_number, invoice_date FROM invoices WHERE id = ?",
+    )
+    .bind(&invoice_id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|e| format!("Invoice lookup error: {e}"))?;
+
+    crate::commands::ledger::post_invoice_sale(
+        &mut tx,
+        company_id,
+        &invoice_id,
+        &invoice_date,
+        &invoice_number,
+        invoice.2,
+        &current_user.id,
+    )
+    .await?;
+
     tx.commit()
         .await
         .map_err(|e| format!("Commit error: {e}"))?;
@@ -1149,6 +1171,25 @@ pub async fn record_payment(
     .execute(&mut *tx)
     .await
     .map_err(|e| format!("Invoice update error: {e}"))?;
+
+    // Double-entry: Dr Cash / Cr Accounts Receivable.
+    let invoice_number =
+        sqlx::query_scalar::<_, String>("SELECT invoice_number FROM invoices WHERE id = ?")
+            .bind(&invoice_id)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|e| format!("Invoice lookup error: {e}"))?;
+
+    crate::commands::ledger::post_payment_collection(
+        &mut tx,
+        company_id,
+        &payment_id,
+        &payment_date,
+        &invoice_number,
+        amount,
+        &current_user.id,
+    )
+    .await?;
 
     tx.commit()
         .await
@@ -1474,10 +1515,27 @@ pub async fn generate_invoice_html(
         payments_html.push_str("</table></div>");
     }
 
-    // Build FBR section
+    // Build FBR section with a verification QR code.
+    // The QR payload follows the FBR e-invoicing field set (invoice number,
+    // date, total, tax, type). Full FBR IRN submission/queueing is a later
+    // milestone — the QR today carries the same data the register will need.
     let mut fbr_section = String::new();
     if settings.company_ntn.is_some() || settings.company_strn.is_some() {
-        fbr_section.push_str(r#"<div style="background:#fff3cd;border:1px solid #ffc107;padding:10px;margin:10px 0;border-radius:4px">"#);
+        let fbr_payload = serde_json::json!({
+            "InvoiceNo": invoice.invoice_number,
+            "Date": invoice.invoice_date,
+            "Total": fmt_paisa(invoice.grand_total),
+            "Tax": fmt_paisa(invoice.tax_total),
+            "Type": "INVOICE",
+        });
+        let qr_svg = qr_svg(
+            &serde_json::to_string(&fbr_payload).unwrap_or_default(),
+            100,
+        );
+
+        fbr_section.push_str(r#"<div style="background:#fff8e1;border:1px solid #f0c93f;padding:10px;margin:10px 0;border-radius:4px">"#);
+        fbr_section.push_str(r#"<div style="display:flex;align-items:center;gap:14px">"#);
+        fbr_section.push_str(r#"<div style="flex:1">"#);
         fbr_section.push_str("<strong>FBR Tax Information</strong><br>");
         if let Some(ref ntn) = settings.company_ntn {
             fbr_section.push_str(&format!("Company NTN: {}<br>", ntn));
@@ -1492,6 +1550,13 @@ pub async fn generate_invoice_html(
         if let Some(ref c) = customer.cnic {
             fbr_section.push_str(&format!("Buyer CNIC: {}<br>", c));
         }
+        fbr_section.push_str("</div>");
+        if !qr_svg.is_empty() {
+            fbr_section.push_str(&format!(
+                r#"<div style="flex-shrink:0;text-align:center">{qr_svg}<div style="font-size:9px;color:#8a7a2a;margin-top:2px">Verify with FBR</div></div>"#
+            ));
+        }
+        fbr_section.push_str("</div>");
         fbr_section.push_str("</div>");
     }
 
@@ -1802,9 +1867,21 @@ pub async fn generate_invoice_html(
     Ok(path_str)
 }
 
+/// Renders a QR code payload as an inline SVG at least `size` pixels wide.
+/// Returns an empty string if the payload cannot be encoded.
+fn qr_svg(payload: &str, size: u32) -> String {
+    match QrCode::new(payload.as_bytes()) {
+        Ok(code) => code
+            .render::<svg::Color>()
+            .min_dimensions(size, size)
+            .quiet_zone(true)
+            .build(),
+        Err(_) => String::new(),
+    }
+}
+
 /// Formats a Unix timestamp into a readable date string
 fn format_timestamp(secs: u64) -> String {
-    // Simple date calculation (UTC)
     let days = secs / 86400;
     let time_of_day = secs % 86400;
     let hours = time_of_day / 3600;
@@ -1905,9 +1982,7 @@ async fn generate_invoice_number(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::test_helpers::{
-        insert_user, register_owner, set_session_user, setup_app,
-    };
+    use crate::commands::test_helpers::{insert_user, register_owner, set_session_user, setup_app};
     use tauri::Manager;
     use uuid::Uuid;
 
@@ -2029,6 +2104,33 @@ mod tests {
         assert_eq!(clean_optional(""), None);
     }
 
+    // ---------------------------------------------------------------
+    // qr_svg (pure)
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn qr_svg_renders_scalable_markup() {
+        // Input: a short payload.
+        // Expected: a non-empty SVG at least 100px wide with a viewBox.
+        let svg = qr_svg("INV-0001:100.00", 100);
+        assert!(svg.contains("<svg"), "got: {svg}");
+        let width = svg
+            .split(r#"width=""#)
+            .nth(1)
+            .and_then(|s| s.split('"').next())
+            .and_then(|s| s.parse::<u32>().ok());
+        assert!(width.is_some_and(|w| w >= 100), "got width: {width:?}");
+        assert!(svg.contains("viewBox"), "got: {svg}");
+    }
+
+    #[test]
+    fn qr_svg_handles_large_payload() {
+        // Input: a payload larger than any QR version supports.
+        // Expected: empty string, no panic.
+        let huge = "x".repeat(10_000);
+        assert_eq!(qr_svg(&huge, 100), "");
+    }
+
     #[test]
     fn clean_optional_trims() {
         // Input: "  abc  ".
@@ -2099,7 +2201,10 @@ mod tests {
     fn line_amounts_no_discount_no_tax() {
         // Input: qty 3, price 200, tax 0, no discount.
         // Expected: (0, 0, 0, 600).
-        assert_eq!(compute_line_amounts(3, 200, 0, "percent", 0), (0, 0, 0, 600));
+        assert_eq!(
+            compute_line_amounts(3, 200, 0, "percent", 0),
+            (0, 0, 0, 600)
+        );
     }
 
     // ---------------------------------------------------------------
@@ -2220,10 +2325,7 @@ mod tests {
         )
         .await
         .unwrap_err();
-        assert_eq!(
-            err,
-            "Buyer type must be 'registered' or 'unregistered'"
-        );
+        assert_eq!(err, "Buyer type must be 'registered' or 'unregistered'");
     }
 
     #[tokio::test]
@@ -2231,7 +2333,15 @@ mod tests {
         // Input: employee logged in (invoices/view only).
         // Expected: Err "Access denied".
         let app = owner_app().await;
-        let employee = insert_user(&app.state::<SqlitePool>(), &company_id(&app).await, "e@test.com", "Emp", "employee", true).await;
+        let employee = insert_user(
+            &app.state::<SqlitePool>(),
+            &company_id(&app).await,
+            "e@test.com",
+            "Emp",
+            "employee",
+            true,
+        )
+        .await;
         set_session_user(&app, employee).await;
 
         let err = create_customer(
@@ -2258,14 +2368,18 @@ mod tests {
         let app = owner_app().await;
         let c = make_customer(&app, "Acme").await;
 
-        let listed = list_customers(app.state(), app.state()).await.expect("list");
+        let listed = list_customers(app.state(), app.state())
+            .await
+            .expect("list");
         assert_eq!(listed.len(), 1);
 
         delete_customer(app.state(), app.state(), c.id.clone())
             .await
             .expect("delete");
 
-        let listed = list_customers(app.state(), app.state()).await.expect("list");
+        let listed = list_customers(app.state(), app.state())
+            .await
+            .expect("list");
         assert!(listed.is_empty());
     }
 
@@ -2341,7 +2455,15 @@ mod tests {
         // Input: employee logged in.
         // Expected: Err "Access denied".
         let app = owner_app().await;
-        let employee = insert_user(&app.state::<SqlitePool>(), &company_id(&app).await, "e@test.com", "Emp", "employee", true).await;
+        let employee = insert_user(
+            &app.state::<SqlitePool>(),
+            &company_id(&app).await,
+            "e@test.com",
+            "Emp",
+            "employee",
+            true,
+        )
+        .await;
         set_session_user(&app, employee).await;
 
         let err = create_invoice(
@@ -2501,9 +2623,14 @@ mod tests {
             .expect("get");
         assert_eq!(details.invoice.subtotal, 5000);
 
-        let items = remove_invoice_item(app.state(), app.state(), inv.id.clone(), items[0].id.clone())
-            .await
-            .expect("remove");
+        let items = remove_invoice_item(
+            app.state(),
+            app.state(),
+            inv.id.clone(),
+            items[0].id.clone(),
+        )
+        .await
+        .expect("remove");
         assert!(items.is_empty());
 
         let details = get_invoice(app.state(), app.state(), inv.id.clone())
@@ -2600,10 +2727,13 @@ mod tests {
             .expect("products");
         assert_eq!(products[0].quantity_in_stock, 8);
 
-        let movements =
-            crate::commands::inventory::list_stock_movements(app.state(), app.state(), product.id.clone())
-                .await
-                .expect("movements");
+        let movements = crate::commands::inventory::list_stock_movements(
+            app.state(),
+            app.state(),
+            product.id.clone(),
+        )
+        .await
+        .expect("movements");
         assert!(movements.iter().any(|m| m.movement_type == "sale"));
     }
 
@@ -2672,7 +2802,15 @@ mod tests {
         let inv = make_invoice(&app, &customer.id).await;
         add_item(&app, &inv.id, &p.id, 1, 100, 0).await;
 
-        let employee = insert_user(&app.state::<SqlitePool>(), &company_id(&app).await, "e@test.com", "Emp", "employee", true).await;
+        let employee = insert_user(
+            &app.state::<SqlitePool>(),
+            &company_id(&app).await,
+            "e@test.com",
+            "Emp",
+            "employee",
+            true,
+        )
+        .await;
         set_session_user(&app, employee).await;
 
         let err = finalize_invoice(app.state(), app.state(), inv.id.clone())
@@ -2816,10 +2954,7 @@ mod tests {
         )
         .await
         .unwrap_err();
-        assert_eq!(
-            err,
-            "Cannot record payment for draft or cancelled invoices"
-        );
+        assert_eq!(err, "Cannot record payment for draft or cancelled invoices");
     }
 
     #[tokio::test]
@@ -2928,7 +3063,15 @@ mod tests {
         // Input: employee logged in (no settings/edit).
         // Expected: Err "Access denied".
         let app = owner_app().await;
-        let employee = insert_user(&app.state::<SqlitePool>(), &company_id(&app).await, "e@test.com", "Emp", "employee", true).await;
+        let employee = insert_user(
+            &app.state::<SqlitePool>(),
+            &company_id(&app).await,
+            "e@test.com",
+            "Emp",
+            "employee",
+            true,
+        )
+        .await;
         set_session_user(&app, employee).await;
 
         let err = update_invoice_settings(

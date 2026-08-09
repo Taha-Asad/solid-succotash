@@ -21,7 +21,7 @@ pub struct Notification {
     pub severity: String,          // "info", "warning", "critical"
     pub title: String,
     pub message: String,
-    pub resource_type: String,     // "product", "invoice", "batch"
+    pub resource_type: String, // "product", "invoice", "batch"
     pub resource_id: Option<String>,
     pub created_at: String,
 }
@@ -50,7 +50,11 @@ pub async fn get_notifications(
         notifications.push(Notification {
             id: format!("low-{id}"),
             notification_type: "low_stock".to_string(),
-            severity: if *qty <= 3 { "critical".to_string() } else { "warning".to_string() },
+            severity: if *qty <= 3 {
+                "critical".to_string()
+            } else {
+                "warning".to_string()
+            },
             title: format!("Low stock: {name}"),
             message: format!("{sku} has only {qty} units remaining"),
             resource_type: "product".to_string(),
@@ -90,7 +94,7 @@ pub async fn get_notifications(
         WHERE sb.company_id = ? AND sb.quantity > 0
         ORDER BY sb.expiry_date ASC
         LIMIT 20
-        "#
+        "#,
     )
     .bind(company_id)
     .fetch_all(pool.inner())
@@ -99,7 +103,11 @@ pub async fn get_notifications(
 
     for (id, name, sku, expiry, qty) in &expiring {
         let today = today_str();
-        let severity = if *expiry <= today { "critical".to_string() } else { "warning".to_string() };
+        let severity = if *expiry <= today {
+            "critical".to_string()
+        } else {
+            "warning".to_string()
+        };
         let title = if *expiry <= today {
             format!("EXPIRED: {name}")
         } else {
@@ -127,7 +135,7 @@ pub async fn get_notifications(
         AND i.due_date IS NOT NULL AND i.due_date < ?
         ORDER BY i.due_date ASC
         LIMIT 20
-        "#
+        "#,
     )
     .bind(company_id)
     .bind(today_str())
@@ -150,7 +158,11 @@ pub async fn get_notifications(
 
     // Sort: critical first, then warning, then info
     notifications.sort_by(|a, b| {
-        let order = |s: &str| match s { "critical" => 0, "warning" => 1, _ => 2 };
+        let order = |s: &str| match s {
+            "critical" => 0,
+            "warning" => 1,
+            _ => 2,
+        };
         order(&a.severity).cmp(&order(&b.severity))
     });
 
@@ -169,13 +181,39 @@ fn today_str() -> String {
     let mut y = 1970u64;
     let mut rem = days;
     loop {
-        let d = if (y%4==0&&y%100!=0)||(y%400==0) {366} else {365};
-        if rem < d { break; }
-        rem -= d; y += 1;
+        let d = if (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0) {
+            366
+        } else {
+            365
+        };
+        if rem < d {
+            break;
+        }
+        rem -= d;
+        y += 1;
     }
-    let leap = (y%4==0&&y%100!=0)||(y%400==0);
-    let md = [31,if leap{29}else{28},31,30,31,30,31,31,30,31,30,31];
+    let leap = (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0);
+    let md = [
+        31,
+        if leap { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
     let mut mo = 1u64;
-    for &d in &md { if rem < d { break; } rem -= d; mo += 1; }
+    for &d in &md {
+        if rem < d {
+            break;
+        }
+        rem -= d;
+        mo += 1;
+    }
     format!("{:04}-{:02}-{:02}", y, mo, rem + 1)
 }

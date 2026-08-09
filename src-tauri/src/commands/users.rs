@@ -8,14 +8,7 @@ use crate::commands::auth::{
     validate_person_name, PublicUser, SessionState,
 };
 use crate::commands::permissions::check_permission;
-
-fn validate_managed_role(role: &str) -> Result<String, String> {
-    match role.trim().to_lowercase().as_str() {
-        "admin" => Ok("admin".to_string()),
-        "employee" => Ok("employee".to_string()),
-        _ => Err("Role must be either admin or employee".to_string()),
-    }
-}
+use crate::commands::roles::{is_builtin_role, resolve_role};
 
 fn get_company_id(user: &PublicUser) -> Result<String, String> {
     user.company_id
@@ -62,9 +55,7 @@ pub async fn list_company_users(
 ) -> Result<Vec<PublicUser>, String> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
 
-    if current_user.role != "owner" && current_user.role != "admin" {
-        return Err("Only the owner or an admin can view company users".to_string());
-    }
+    check_permission(pool.inner(), &current_user.role, "users", "view").await?;
 
     let company_id = get_company_id(&current_user)?;
 
@@ -113,14 +104,18 @@ pub async fn create_company_user(
 
     check_permission(pool.inner(), &current_user.role, "users", "create").await?;
 
-    let role = validate_managed_role(&role)?;
+    let company_id = get_company_id(&current_user)?;
+    let role = resolve_role(pool.inner(), &company_id, &role).await?;
 
-    // Admins may create employees, but only the owner may create admins.
-    if current_user.role == "admin" && role != "employee" {
+    // Admins may create employees, but only the owner may create
+    // admins or assign custom roles.
+    if current_user.role == "admin" && role != "employee" && !is_builtin_role(&role) {
+        return Err("An admin may only create employee accounts".to_string());
+    }
+    if current_user.role == "admin" && role == "admin" {
         return Err("An admin may only create employee accounts".to_string());
     }
 
-    let company_id = get_company_id(&current_user)?;
     let email = normalize_email(&email)?;
     let full_name = validate_person_name(&full_name)?;
 
@@ -187,12 +182,16 @@ pub async fn update_company_user_role(
     }
 
     let company_id = get_company_id(&current_user)?;
-    let role = validate_managed_role(&role)?;
+    let role = resolve_role(pool.inner(), &company_id, &role).await?;
 
     let target_user = fetch_company_user(pool.inner(), &company_id, &user_id).await?;
 
     if target_user.role == "owner" {
         return Err("The company owner role cannot be changed by this command".to_string());
+    }
+
+    if role == "owner" {
+        return Err("You cannot assign the owner role to another user".to_string());
     }
 
     sqlx::query(
@@ -311,31 +310,51 @@ mod tests {
     use uuid::Uuid;
 
     // ---------------------------------------------------------------
-    // validate_managed_role (pure)
+    // resolve_role (async, DB-backed)
     // ---------------------------------------------------------------
 
-    #[test]
-    fn managed_role_accepts_admin_case_insensitive() {
+    #[tokio::test]
+    async fn resolve_role_accepts_builtin_admin() {
         // Input: "Admin".
         // Expected: Ok("admin").
-        assert_eq!(validate_managed_role("Admin").unwrap(), "admin");
+        let app = setup_app().await;
+        let owner = register_owner(&app, "owner@test.com").await;
+        let company_id = owner.company_id.clone().unwrap();
+        let result = resolve_role(app.state::<SqlitePool>().inner(), &company_id, "Admin").await;
+        assert_eq!(result.unwrap(), "admin");
     }
 
-    #[test]
-    fn managed_role_accepts_employee() {
-        // Input: " employee ".
-        // Expected: Ok("employee") — trimmed.
-        assert_eq!(validate_managed_role(" employee ").unwrap(), "employee");
+    #[tokio::test]
+    async fn resolve_role_accepts_custom_role_after_creation() {
+        let app = setup_app().await;
+        let owner = register_owner(&app, "owner@test.com").await;
+        let company_id = owner.company_id.clone().unwrap();
+        crate::commands::roles::create_custom_role(
+            app.state(),
+            app.state(),
+            "Sales Manager".to_string(),
+            None,
+        )
+        .await
+        .expect("create role");
+        let result = resolve_role(
+            app.state::<SqlitePool>().inner(),
+            &company_id,
+            "Sales Manager",
+        )
+        .await;
+        assert_eq!(result.unwrap(), "Sales Manager");
     }
 
-    #[test]
-    fn managed_role_rejects_other() {
-        // Input: "manager".
-        // Expected: Err "Role must be either admin or employee".
-        assert_eq!(
-            validate_managed_role("manager").unwrap_err(),
-            "Role must be either admin or employee"
-        );
+    #[tokio::test]
+    async fn resolve_role_rejects_unknown() {
+        let app = setup_app().await;
+        let owner = register_owner(&app, "owner@test.com").await;
+        let company_id = owner.company_id.clone().unwrap();
+        let err = resolve_role(app.state::<SqlitePool>().inner(), &company_id, "manager")
+            .await
+            .unwrap_err();
+        assert!(err.contains("Unknown role"));
     }
 
     // ---------------------------------------------------------------
@@ -387,7 +406,15 @@ mod tests {
         // Expected: Ok(user).
         let app = setup_app().await;
         let owner = register_owner(&app, "owner@test.com").await;
-        let employee = insert_user(&app.state::<SqlitePool>(), owner.company_id.as_deref().unwrap(), "e@test.com", "Emp", "employee", true).await;
+        let employee = insert_user(
+            &app.state::<SqlitePool>(),
+            owner.company_id.as_deref().unwrap(),
+            "e@test.com",
+            "Emp",
+            "employee",
+            true,
+        )
+        .await;
 
         let found = fetch_company_user(
             &app.state::<SqlitePool>(),
@@ -405,11 +432,23 @@ mod tests {
         // Expected: Err "Company user was not found".
         let app = setup_app().await;
         let owner = register_owner(&app, "owner@test.com").await;
-        let employee = insert_user(&app.state::<SqlitePool>(), owner.company_id.as_deref().unwrap(), "e@test.com", "Emp", "employee", true).await;
+        let employee = insert_user(
+            &app.state::<SqlitePool>(),
+            owner.company_id.as_deref().unwrap(),
+            "e@test.com",
+            "Emp",
+            "employee",
+            true,
+        )
+        .await;
 
-        let err = fetch_company_user(&app.state::<SqlitePool>(), "some-other-company", &employee.id)
-            .await
-            .unwrap_err();
+        let err = fetch_company_user(
+            &app.state::<SqlitePool>(),
+            "some-other-company",
+            &employee.id,
+        )
+        .await
+        .unwrap_err();
         assert_eq!(err, "Company user was not found");
     }
 
@@ -444,7 +483,9 @@ mod tests {
         insert_user(&pool, cid, "a@test.com", "Alice", "admin", true).await;
         insert_user(&pool, cid, "b@test.com", "Bob", "employee", true).await;
 
-        let users = list_company_users(app.state(), app.state()).await.expect("list");
+        let users = list_company_users(app.state(), app.state())
+            .await
+            .expect("list");
         assert_eq!(users.len(), 3);
         assert_eq!(users[0].role, "owner");
     }
@@ -454,7 +495,9 @@ mod tests {
         // Input: no session.
         // Expected: Err "You must log in first".
         let app = setup_app().await;
-        let err = list_company_users(app.state(), app.state()).await.unwrap_err();
+        let err = list_company_users(app.state(), app.state())
+            .await
+            .unwrap_err();
         assert!(err.contains("log in first"), "got: {err}");
     }
 
@@ -465,11 +508,21 @@ mod tests {
         let app = setup_app().await;
         let owner = register_owner(&app, "owner@test.com").await;
         let pool = app.state::<SqlitePool>();
-        let employee = insert_user(&pool, owner.company_id.as_deref().unwrap(), "e@test.com", "Emp", "employee", true).await;
+        let employee = insert_user(
+            &pool,
+            owner.company_id.as_deref().unwrap(),
+            "e@test.com",
+            "Emp",
+            "employee",
+            true,
+        )
+        .await;
         set_session_user(&app, employee).await;
 
-        let err = list_company_users(app.state(), app.state()).await.unwrap_err();
-        assert!(err.contains("Only the owner or an admin"), "got: {err}");
+        let err = list_company_users(app.state(), app.state())
+            .await
+            .unwrap_err();
+        assert!(err.contains("Access denied"), "got: {err}");
     }
 
     #[tokio::test]
@@ -501,11 +554,10 @@ mod tests {
         .unwrap();
         set_session_user(&app, session_user).await;
 
-        let err = list_company_users(app.state(), app.state()).await.unwrap_err();
-        assert!(
-            err.contains("no longer active"),
-            "got: {err}"
-        );
+        let err = list_company_users(app.state(), app.state())
+            .await
+            .unwrap_err();
+        assert!(err.contains("no longer active"), "got: {err}");
     }
 
     // ---------------------------------------------------------------
@@ -560,7 +612,15 @@ mod tests {
         let app = setup_app().await;
         let owner = register_owner(&app, "owner@test.com").await;
         let pool = app.state::<SqlitePool>();
-        let admin = insert_user(&pool, owner.company_id.as_deref().unwrap(), "admin@test.com", "Adm", "admin", true).await;
+        let admin = insert_user(
+            &pool,
+            owner.company_id.as_deref().unwrap(),
+            "admin@test.com",
+            "Adm",
+            "admin",
+            true,
+        )
+        .await;
         set_session_user(&app, admin).await;
 
         let created = create_company_user(
@@ -583,7 +643,15 @@ mod tests {
         let app = setup_app().await;
         let owner = register_owner(&app, "owner@test.com").await;
         let pool = app.state::<SqlitePool>();
-        let admin = insert_user(&pool, owner.company_id.as_deref().unwrap(), "admin@test.com", "Adm", "admin", true).await;
+        let admin = insert_user(
+            &pool,
+            owner.company_id.as_deref().unwrap(),
+            "admin@test.com",
+            "Adm",
+            "admin",
+            true,
+        )
+        .await;
         set_session_user(&app, admin).await;
 
         let err = create_company_user(
@@ -624,7 +692,15 @@ mod tests {
         let app = setup_app().await;
         let owner = register_owner(&app, "owner@test.com").await;
         let pool = app.state::<SqlitePool>();
-        let employee = insert_user(&pool, owner.company_id.as_deref().unwrap(), "e@test.com", "Emp", "employee", true).await;
+        let employee = insert_user(
+            &pool,
+            owner.company_id.as_deref().unwrap(),
+            "e@test.com",
+            "Emp",
+            "employee",
+            true,
+        )
+        .await;
         set_session_user(&app, employee).await;
 
         let err = create_company_user(
@@ -657,7 +733,10 @@ mod tests {
         )
         .await
         .unwrap_err();
-        assert_eq!(err, "Role must be either admin or employee");
+        assert_eq!(
+            err,
+            "Unknown role 'manager'. Choose a built-in role or an existing custom role."
+        );
     }
 
     #[tokio::test]
@@ -711,7 +790,15 @@ mod tests {
         let app = setup_app().await;
         let owner = register_owner(&app, "owner@test.com").await;
         let pool = app.state::<SqlitePool>();
-        let employee = insert_user(&pool, owner.company_id.as_deref().unwrap(), "e@test.com", "Emp", "employee", true).await;
+        let employee = insert_user(
+            &pool,
+            owner.company_id.as_deref().unwrap(),
+            "e@test.com",
+            "Emp",
+            "employee",
+            true,
+        )
+        .await;
 
         let updated = update_company_user_role(
             app.state(),
@@ -731,7 +818,15 @@ mod tests {
         let app = setup_app().await;
         let owner = register_owner(&app, "owner@test.com").await;
         let pool = app.state::<SqlitePool>();
-        let admin = insert_user(&pool, owner.company_id.as_deref().unwrap(), "a@test.com", "Adm", "admin", true).await;
+        let admin = insert_user(
+            &pool,
+            owner.company_id.as_deref().unwrap(),
+            "a@test.com",
+            "Adm",
+            "admin",
+            true,
+        )
+        .await;
 
         let updated = update_company_user_role(
             app.state(),
@@ -751,8 +846,24 @@ mod tests {
         let app = setup_app().await;
         let owner = register_owner(&app, "owner@test.com").await;
         let pool = app.state::<SqlitePool>();
-        let employee = insert_user(&pool, owner.company_id.as_deref().unwrap(), "e@test.com", "Emp", "employee", true).await;
-        let admin = insert_user(&pool, owner.company_id.as_deref().unwrap(), "a@test.com", "Adm", "admin", true).await;
+        let employee = insert_user(
+            &pool,
+            owner.company_id.as_deref().unwrap(),
+            "e@test.com",
+            "Emp",
+            "employee",
+            true,
+        )
+        .await;
+        let admin = insert_user(
+            &pool,
+            owner.company_id.as_deref().unwrap(),
+            "a@test.com",
+            "Adm",
+            "admin",
+            true,
+        )
+        .await;
         set_session_user(&app, admin).await;
 
         let err = update_company_user_role(
@@ -810,7 +921,15 @@ mod tests {
         let app = setup_app().await;
         let owner = register_owner(&app, "owner@test.com").await;
         let pool = app.state::<SqlitePool>();
-        let employee = insert_user(&pool, owner.company_id.as_deref().unwrap(), "e@test.com", "Emp", "employee", true).await;
+        let employee = insert_user(
+            &pool,
+            owner.company_id.as_deref().unwrap(),
+            "e@test.com",
+            "Emp",
+            "employee",
+            true,
+        )
+        .await;
 
         let err = update_company_user_role(
             app.state(),
@@ -820,7 +939,10 @@ mod tests {
         )
         .await
         .unwrap_err();
-        assert_eq!(err, "Role must be either admin or employee");
+        assert_eq!(
+            err,
+            "Unknown role 'manager'. Choose a built-in role or an existing custom role."
+        );
     }
 
     #[tokio::test]
@@ -852,16 +974,19 @@ mod tests {
         let app = setup_app().await;
         let owner = register_owner(&app, "owner@test.com").await;
         let pool = app.state::<SqlitePool>();
-        let employee = insert_user(&pool, owner.company_id.as_deref().unwrap(), "e@test.com", "Emp", "employee", true).await;
-
-        let updated = set_company_user_active(
-            app.state(),
-            app.state(),
-            employee.id.clone(),
-            false,
+        let employee = insert_user(
+            &pool,
+            owner.company_id.as_deref().unwrap(),
+            "e@test.com",
+            "Emp",
+            "employee",
+            true,
         )
-        .await
-        .expect("deactivate");
+        .await;
+
+        let updated = set_company_user_active(app.state(), app.state(), employee.id.clone(), false)
+            .await
+            .expect("deactivate");
         assert!(!updated.is_active);
     }
 
@@ -872,16 +997,19 @@ mod tests {
         let app = setup_app().await;
         let owner = register_owner(&app, "owner@test.com").await;
         let pool = app.state::<SqlitePool>();
-        let employee = insert_user(&pool, owner.company_id.as_deref().unwrap(), "e@test.com", "Emp", "employee", false).await;
-
-        let updated = set_company_user_active(
-            app.state(),
-            app.state(),
-            employee.id.clone(),
-            true,
+        let employee = insert_user(
+            &pool,
+            owner.company_id.as_deref().unwrap(),
+            "e@test.com",
+            "Emp",
+            "employee",
+            false,
         )
-        .await
-        .expect("reactivate");
+        .await;
+
+        let updated = set_company_user_active(app.state(), app.state(), employee.id.clone(), true)
+            .await
+            .expect("reactivate");
         assert!(updated.is_active);
     }
 
@@ -890,14 +1018,10 @@ mod tests {
         // Input: no session.
         // Expected: Err "You must log in first".
         let app = setup_app().await;
-        let err = set_company_user_active(
-            app.state(),
-            app.state(),
-            Uuid::new_v4().to_string(),
-            false,
-        )
-        .await
-        .unwrap_err();
+        let err =
+            set_company_user_active(app.state(), app.state(), Uuid::new_v4().to_string(), false)
+                .await
+                .unwrap_err();
         assert!(err.contains("log in first"), "got: {err}");
     }
 
@@ -908,15 +1032,13 @@ mod tests {
         let app = setup_app().await;
         let owner = register_owner(&app, "owner@test.com").await;
 
-        let err = set_company_user_active(
-            app.state(),
-            app.state(),
-            owner.id.clone(),
-            false,
-        )
-        .await
-        .unwrap_err();
-        assert_eq!(err, "You cannot deactivate your own currently logged-in account");
+        let err = set_company_user_active(app.state(), app.state(), owner.id.clone(), false)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            err,
+            "You cannot deactivate your own currently logged-in account"
+        );
     }
 
     #[tokio::test]
@@ -932,17 +1054,20 @@ mod tests {
         .execute(&*pool)
         .await
         .unwrap();
-        let admin = insert_user(&pool, owner.company_id.as_deref().unwrap(), "a@test.com", "Adm", "admin", true).await;
+        let admin = insert_user(
+            &pool,
+            owner.company_id.as_deref().unwrap(),
+            "a@test.com",
+            "Adm",
+            "admin",
+            true,
+        )
+        .await;
         set_session_user(&app, admin).await;
 
-        let err = set_company_user_active(
-            app.state(),
-            app.state(),
-            owner.id.clone(),
-            false,
-        )
-        .await
-        .unwrap_err();
+        let err = set_company_user_active(app.state(), app.state(), owner.id.clone(), false)
+            .await
+            .unwrap_err();
         assert_eq!(err, "The company owner cannot be deactivated");
     }
 
@@ -954,18 +1079,29 @@ mod tests {
         let app = setup_app().await;
         let owner = register_owner(&app, "owner@test.com").await;
         let pool = app.state::<SqlitePool>();
-        let employee = insert_user(&pool, owner.company_id.as_deref().unwrap(), "e@test.com", "Emp", "employee", true).await;
-        let admin = insert_user(&pool, owner.company_id.as_deref().unwrap(), "a@test.com", "Adm", "admin", true).await;
+        let employee = insert_user(
+            &pool,
+            owner.company_id.as_deref().unwrap(),
+            "e@test.com",
+            "Emp",
+            "employee",
+            true,
+        )
+        .await;
+        let admin = insert_user(
+            &pool,
+            owner.company_id.as_deref().unwrap(),
+            "a@test.com",
+            "Adm",
+            "admin",
+            true,
+        )
+        .await;
         set_session_user(&app, admin).await;
 
-        let err = set_company_user_active(
-            app.state(),
-            app.state(),
-            employee.id.clone(),
-            false,
-        )
-        .await
-        .unwrap_err();
+        let err = set_company_user_active(app.state(), app.state(), employee.id.clone(), false)
+            .await
+            .unwrap_err();
         assert!(err.contains("Access denied"), "got: {err}");
     }
 
@@ -982,18 +1118,29 @@ mod tests {
         .execute(&*pool)
         .await
         .unwrap();
-        let admin = insert_user(&pool, owner.company_id.as_deref().unwrap(), "a@test.com", "Adm", "admin", true).await;
-        let employee = insert_user(&pool, owner.company_id.as_deref().unwrap(), "e@test.com", "Emp", "employee", true).await;
+        let admin = insert_user(
+            &pool,
+            owner.company_id.as_deref().unwrap(),
+            "a@test.com",
+            "Adm",
+            "admin",
+            true,
+        )
+        .await;
+        let employee = insert_user(
+            &pool,
+            owner.company_id.as_deref().unwrap(),
+            "e@test.com",
+            "Emp",
+            "employee",
+            true,
+        )
+        .await;
         set_session_user(&app, admin).await;
 
-        let updated = set_company_user_active(
-            app.state(),
-            app.state(),
-            employee.id.clone(),
-            false,
-        )
-        .await
-        .expect("admin deactivates employee");
+        let updated = set_company_user_active(app.state(), app.state(), employee.id.clone(), false)
+            .await
+            .expect("admin deactivates employee");
         assert!(!updated.is_active);
     }
 
@@ -1010,18 +1157,29 @@ mod tests {
         .execute(&*pool)
         .await
         .unwrap();
-        let admin1 = insert_user(&pool, owner.company_id.as_deref().unwrap(), "a1@test.com", "Adm1", "admin", true).await;
-        let admin2 = insert_user(&pool, owner.company_id.as_deref().unwrap(), "a2@test.com", "Adm2", "admin", true).await;
+        let admin1 = insert_user(
+            &pool,
+            owner.company_id.as_deref().unwrap(),
+            "a1@test.com",
+            "Adm1",
+            "admin",
+            true,
+        )
+        .await;
+        let admin2 = insert_user(
+            &pool,
+            owner.company_id.as_deref().unwrap(),
+            "a2@test.com",
+            "Adm2",
+            "admin",
+            true,
+        )
+        .await;
         set_session_user(&app, admin1).await;
 
-        let err = set_company_user_active(
-            app.state(),
-            app.state(),
-            admin2.id.clone(),
-            false,
-        )
-        .await
-        .unwrap_err();
+        let err = set_company_user_active(app.state(), app.state(), admin2.id.clone(), false)
+            .await
+            .unwrap_err();
         assert_eq!(err, "An admin may only activate or deactivate employees");
     }
 
@@ -1032,17 +1190,20 @@ mod tests {
         let app = setup_app().await;
         let owner = register_owner(&app, "owner@test.com").await;
         let pool = app.state::<SqlitePool>();
-        let employee = insert_user(&pool, owner.company_id.as_deref().unwrap(), "e@test.com", "Emp", "employee", true).await;
+        let employee = insert_user(
+            &pool,
+            owner.company_id.as_deref().unwrap(),
+            "e@test.com",
+            "Emp",
+            "employee",
+            true,
+        )
+        .await;
         set_session_user(&app, employee.clone()).await;
 
-        let err = set_company_user_active(
-            app.state(),
-            app.state(),
-            employee.id.clone(),
-            false,
-        )
-        .await
-        .unwrap_err();
+        let err = set_company_user_active(app.state(), app.state(), employee.id.clone(), false)
+            .await
+            .unwrap_err();
         assert!(err.contains("Access denied"), "got: {err}");
     }
 
@@ -1053,14 +1214,10 @@ mod tests {
         let app = setup_app().await;
         register_owner(&app, "owner@test.com").await;
 
-        let err = set_company_user_active(
-            app.state(),
-            app.state(),
-            Uuid::new_v4().to_string(),
-            false,
-        )
-        .await
-        .unwrap_err();
+        let err =
+            set_company_user_active(app.state(), app.state(), Uuid::new_v4().to_string(), false)
+                .await
+                .unwrap_err();
         assert_eq!(err, "Company user was not found");
     }
 }

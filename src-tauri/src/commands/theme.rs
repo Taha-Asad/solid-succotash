@@ -55,16 +55,22 @@ pub async fn get_theme(
 
     if let Some((p, s, a, cs, logo, tag, wm)) = existing {
         return Ok(CompanyTheme {
-            primary_color: p, secondary_color: s, accent_color: a,
-            color_scheme: cs, logo_base64: logo, company_tagline: tag, erp_watermark: wm,
+            primary_color: p,
+            secondary_color: s,
+            accent_color: a,
+            color_scheme: cs,
+            logo_base64: logo,
+            company_tagline: tag,
+            erp_watermark: wm,
         });
     }
 
-    // Return defaults
+    // Return defaults (must match migration 011 column defaults and
+    // src/theme.ts: deep-navy brand, antique-gold accent).
     Ok(CompanyTheme {
-        primary_color: "#2563eb".to_string(),
-        secondary_color: "#7c3aed".to_string(),
-        accent_color: "#059669".to_string(),
+        primary_color: "#1D2B54".to_string(),
+        secondary_color: "#2E4178".to_string(),
+        accent_color: "#C9952A".to_string(),
         color_scheme: "light".to_string(),
         logo_base64: None,
         company_tagline: None,
@@ -142,8 +148,5 @@ pub fn read_file_base64(path: String) -> Result<String, String> {
         Some("svg") => "image/svg+xml",
         _ => "image/png",
     };
-    Ok(format!(
-        "data:{mime};base64,{}",
-        BASE64.encode(bytes)
-    ))
+    Ok(format!("data:{mime};base64,{}", BASE64.encode(bytes)))
 }

@@ -115,7 +115,8 @@ pub async fn search_all(
         for (id, name, sku, stock) in products {
             results.push(SearchResult {
                 result_type: "product".to_string(),
-                id, name,
+                id,
+                name,
                 subtitle: format!("SKU: {sku}"),
                 detail: format!("Stock: {stock}"),
             });
@@ -130,7 +131,8 @@ pub async fn search_all(
         for (id, name, email, phone) in customers {
             results.push(SearchResult {
                 result_type: "customer".to_string(),
-                id, name,
+                id,
+                name,
                 subtitle: email.unwrap_or_default(),
                 detail: phone.unwrap_or_default(),
             });

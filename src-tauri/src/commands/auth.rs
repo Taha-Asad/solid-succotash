@@ -603,7 +603,10 @@ mod tests {
     fn normalize_email_trims_and_lowercases() {
         // Input: "  Alice@Example.COM  ".
         // Expected: Ok("alice@example.com").
-        assert_eq!(normalize_email("  Alice@Example.COM  ").unwrap(), "alice@example.com");
+        assert_eq!(
+            normalize_email("  Alice@Example.COM  ").unwrap(),
+            "alice@example.com"
+        );
     }
 
     #[test]
@@ -737,7 +740,10 @@ mod tests {
         // message for users.email.
         // Expected: friendly "Email address is already registered".
         let raw = sqlx::Error::Protocol("UNIQUE constraint failed: users.email".to_string());
-        assert_eq!(map_user_write_error(raw), "Email address is already registered");
+        assert_eq!(
+            map_user_write_error(raw),
+            "Email address is already registered"
+        );
     }
 
     #[test]
@@ -831,7 +837,9 @@ mod tests {
         assert_eq!(user.email, "owner@test.com");
         assert_eq!(user.role, "owner");
 
-        let current = current_user(state_of(&app), state_of(&app)).await.expect("session set");
+        let current = current_user(state_of(&app), state_of(&app))
+            .await
+            .expect("session set");
         assert_eq!(current.email, "owner@test.com");
     }
 
@@ -961,7 +969,9 @@ mod tests {
         let app = setup_app().await;
         register_owner(&app, "owner@test.com").await;
         logout_user(state_of(&app)).await.expect("logout");
-        let err = current_user(state_of(&app), state_of(&app)).await.unwrap_err();
+        let err = current_user(state_of(&app), state_of(&app))
+            .await
+            .unwrap_err();
         assert!(err.contains("log in first"), "got: {err}");
     }
 
@@ -974,7 +984,9 @@ mod tests {
         // Input: empty session.
         // Expected: Err "You must log in first".
         let app = setup_app().await;
-        let err = current_user(state_of(&app), state_of(&app)).await.unwrap_err();
+        let err = current_user(state_of(&app), state_of(&app))
+            .await
+            .unwrap_err();
         assert!(err.contains("log in first"), "got: {err}");
     }
 
@@ -991,7 +1003,9 @@ mod tests {
             .await
             .unwrap();
 
-        let err = current_user(state_of(&app), state_of(&app)).await.unwrap_err();
+        let err = current_user(state_of(&app), state_of(&app))
+            .await
+            .unwrap_err();
         assert!(err.contains("no longer active"), "got: {err}");
     }
 
@@ -1004,7 +1018,9 @@ mod tests {
         let pool = state_of::<SqlitePool>(&app);
         deactivate_company(&*pool, owner.company_id.as_deref().unwrap()).await;
 
-        let err = current_user(state_of(&app), state_of(&app)).await.unwrap_err();
+        let err = current_user(state_of(&app), state_of(&app))
+            .await
+            .unwrap_err();
         assert!(err.contains("no longer active"), "got: {err}");
     }
 
@@ -1026,12 +1042,11 @@ mod tests {
             .expect("update succeeds");
         assert_eq!(updated.full_name, "New Name");
 
-        let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM audit_logs WHERE resource = 'profile'",
-        )
-        .fetch_one(&*pool)
-        .await
-        .unwrap();
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM audit_logs WHERE resource = 'profile'")
+                .fetch_one(&*pool)
+                .await
+                .unwrap();
         assert_eq!(count, 1, "profile update must be audited");
     }
 
@@ -1100,12 +1115,11 @@ mod tests {
         assert!(verify_password("newpassword456", &hash).await.unwrap());
         assert!(!verify_password("password123", &hash).await.unwrap());
 
-        let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM audit_logs WHERE resource = 'password'",
-        )
-        .fetch_one(&*pool)
-        .await
-        .unwrap();
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM audit_logs WHERE resource = 'password'")
+                .fetch_one(&*pool)
+                .await
+                .unwrap();
         assert_eq!(count, 1, "password change must be audited");
     }
 
@@ -1140,7 +1154,10 @@ mod tests {
         )
         .await
         .unwrap_err();
-        assert_eq!(err, "New password must be different from the current password");
+        assert_eq!(
+            err,
+            "New password must be different from the current password"
+        );
     }
 
     #[tokio::test]
@@ -1170,7 +1187,9 @@ mod tests {
         // Expected: load returns the owner and the in-memory session is restored.
         let app = setup_app().await;
         register_owner(&app, "owner@test.com").await;
-        save_session(state_of(&app), state_of(&app)).await.expect("save");
+        save_session(state_of(&app), state_of(&app))
+            .await
+            .expect("save");
         logout_user(state_of(&app)).await.expect("logout");
 
         let loaded = load_saved_session(state_of(&app), state_of(&app))
@@ -1178,7 +1197,9 @@ mod tests {
             .expect("load");
         assert_eq!(loaded.email, "owner@test.com");
 
-        let current = current_user(state_of(&app), state_of(&app)).await.expect("restored");
+        let current = current_user(state_of(&app), state_of(&app))
+            .await
+            .expect("restored");
         assert_eq!(current.email, "owner@test.com");
     }
 
@@ -1201,7 +1222,9 @@ mod tests {
         let app = setup_app().await;
         let owner = register_owner(&app, "owner@test.com").await;
         let pool = state_of::<SqlitePool>(&app);
-        save_session(state_of(&app), state_of(&app)).await.expect("save");
+        save_session(state_of(&app), state_of(&app))
+            .await
+            .expect("save");
 
         sqlx::query("UPDATE users SET is_active = 0 WHERE id = ?")
             .bind(&owner.id)
@@ -1215,8 +1238,10 @@ mod tests {
             .unwrap_err();
         assert_eq!(err, "Saved user no longer active");
 
-        let count: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM app_session").fetch_one(&*pool).await.unwrap();
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM app_session")
+            .fetch_one(&*pool)
+            .await
+            .unwrap();
         assert_eq!(count, 0, "stale session must be cleared");
     }
 
@@ -1226,7 +1251,9 @@ mod tests {
         // Expected: clear Ok; a subsequent load fails with "No saved session".
         let app = setup_app().await;
         register_owner(&app, "owner@test.com").await;
-        save_session(state_of(&app), state_of(&app)).await.expect("save");
+        save_session(state_of(&app), state_of(&app))
+            .await
+            .expect("save");
         clear_saved_session(state_of(&app)).await.expect("clear");
 
         let err = load_saved_session(state_of(&app), state_of(&app))

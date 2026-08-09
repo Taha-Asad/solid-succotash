@@ -44,3 +44,4 @@ windows-sys = { version = "0.61.2", features = ["Win32_System_Console"] }
 tauri-plugin-updater = "2.10.1"
 tauri-plugin-dialog = "2.7.2"
 base64 = "0.22"
+qrcode = "0.14"

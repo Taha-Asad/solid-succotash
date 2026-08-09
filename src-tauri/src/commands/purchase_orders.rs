@@ -481,14 +481,21 @@ pub async fn receive_po_items(
             .bind(format!("PO {}", po_id)).bind(&user.id)
             .execute(&mut *tx).await.map_err(|e| format!("Error: {e}"))?;
 
-        // If expiry date provided, create a batch
+        // If expiry date provided, create a batch (auto-numbered)
         if let Some(ref exp) = expiry {
             if !exp.is_empty() {
-                let bid = uuid::Uuid::new_v4().to_string();
-                sqlx::query("INSERT INTO stock_batches (id,company_id,product_id,quantity,unit_cost,expiry_date,source) VALUES (?,?,?,?,?,?,'purchase')")
-                    .bind(&bid).bind(company_id).bind(product_id).bind(qty_to_receive)
-                    .bind(unit_cost).bind(exp)
-                    .execute(&mut *tx).await.map_err(|e| format!("Error: {e}"))?;
+                crate::commands::inventory::add_batch(
+                    &mut tx,
+                    company_id,
+                    product_id,
+                    qty_to_receive,
+                    *unit_cost,
+                    exp,
+                    "purchase",
+                    None,
+                )
+                .await
+                .map_err(|e| format!("Error: {e}"))?;
             }
         }
     }
@@ -633,9 +640,7 @@ async fn recalc_po_totals(pool: &SqlitePool, po_id: &str, company_id: &str) -> R
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::test_helpers::{
-        insert_user, register_owner, set_session_user, setup_app,
-    };
+    use crate::commands::test_helpers::{insert_user, register_owner, set_session_user, setup_app};
     use tauri::Manager;
     use uuid::Uuid;
 
@@ -649,7 +654,10 @@ mod tests {
     }
 
     /// Creates a supplier through the real inventory command.
-    async fn make_supplier(app: &tauri::App<tauri::test::MockRuntime>, name: &str) -> crate::commands::inventory::PublicSupplier {
+    async fn make_supplier(
+        app: &tauri::App<tauri::test::MockRuntime>,
+        name: &str,
+    ) -> crate::commands::inventory::PublicSupplier {
         crate::commands::inventory::create_supplier(
             app.state(),
             app.state(),
@@ -665,7 +673,10 @@ mod tests {
     }
 
     /// Creates a product through the real inventory command.
-    async fn make_product(app: &tauri::App<tauri::test::MockRuntime>, name: &str) -> crate::commands::inventory::PublicProduct {
+    async fn make_product(
+        app: &tauri::App<tauri::test::MockRuntime>,
+        name: &str,
+    ) -> crate::commands::inventory::PublicProduct {
         crate::commands::inventory::create_product(
             app.state(),
             app.state(),
@@ -684,7 +695,10 @@ mod tests {
     }
 
     /// Creates a draft PO for the given supplier.
-    async fn make_po(app: &tauri::App<tauri::test::MockRuntime>, supplier_id: &str) -> PublicPurchaseOrder {
+    async fn make_po(
+        app: &tauri::App<tauri::test::MockRuntime>,
+        supplier_id: &str,
+    ) -> PublicPurchaseOrder {
         create_purchase_order(
             app.state(),
             app.state(),
@@ -700,7 +714,10 @@ mod tests {
     /// Creates a submitted (ordered) PO with one item.
     async fn ordered_po_with_item(
         app: &tauri::App<tauri::test::MockRuntime>,
-    ) -> (PublicPurchaseOrder, crate::commands::inventory::PublicProduct) {
+    ) -> (
+        PublicPurchaseOrder,
+        crate::commands::inventory::PublicProduct,
+    ) {
         let supplier = make_supplier(app, "Acme").await;
         let product = make_product(app, "Widget").await;
         let po = make_po(app, &supplier.id).await;
@@ -819,7 +836,15 @@ mod tests {
         // Input: employee logged in (purchase_orders/view only).
         // Expected: Err "Access denied".
         let app = owner_app().await;
-        let employee = insert_user(&app.state::<SqlitePool>(), &company_id(&app).await, "e@test.com", "Emp", "employee", true).await;
+        let employee = insert_user(
+            &app.state::<SqlitePool>(),
+            &company_id(&app).await,
+            "e@test.com",
+            "Emp",
+            "employee",
+            true,
+        )
+        .await;
         set_session_user(&app, employee).await;
 
         let err = create_purchase_order(
@@ -1112,9 +1137,14 @@ mod tests {
         .await
         .expect("item 2");
 
-        let remaining = remove_po_item(app.state(), app.state(), po.id.clone(), items1[0].id.clone())
-            .await
-            .expect("remove");
+        let remaining = remove_po_item(
+            app.state(),
+            app.state(),
+            po.id.clone(),
+            items1[0].id.clone(),
+        )
+        .await
+        .expect("remove");
         assert_eq!(remaining.len(), 1);
         assert_eq!(remaining[0].product_id, p2.id);
 
@@ -1205,7 +1235,15 @@ mod tests {
         let app = owner_app().await;
         let supplier = make_supplier(&app, "Acme").await;
         let po = make_po(&app, &supplier.id).await;
-        let employee = insert_user(&app.state::<SqlitePool>(), &company_id(&app).await, "e@test.com", "Emp", "employee", true).await;
+        let employee = insert_user(
+            &app.state::<SqlitePool>(),
+            &company_id(&app).await,
+            "e@test.com",
+            "Emp",
+            "employee",
+            true,
+        )
+        .await;
         set_session_user(&app, employee).await;
 
         let err = submit_purchase_order(app.state(), app.state(), po.id.clone())
@@ -1325,10 +1363,7 @@ mod tests {
         let err = receive_po_items(app.state(), app.state(), po.id.clone())
             .await
             .unwrap_err();
-        assert!(
-            err.contains("must be in 'ordered' status"),
-            "got: {err}"
-        );
+        assert!(err.contains("must be in 'ordered' status"), "got: {err}");
 
         let products = crate::commands::inventory::list_products(app.state(), app.state())
             .await
@@ -1521,7 +1556,9 @@ mod tests {
         make_po(&app, &supplier.id).await;
         make_po(&app, &supplier.id).await;
 
-        let pos = list_purchase_orders(app.state(), app.state()).await.expect("list");
+        let pos = list_purchase_orders(app.state(), app.state())
+            .await
+            .expect("list");
         assert_eq!(pos.len(), 2);
         assert_eq!(pos[0].supplier_name, "Acme");
     }
@@ -1531,7 +1568,9 @@ mod tests {
         // Input: no session.
         // Expected: Err "You must log in first".
         let app = setup_app().await;
-        let err = list_purchase_orders(app.state(), app.state()).await.unwrap_err();
+        let err = list_purchase_orders(app.state(), app.state())
+            .await
+            .unwrap_err();
         assert!(err.contains("log in first"), "got: {err}");
     }
 }

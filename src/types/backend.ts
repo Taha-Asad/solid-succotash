@@ -72,13 +72,13 @@ export type CreateUserInput = {
   email: string;
   password: string;
   fullName: string;
-  role: "admin" | "employee";
+  role: string;
 };
 
 // Data for changing a user's role
 export type UpdateRoleInput = {
   userId: string;
-  role: "admin" | "employee";
+  role: string;
 };
 
 // Data for activating/deactivating a user
@@ -189,6 +189,7 @@ export type StockAdjustmentInput = {
   quantity: number;
   referenceNote: string;
   expiryDate?: string | null;
+  batchNumber?: string | null;
 };
 
 // A stock batch (expiry-tracked stock).
@@ -199,6 +200,7 @@ export type PublicStockBatch = {
   productId: string;
   productName: string;
   productSku: string;
+  batchNumber: string | null;
   quantity: number;
   unitCost: number;
   expiryDate: string;
@@ -217,7 +219,10 @@ export type FieldMapping = {
   sourceIndex: number;
   targetField: string; // "name", "sku", "cost_price", "sell_price", "custom:<name>"
   fieldCategory: string; // "core" or "custom"
-  confidence: string; // "high", "medium", "low", "unknown"
+  confidence: string; // "high", "medium", "low", "unknown", "manual"
+  // When set, the same constant value is applied to every row instead of
+  // reading from the file column (manually added fields in the Map step).
+  manualValue?: string | null;
 };
 
 // What Rust sends back after analyzing a file
@@ -229,26 +234,64 @@ export type FileAnalysis = {
   proposedMappings: FieldMapping[];
 };
 
+export type ImportTarget = "products" | "customers" | "opening_stock" | "suppliers";
+
+export type ConflictStrategy = "skip" | "overwrite" | "suffix";
+
 // What we send back when user confirms the mapping
 export type ImportRequest = {
+  target: ImportTarget;
   mappings: FieldMapping[];
   fileBytes: number[];
   fileType: string;
   templateName: string;
   importData: boolean;
+  conflictStrategy: ConflictStrategy;
+  dryRun: boolean;
+  fileName?: string | null;
 };
 
 // Result of the import
 export type ImportResult = {
   fieldsCreated: number;
   productsImported: number;
+  customersImported: number;
+  itemsImported: number;
   rowsWithErrors: number;
+  rowsSkipped: number;
+  jobId?: string | null;
   errors: ImportError[];
 };
 
 export type ImportError = {
   rowNumber: number;
   reason: string;
+};
+
+// A completed import run, listed for rollback
+export type ImportJob = {
+  id: string;
+  fileType: string;
+  fileName: string | null;
+  status: string; // "processing" | "completed" | "rolled_back"
+  totalRows: number;
+  processedRows: number;
+  errorRows: number;
+  errorDetails: string | null;
+  createdBy: string;
+  createdAt: string;
+  completedAt: string | null;
+  rollbackAvailable: boolean;
+  importedRecords: number;
+};
+
+export type RollbackResult = {
+  productsDeleted: number;
+  customersDeleted: number;
+  suppliersDeleted: number;
+  movementsDeleted: number;
+  batchesDeleted: number;
+  quantityReverted: number;
 };
 
 // Custom field definition (from company_field_settings)
@@ -499,4 +542,102 @@ export type PublicPOItem = {
 export type PurchaseOrderWithItems = {
   order: PublicPurchaseOrder;
   items: PublicPOItem[];
+};
+
+// ==========================================
+// ACCOUNTING LEDGER TYPES
+// ==========================================
+
+export type LedgerAccount = {
+  id: string;
+  companyId: string;
+  code: string;
+  name: string;
+  accountType: "asset" | "liability" | "equity" | "revenue" | "expense";
+  isSystem: boolean;
+  isActive: boolean;
+};
+
+export type AccountBalance = {
+  id: string;
+  code: string;
+  name: string;
+  accountType: string;
+  debitTotal: number;
+  creditTotal: number;
+  net: number;
+};
+
+export type LedgerSummary = {
+  accounts: AccountBalance[];
+  totalDebit: number;
+  totalCredit: number;
+};
+
+export type JournalEntry = {
+  id: string;
+  companyId: string;
+  entryDate: string;
+  referenceType: string;
+  referenceId: string | null;
+  description: string | null;
+  createdBy: string | null;
+  createdAt: string;
+};
+
+export type JournalLine = {
+  id: string;
+  journalEntryId: string;
+  accountId: string;
+  accountCode: string;
+  accountName: string;
+  debit: number;
+  credit: number;
+  description: string | null;
+};
+
+export type JournalEntryWithLines = {
+  entry: JournalEntry;
+  lines: JournalLine[];
+};
+
+export type AccountStatementRow = {
+  entryId: string;
+  entryDate: string;
+  referenceType: string;
+  referenceId: string | null;
+  description: string | null;
+  debit: number;
+  credit: number;
+  runningBalance: number;
+};
+
+export type ManualLineInput = {
+  accountCode: string;
+  debit: number;
+  credit: number;
+  description?: string | null;
+};
+
+// ==========================================
+// ROLE & PERMISSION TYPES
+// ==========================================
+
+export type RolePermission = {
+  module: string;
+  permission: string;
+  allowed: boolean;
+};
+
+export type RoleInfo = {
+  role: string;
+  description: string;
+  isCustom: boolean;
+  permissions: RolePermission[];
+};
+
+export type UpdatePermissionInput = {
+  module: string;
+  permission: string;
+  allowed: boolean;
 };

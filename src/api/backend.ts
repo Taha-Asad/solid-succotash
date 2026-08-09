@@ -14,15 +14,22 @@
 import { invoke } from "@tauri-apps/api/core";
 
 import type {
+  AccountStatementRow,
   CompanySetupInput,
   CreateUserInput,
   CustomerLedgerEntry,
   FileAnalysis,
+  ImportJob,
   ImportRequest,
   ImportResult,
+  ImportTarget,
   InvoiceSettings,
   InvoiceWithDetails,
+  JournalEntryWithLines,
+  LedgerAccount,
+  LedgerSummary,
   LoginInput,
+  ManualLineInput,
   ProductInput,
   ProductMovement,
   ProfitLossSummary,
@@ -40,6 +47,8 @@ import type {
   PublicUser,
   PurchaseOrderWithItems,
   RegisterCompanyResult,
+  RoleInfo,
+  RollbackResult,
   SalesByPeriod,
   SalesSummary,
   SetActiveInput,
@@ -47,6 +56,7 @@ import type {
   StockSummary,
   TopCustomer,
   TopProduct,
+  UpdatePermissionInput,
   UpdateProductInput,
   UpdateRoleInput,
 } from "../types/backend";
@@ -300,6 +310,7 @@ export function listCustomFields(): Promise<
 export function analyzeImportFile(input: {
   fileBytes: number[];
   fileType: string;
+  target?: ImportTarget;
 }): Promise<FileAnalysis> {
   return invoke<FileAnalysis>("analyze_import_file", input);
 }
@@ -307,6 +318,16 @@ export function analyzeImportFile(input: {
 // Step 2: Send confirmed mapping + file bytes, Rust imports everything
 export function executeImport(input: ImportRequest): Promise<ImportResult> {
   return invoke<ImportResult>("execute_import", { request: input });
+}
+
+// Step 3: List recent import jobs for the current company (rollback UI)
+export function listImportJobs(): Promise<ImportJob[]> {
+  return invoke<ImportJob[]>("list_import_jobs");
+}
+
+// Step 4: Roll back a completed import within its 24h window
+export function rollbackImport(jobId: string): Promise<RollbackResult> {
+  return invoke<RollbackResult>("rollback_import", { jobId });
 }
 
 // ==========================================
@@ -560,6 +581,69 @@ export function exportCustomerLedgerCsv(savePath: string): Promise<string> {
 export function exportSalesCsv(savePath: string): Promise<string> {
   return invoke<string>("export_sales_csv", { savePath });
 }
+
+export function exportReportPdf(
+  report: "sales" | "stock" | "ledger",
+  savePath: string,
+): Promise<string> {
+  return invoke<string>("export_report_pdf", { report, savePath });
+}
+
+// ==========================================
+// ACCOUNTING LEDGER
+// ==========================================
+
+export function getChartOfAccounts(): Promise<LedgerAccount[]> {
+  return invoke<LedgerAccount[]>("get_chart_of_accounts");
+}
+
+export function getLedgerSummary(): Promise<LedgerSummary> {
+  return invoke<LedgerSummary>("get_ledger_summary");
+}
+
+export function getJournalEntries(limit?: number): Promise<JournalEntryWithLines[]> {
+  return invoke<JournalEntryWithLines[]>("get_journal_entries", { limit });
+}
+
+export function getAccountStatement(accountId: string): Promise<AccountStatementRow[]> {
+  return invoke<AccountStatementRow[]>("get_account_statement", { accountId });
+}
+
+export function postManualEntry(input: {
+  entryDate: string;
+  description: string;
+  lines: ManualLineInput[];
+}): Promise<null> {
+  return invoke<null>("post_manual_entry", input);
+}
+
+// ==========================================
+// ROLES & PERMISSIONS
+// ==========================================
+
+export function listRoles(): Promise<RoleInfo[]> {
+  return invoke<RoleInfo[]>("list_roles");
+}
+
+export function createCustomRole(name: string, description?: string): Promise<RoleInfo> {
+  return invoke<RoleInfo>("create_custom_role", { name, description });
+}
+
+export function updateRolePermissions(
+  role: string,
+  permissions: UpdatePermissionInput[],
+): Promise<RoleInfo> {
+  return invoke<RoleInfo>("update_role_permissions", { role, permissions });
+}
+
+export function deleteCustomRole(name: string): Promise<void> {
+  return invoke<void>("delete_custom_role", { name });
+}
+
+export function getMyPermissions(): Promise<RoleInfo> {
+  return invoke<RoleInfo>("get_my_permissions");
+}
+
 
 // ==========================================
 // SEARCH (FTS5)

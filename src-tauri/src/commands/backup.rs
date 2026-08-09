@@ -301,12 +301,11 @@ mod tests {
         assert_eq!(&header[0..16], b"SQLite format 3\0");
 
         let pool = app.state::<SqlitePool>();
-        let audit: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM audit_logs WHERE action = 'backup'",
-        )
-        .fetch_one(&*pool)
-        .await
-        .expect("audit");
+        let audit: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM audit_logs WHERE action = 'backup'")
+                .fetch_one(&*pool)
+                .await
+                .expect("audit");
         assert_eq!(audit, 1);
 
         std::fs::remove_file(&save_path).ok();
@@ -360,12 +359,11 @@ mod tests {
         // Expected: Err "Only the owner can restore backups".
         let app = owner_app().await;
         let pool = app.state::<SqlitePool>();
-        let company_id: String = sqlx::query_scalar(
-            "SELECT company_id FROM users WHERE email = 'owner@test.com'",
-        )
-        .fetch_one(&*pool)
-        .await
-        .expect("company id");
+        let company_id: String =
+            sqlx::query_scalar("SELECT company_id FROM users WHERE email = 'owner@test.com'")
+                .fetch_one(&*pool)
+                .await
+                .expect("company id");
         let employee =
             insert_user(&pool, &company_id, "emp@test.com", "Emp", "employee", true).await;
         set_session_user(&app, employee).await;
@@ -426,18 +424,21 @@ mod tests {
         .await
         .expect("make backup");
 
-        let result = restore_backup(app.state(), app.state(), backup_path.to_string_lossy().to_string())
-            .await
-            .expect("restore");
+        let result = restore_backup(
+            app.state(),
+            app.state(),
+            backup_path.to_string_lossy().to_string(),
+        )
+        .await
+        .expect("restore");
         assert!(result.contains("restored"), "got: {result}");
 
         let pool = app.state::<SqlitePool>();
-        let audit: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM audit_logs WHERE action = 'restore'",
-        )
-        .fetch_one(&*pool)
-        .await
-        .expect("audit");
+        let audit: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM audit_logs WHERE action = 'restore'")
+                .fetch_one(&*pool)
+                .await
+                .expect("audit");
         assert_eq!(audit, 1);
 
         let db_file = current_db_path(&pool);
@@ -474,7 +475,10 @@ mod tests {
         assert_eq!(backups.len(), 1, "only .db files should be listed");
         assert_eq!(backups[0].filename, "snapshot.db");
         assert_eq!(backups[0].size_bytes, 512);
-        assert!(!backups[0].created_at.is_empty(), "created_at should be set");
+        assert!(
+            !backups[0].created_at.is_empty(),
+            "created_at should be set"
+        );
 
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -484,10 +488,9 @@ mod tests {
         // Input: a directory that does not exist.
         // Expected: empty vec (not an error).
         let app = owner_app().await;
-        let backups =
-            list_backups(app.state(), app.state(), "/nonexistent-dir-xyz".to_string())
-                .await
-                .expect("list");
+        let backups = list_backups(app.state(), app.state(), "/nonexistent-dir-xyz".to_string())
+            .await
+            .expect("list");
         assert!(backups.is_empty());
     }
 

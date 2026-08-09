@@ -50,7 +50,11 @@ import {
   Divider,
 } from "@mantine/core";
 
+import { DateInput } from "@mantine/dates";
+
 import { useForm } from "@mantine/form";
+
+import { useMediaQuery } from "@mantine/hooks";
 
 import {
   Boxes,
@@ -162,11 +166,24 @@ function parseDateOnly(dateStr: string): Date {
   return new Date(parts[0], parts[1] - 1, parts[2]);
 }
 
+// Format a Date as a LOCAL "YYYY-MM-DD" string (the inverse of parseDateOnly).
+// Never use toISOString() here — it converts to UTC first and can shift the
+// date by a day, which is exactly what made the calendar look "wrong" (it
+// would open on, or save, a different day than the one that was clicked).
+function formatDateOnly(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
 // Days from today until the given date-only string (negative = already past).
 function daysUntil(dateStr: string): number {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  return Math.round((parseDateOnly(dateStr).getTime() - today.getTime()) / 86400000);
+  return Math.round(
+    (parseDateOnly(dateStr).getTime() - today.getTime()) / 86400000,
+  );
 }
 
 // Small reusable "eyebrow" label — used above section titles to give
@@ -232,6 +249,7 @@ export default function InventoryPage({ user }: InventoryPageProps) {
   const canManage = user.role === "owner" || user.role === "admin";
   const [showWizard, setShowWizard] = useState(false);
   const [wizardKey, setWizardKey] = useState(0); // force re-mount on new import
+  const isMobileHeader = useMediaQuery("(max-width: 36em)");
 
   // If wizard is open, show it instead of the tabs
   if (showWizard) {
@@ -264,6 +282,7 @@ export default function InventoryPage({ user }: InventoryPageProps) {
             leftSection={<FileSpreadsheet size={16} />}
             variant="filled"
             color="dark"
+            fullWidth={isMobileHeader}
             styles={{
               root: {
                 backgroundColor: INK.navy,
@@ -279,6 +298,7 @@ export default function InventoryPage({ user }: InventoryPageProps) {
 
       <Tabs
         defaultValue="products"
+        variant="outline"
         styles={{
           tab: {
             fontWeight: 600,
@@ -287,9 +307,13 @@ export default function InventoryPage({ user }: InventoryPageProps) {
               borderColor: INK.gold,
             },
           },
+          list: {
+            flexWrap: "wrap",
+            rowGap: 4,
+          },
         }}
       >
-        <Tabs.List>
+        <Tabs.List grow={isMobileHeader}>
           <Tabs.Tab value="products" leftSection={<Package size={16} />}>
             Products
           </Tabs.Tab>
@@ -377,7 +401,12 @@ function CategoriesTab({ canManage }: { canManage: boolean }) {
   }
 
   async function handleDelete(cat: PublicCategory) {
-    if (!confirm(`Delete category "${cat.name}"? Products in it are kept, just ungrouped.`)) return;
+    if (
+      !confirm(
+        `Delete category "${cat.name}"? Products in it are kept, just ungrouped.`,
+      )
+    )
+      return;
     try {
       await deleteCategory(cat.id);
       await load();
@@ -422,7 +451,7 @@ function CategoriesTab({ canManage }: { canManage: boolean }) {
             leftSection={<Search size={15} />}
             value={query}
             onChange={(e) => setQuery(e.currentTarget.value)}
-            w={260}
+            w={{ base: "100%", sm: 260 }}
           />
           <Group gap="sm">
             <Text size="sm" c="dimmed">
@@ -468,6 +497,7 @@ function CategoriesTab({ canManage }: { canManage: boolean }) {
               highlightOnHover
               withTableBorder
               verticalSpacing="sm"
+              miw={640}
             >
               <Table.Thead>
                 <Table.Tr>
@@ -584,6 +614,7 @@ function CategoryModal({
 }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const isMobile = useMediaQuery("(max-width: 48em)");
 
   const form = useForm({
     initialValues: {
@@ -650,6 +681,8 @@ function CategoryModal({
       }
       centered
       radius="md"
+      fullScreen={isMobile}
+      transitionProps={isMobile ? { transition: "slide-up" } : undefined}
     >
       <form onSubmit={form.onSubmit(handleSubmit)}>
         <Stack gap="md">
@@ -765,7 +798,8 @@ function SuppliersTab({ canManage }: { canManage: boolean }) {
   }
 
   async function handleDelete(sup: PublicSupplier) {
-    if (!confirm(`Delete supplier "${sup.name}"? Purchase history is kept.`)) return;
+    if (!confirm(`Delete supplier "${sup.name}"? Purchase history is kept.`))
+      return;
     try {
       await deleteSupplier(sup.id);
       await load();
@@ -813,7 +847,7 @@ function SuppliersTab({ canManage }: { canManage: boolean }) {
             leftSection={<Search size={15} />}
             value={query}
             onChange={(e) => setQuery(e.currentTarget.value)}
-            w={260}
+            w={{ base: "100%", sm: 260 }}
           />
           <Group gap="sm">
             <Text size="sm" c="dimmed">
@@ -859,6 +893,7 @@ function SuppliersTab({ canManage }: { canManage: boolean }) {
               highlightOnHover
               withTableBorder
               verticalSpacing="sm"
+              miw={640}
             >
               <Table.Thead>
                 <Table.Tr>
@@ -968,6 +1003,7 @@ function SupplierModal({
 }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const isMobile = useMediaQuery("(max-width: 48em)");
 
   const form = useForm({
     initialValues: {
@@ -1023,6 +1059,8 @@ function SupplierModal({
       size="lg"
       centered
       radius="md"
+      fullScreen={isMobile}
+      transitionProps={isMobile ? { transition: "slide-up" } : undefined}
     >
       <form onSubmit={form.onSubmit(handleSubmit)}>
         <Stack gap="md">
@@ -1032,7 +1070,7 @@ function SupplierModal({
             required
             {...form.getInputProps("name")}
           />
-          <SimpleGrid cols={2}>
+          <SimpleGrid cols={{ base: 1, sm: 2 }}>
             <TextInput
               label="Contact Person"
               placeholder="Ahmad Khan"
@@ -1044,7 +1082,7 @@ function SupplierModal({
               {...form.getInputProps("phone")}
             />
           </SimpleGrid>
-          <SimpleGrid cols={2}>
+          <SimpleGrid cols={{ base: 1, sm: 2 }}>
             <TextInput
               label="Email"
               placeholder="info@supplier.com"
@@ -1129,10 +1167,16 @@ function ProductsTab({ canManage }: { canManage: boolean }) {
   const [movementsModalOpen, setMovementsModalOpen] = useState(false);
   const [movementsProduct, setMovementsProduct] =
     useState<PublicProduct | null>(null);
-  const [expiringBatches, setExpiringBatches] = useState<PublicStockBatch[]>([]);
+  const [expiringBatches, setExpiringBatches] = useState<PublicStockBatch[]>(
+    [],
+  );
   const [batchesModalOpen, setBatchesModalOpen] = useState(false);
-  const [batchesProduct, setBatchesProduct] = useState<PublicProduct | null>(null);
-  const [writeOffTarget, setWriteOffTarget] = useState<PublicStockBatch | null>(null);
+  const [batchesProduct, setBatchesProduct] = useState<PublicProduct | null>(
+    null,
+  );
+  const [writeOffTarget, setWriteOffTarget] = useState<PublicStockBatch | null>(
+    null,
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1278,6 +1322,7 @@ function ProductsTab({ canManage }: { canManage: boolean }) {
     quantity: number;
     referenceNote: string;
     expiryDate?: string;
+    batchNumber?: string;
   }) {
     if (!stockProduct) return;
     try {
@@ -1287,6 +1332,7 @@ function ProductsTab({ canManage }: { canManage: boolean }) {
         quantity: values.quantity,
         referenceNote: values.referenceNote,
         expiryDate: values.expiryDate?.trim() ? values.expiryDate.trim() : null,
+        batchNumber: values.batchNumber?.trim() ? values.batchNumber.trim() : null,
       });
       setStockModalOpen(false);
       await load();
@@ -1378,10 +1424,12 @@ function ProductsTab({ canManage }: { canManage: boolean }) {
                 highlightOnHover
                 withTableBorder
                 verticalSpacing="xs"
+                miw={720}
               >
                 <Table.Thead>
                   <Table.Tr>
                     <Table.Th>Product</Table.Th>
+                    <Table.Th>Batch</Table.Th>
                     <Table.Th>Expiry Date</Table.Th>
                     <Table.Th ta="right">Qty</Table.Th>
                     <Table.Th>Status</Table.Th>
@@ -1401,8 +1449,8 @@ function ProductsTab({ canManage }: { canManage: boolean }) {
                         </Text>
                       </Table.Td>
                       <Table.Td>
-                        <Text size="sm" style={LEDGER_NUM}>
-                          {formatDate(b.expiryDate)}
+                        <Text size="sm" c="dimmed">
+                          {b.batchNumber || "—"}
                         </Text>
                       </Table.Td>
                       <Table.Td ta="right">
@@ -1454,11 +1502,11 @@ function ProductsTab({ canManage }: { canManage: boolean }) {
         <Stack>
           <Group justify="space-between" wrap="wrap">
             <TextInput
-              placeholder="Search by SKU, name, category or supplier..."
+              placeholder="Search by name, SKU, category or supplier..."
               leftSection={<Search size={15} />}
               value={query}
               onChange={(e) => setQuery(e.currentTarget.value)}
-              w={320}
+              w={{ base: "100%", sm: 320 }}
             />
             <Group gap="sm">
               <Text size="sm" c="dimmed">
@@ -1509,6 +1557,7 @@ function ProductsTab({ canManage }: { canManage: boolean }) {
                 highlightOnHover
                 withTableBorder
                 verticalSpacing="sm"
+                miw={1040}
               >
                 <Table.Thead>
                   <Table.Tr>
@@ -1824,6 +1873,7 @@ function ProductModal({
 }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const isMobile = useMediaQuery("(max-width: 48em)");
 
   const isEdit = initial !== null;
 
@@ -1914,7 +1964,13 @@ function ProductModal({
       : [];
     const next = used.length + 1;
     return `${prefix}-${String(next).padStart(3, "0")}`;
-  }, [isEdit, form.values.sku, form.values.categoryId, selectedCategory, products]);
+  }, [
+    isEdit,
+    form.values.sku,
+    form.values.categoryId,
+    selectedCategory,
+    products,
+  ]);
 
   function handleNameChange(value: string) {
     form.setFieldValue("name", value);
@@ -1935,17 +1991,19 @@ function ProductModal({
       size="lg"
       centered
       radius="md"
+      fullScreen={isMobile}
+      transitionProps={isMobile ? { transition: "slide-up" } : undefined}
     >
       <form onSubmit={form.onSubmit(handleSubmit)}>
         <Stack gap="md">
-          <SimpleGrid cols={2}>
+          <SimpleGrid cols={{ base: 1, sm: 2 }}>
             <TextInput
               label="SKU"
               placeholder={previewSku ?? "Auto-generated"}
               description={
                 previewSku
                   ? `Next automatic SKU: ${previewSku}`
-                  : "Leave blank to auto-generate from category"
+                  : "A short code that identifies this product. Leave blank to auto-generate one from the category."
               }
               {...form.getInputProps("sku")}
             />
@@ -1958,14 +2016,14 @@ function ProductModal({
             />
           </SimpleGrid>
 
-          <SimpleGrid cols={2}>
+          <SimpleGrid cols={{ base: 1, sm: 2 }}>
             <Select
-              label="Category"
+              label="Category (optional)"
               data={categoryOptions}
               {...form.getInputProps("categoryId")}
             />
             <Select
-              label="Supplier"
+              label="Supplier (optional)"
               data={supplierOptions}
               {...form.getInputProps("supplierId")}
             />
@@ -1973,9 +2031,10 @@ function ProductModal({
 
           <Divider label="Pricing" labelPosition="left" />
 
-          <SimpleGrid cols={3}>
+          <SimpleGrid cols={{ base: 1, xs: 3 }}>
             <NumberInput
               label="Cost Price"
+              description="What you pay to buy or make one unit"
               placeholder="0.00"
               decimalScale={2}
               fixedDecimalScale
@@ -1985,6 +2044,7 @@ function ProductModal({
             />
             <NumberInput
               label="Sell Price"
+              description="What the customer pays for one unit"
               placeholder="0.00"
               decimalScale={2}
               fixedDecimalScale
@@ -2006,7 +2066,7 @@ function ProductModal({
 
           <Divider label="Stock" labelPosition="left" />
 
-          <SimpleGrid cols={2}>
+          <SimpleGrid cols={{ base: 1, sm: 2 }}>
             <NumberInput
               label={
                 isEdit ? "Stock (use Adjust Stock to change)" : "Initial Stock"
@@ -2075,11 +2135,13 @@ function StockAdjustModal({
     quantity: number;
     referenceNote: string;
     expiryDate?: string;
+    batchNumber?: string;
   }) => Promise<void>;
   product: PublicProduct | null;
 }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const isMobile = useMediaQuery("(max-width: 48em)");
 
   const form = useForm({
     initialValues: {
@@ -2087,9 +2149,26 @@ function StockAdjustModal({
       quantity: 1,
       referenceNote: "",
       expiryDate: "",
+      batchNumber: "",
+      expiryOnly: false,
     },
     validate: {
-      quantity: (v) => (v === 0 ? "Quantity cannot be zero" : null),
+      quantity: (v, values) => {
+        if (v === 0) {
+          // Quantity 0 is only valid as an "expiry-only" manual adjustment:
+          // attach the expiry date to the current stock without moving units.
+          if (values.expiryOnly || values.expiryDate?.trim()) return null;
+          return "Quantity cannot be zero";
+        }
+        if (v < 0 && values.movementType !== "adjustment")
+          return "Quantity must be positive for this movement type";
+        return null;
+      },
+      expiryDate: (v, values) => {
+        if (values.expiryOnly && !v?.trim())
+          return "Pick an expiry date to attach to the current stock";
+        return null;
+      },
     },
   });
 
@@ -2102,19 +2181,32 @@ function StockAdjustModal({
     setLoading(true);
     setError(null);
     try {
-      // Convert quantity to negative for outgoing types
-      let qty = values.quantity;
-      if (values.movementType === "sale" || values.movementType === "damage") {
-        qty = -Math.abs(qty);
-      } else {
-        qty = Math.abs(qty);
+      // Convert quantity to negative for outgoing types.
+      // "adjustment" passes through signed so the user can fix an
+      // incorrectly-entered quantity in either direction without touching
+      // sales or damage reporting. "Expiry only" forces quantity 0 so the
+      // stock count never moves.
+      let qty = values.expiryOnly ? 0 : values.quantity;
+      if (!values.expiryOnly) {
+        if (
+          values.movementType === "sale" ||
+          values.movementType === "damage"
+        ) {
+          qty = -Math.abs(qty);
+        } else if (
+          values.movementType === "purchase" ||
+          values.movementType === "return"
+        ) {
+          qty = Math.abs(qty);
+        }
       }
 
       await onSave({
-        movementType: values.movementType,
+        movementType: values.expiryOnly ? "adjustment" : values.movementType,
         quantity: qty,
         referenceNote: values.referenceNote,
         expiryDate: values.expiryDate || undefined,
+        batchNumber: values.batchNumber?.trim() || undefined,
       });
       form.reset();
     } catch (err) {
@@ -2146,6 +2238,8 @@ function StockAdjustModal({
       }
       centered
       radius="md"
+      fullScreen={isMobile}
+      transitionProps={isMobile ? { transition: "slide-up" } : undefined}
     >
       <form onSubmit={form.onSubmit(handleSubmit)}>
         <Stack gap="md">
@@ -2164,35 +2258,144 @@ function StockAdjustModal({
             </Group>
           </Card>
 
+          <Switch
+            label="Expiry only — don't change stock quantity"
+            description="Attach an expiry date to the stock this product already has. Nothing is added or removed."
+            checked={form.values.expiryOnly}
+            onChange={(e) => {
+              const on = e.currentTarget.checked;
+              form.setValues({
+                expiryOnly: on,
+                movementType: on ? "adjustment" : form.values.movementType,
+                quantity: on ? 0 : form.values.quantity,
+              });
+            }}
+          />
+
           <Select
-            label="Movement Type"
+            label="What kind of change is this?"
             data={movementTypes}
             required
+            disabled={form.values.expiryOnly}
             {...form.getInputProps("movementType")}
           />
 
           <NumberInput
-            label="Quantity"
+            label="How many units?"
             placeholder="Enter amount"
-            min={1}
+            min={form.values.movementType === "adjustment" ? undefined : 1}
             required
+            disabled={form.values.expiryOnly}
+            description={
+              form.values.movementType === "adjustment" &&
+              !form.values.expiryOnly
+                ? "Positive adds stock, negative (e.g. -5) removes it. For expiry only, use the switch above."
+                : form.values.expiryOnly
+                  ? "Quantity is locked at 0 in expiry-only mode."
+                  : undefined
+            }
             {...form.getInputProps("quantity")}
           />
+
+          {form.values.movementType === "adjustment" &&
+            form.values.quantity !== 0 &&
+            !form.values.expiryOnly &&
+            product && (
+              <Text size="sm" c="dimmed">
+                Resulting stock:{" "}
+                <Text component="span" fw={700} style={{ color: INK.navy }}>
+                  {(
+                    product.quantityInStock + form.values.quantity
+                  ).toLocaleString()}{" "}
+                  {product.unit ?? "units"}
+                </Text>
+              </Text>
+            )}
+
+          {form.values.movementType === "adjustment" &&
+            form.values.quantity === 0 &&
+            form.values.expiryDate?.trim() &&
+            product && (
+              <Text size="sm" c="dimmed">
+                Quantity stays{" "}
+                <Text component="span" fw={700} style={{ color: INK.navy }}>
+                  {product.quantityInStock.toLocaleString()}{" "}
+                  {product.unit ?? "units"}
+                </Text>{" "}
+                — the expiry date is attached to the stock that has no expiry
+                yet.
+              </Text>
+            )}
 
           {(form.values.movementType === "purchase" ||
             form.values.movementType === "return" ||
             form.values.movementType === "adjustment") && (
             <>
-              <TextInput
-                type="date"
-                label="Expiry Date (optional)"
-                description="Set to make this stock an expiry-tracked batch. Blank = unbatched stock."
-                {...form.getInputProps("expiryDate")}
+              <DateInput
+                label="Expiry date (optional)"
+                description={
+                  form.values.movementType === "adjustment"
+                    ? "Pick a date to track this batch's expiry. With quantity 0 this attaches the date to the stock you already have."
+                    : "Pick a date to track this batch's expiry. Leave blank if this stock doesn't expire."
+                }
+                placeholder="Select a date"
+                valueFormat="DD MMM YYYY"
+                clearable
+                size="sm"
+                defaultDate={new Date()}
+                firstDayOfWeek={1}
+                weekendDays={[0]}
+                highlightToday
+                hideOutsideDates
+                // The form stores a plain "YYYY-MM-DD" string, but the
+                // calendar itself needs a real Date object to know which
+                // day/month to highlight and open on — passing the raw
+                // string here was the root cause of the calendar showing
+                // the wrong (or no) selected day.
+                value={
+                  form.values.expiryDate
+                    ? parseDateOnly(form.values.expiryDate)
+                    : null
+                }
+                onChange={(value) => {
+                  if (!value) {
+                    form.setFieldValue("expiryDate", "");
+                    return;
+                  }
+                  // Different Mantine versions return either a Date or an
+                  // already-formatted string here — handle both so this
+                  // keeps working across upgrades, and always convert using
+                  // LOCAL date parts (never toISOString) to avoid an
+                  // off-by-one-day shift near midnight.
+                  const asDate =
+                    typeof value === "string" ? parseDateOnly(value) : value;
+                  form.setFieldValue("expiryDate", formatDateOnly(asDate));
+                }}
+                popoverProps={{
+                  withArrow: false,
+                  radius: "md",
+                  zIndex: 3000,
+                  styles: {
+                    dropdown: {
+                      border: `1px solid ${INK.border}`,
+                      padding: 10,
+                      boxShadow: "0 14px 34px -14px rgba(29,43,84,0.35)",
+                    },
+                  },
+                }}
               />
               <Text size="xs" c="dimmed">
-                Once a product has any batch with an expiry, all outgoing stock
-                (sales, damage) is deducted FIFO — soonest expiry first.
+                Once this product has any batch with an expiry date, sales and
+                write-offs will automatically use up the stock that expires
+                soonest first — so nothing gets left to expire unnecessarily.
               </Text>
+              <TextInput
+                label="Batch number (optional)"
+                description="e.g. LOT-001 or 2026-A. Leave blank to auto-generate one (B-0001, B-0002, …)."
+                placeholder="Batch number"
+                size="sm"
+                {...form.getInputProps("batchNumber")}
+              />
             </>
           )}
 
@@ -2246,6 +2449,7 @@ function MovementsModal({
   const [movements, setMovements] = useState<PublicStockMovement[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const isMobile = useMediaQuery("(max-width: 48em)");
 
   useEffect(() => {
     if (opened && product) {
@@ -2283,6 +2487,8 @@ function MovementsModal({
       size="lg"
       centered
       radius="md"
+      fullScreen={isMobile}
+      transitionProps={isMobile ? { transition: "slide-up" } : undefined}
     >
       {loading ? (
         <Text c="dimmed" size="sm">
@@ -2300,7 +2506,13 @@ function MovementsModal({
         />
       ) : (
         <ScrollArea h={400}>
-          <Table striped highlightOnHover withTableBorder verticalSpacing="sm">
+          <Table
+            striped
+            highlightOnHover
+            withTableBorder
+            verticalSpacing="sm"
+            miw={480}
+          >
             <Table.Thead>
               <Table.Tr>
                 <Table.Th>Date</Table.Th>
@@ -2370,8 +2582,10 @@ function BatchesModal({
   const [batches, setBatches] = useState<PublicStockBatch[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [writeOffTarget, setWriteOffTarget] =
-    useState<PublicStockBatch | null>(null);
+  const [writeOffTarget, setWriteOffTarget] = useState<PublicStockBatch | null>(
+    null,
+  );
+  const isMobile = useMediaQuery("(max-width: 48em)");
 
   useEffect(() => {
     if (opened && product) {
@@ -2400,6 +2614,8 @@ function BatchesModal({
         size="lg"
         centered
         radius="md"
+        fullScreen={isMobile}
+        transitionProps={isMobile ? { transition: "slide-up" } : undefined}
       >
         {loading ? (
           <Text c="dimmed" size="sm">
@@ -2417,9 +2633,16 @@ function BatchesModal({
           />
         ) : (
           <ScrollArea h={400}>
-            <Table striped highlightOnHover withTableBorder verticalSpacing="sm">
+            <Table
+              striped
+              highlightOnHover
+              withTableBorder
+              verticalSpacing="sm"
+              miw={640}
+            >
               <Table.Thead>
                 <Table.Tr>
+                  <Table.Th>Batch</Table.Th>
                   <Table.Th>Expiry Date</Table.Th>
                   <Table.Th ta="right">Qty</Table.Th>
                   <Table.Th ta="right">Unit Cost</Table.Th>
@@ -2431,6 +2654,11 @@ function BatchesModal({
               <Table.Tbody>
                 {batches.map((b) => (
                   <Table.Tr key={b.id}>
+                    <Table.Td>
+                      <Text size="sm" fw={600} style={{ color: INK.navy }}>
+                        {b.batchNumber || "—"}
+                      </Text>
+                    </Table.Td>
                     <Table.Td>
                       <Text size="sm" style={LEDGER_NUM}>
                         {formatDate(b.expiryDate)}
@@ -2516,6 +2744,7 @@ function WriteOffModal({
   const [error, setError] = useState<string | null>(null);
   const [quantity, setQuantity] = useState<number>(1);
   const [reason, setReason] = useState("expiry write-off");
+  const isMobile = useMediaQuery("(max-width: 48em)");
 
   useEffect(() => {
     if (batch) {
@@ -2556,6 +2785,8 @@ function WriteOffModal({
       }
       centered
       radius="md"
+      fullScreen={isMobile}
+      transitionProps={isMobile ? { transition: "slide-up" } : undefined}
     >
       <Stack gap="md">
         {batch && (
@@ -2567,6 +2798,9 @@ function WriteOffModal({
             <Group justify="space-between" wrap="wrap">
               <Text size="sm" c="dimmed">
                 Expiry {formatDate(batch.expiryDate)} · {batch.productName}
+              </Text>
+              <Text size="sm" c="dimmed">
+                Batch {batch.batchNumber || "—"}
               </Text>
               <Text fw={700} style={{ ...LEDGER_NUM, color: INK.navy }}>
                 {batch.quantity} available
@@ -2598,11 +2832,7 @@ function WriteOffModal({
         </Text>
 
         {error && (
-          <Alert
-            color="red"
-            variant="light"
-            icon={<AlertTriangle size={16} />}
-          >
+          <Alert color="red" variant="light" icon={<AlertTriangle size={16} />}>
             {error}
           </Alert>
         )}

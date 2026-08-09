@@ -60,24 +60,129 @@ import {
   AlertTriangle,
   Info,
   FileCheck2,
+  Plus,
+  Trash2,
 } from "lucide-react";
 
 import {
   analyzeImportFile,
   executeImport,
   getErrorMessage,
+  rollbackImport,
 } from "../../api/backend";
 
 import { notifications } from "@mantine/notifications";
 
 import type {
+  ConflictStrategy,
   FieldMapping,
   FileAnalysis,
   ImportResult,
+  ImportTarget,
   PublicUser,
+  RollbackResult,
 } from "../../types/backend";
 
 import { INK } from "../../theme";
+
+// ==========================================
+// IMPORT TARGETS (spec §23 "Import Wizard")
+// ==========================================
+
+const IMPORT_TARGETS: {
+  value: ImportTarget;
+  label: string;
+  description: string;
+}[] = [
+  {
+    value: "products",
+    label: "Products",
+    description: "SKU, name, prices, stock, categories and suppliers",
+  },
+  {
+    value: "customers",
+    label: "Customers",
+    description: "Name, phone, address, CNIC / NTN and buyer type",
+  },
+  {
+    value: "suppliers",
+    label: "Suppliers",
+    description: "Name, contact person, phone, email and tax number",
+  },
+  {
+    value: "opening_stock",
+    label: "Opening Stock",
+    description: "Match products by SKU and add starting quantities",
+  },
+];
+
+// Per-target mapping vocabulary for the "Maps To" dropdown.
+const TARGET_FIELD_OPTIONS: Record<ImportTarget, { value: string; label: string }[]> = {
+  products: [
+    { value: "name", label: "Product Name (core)" },
+    { value: "sku", label: "SKU / Item Code (core)" },
+    { value: "cost_price", label: "Cost Price (core)" },
+    { value: "sell_price", label: "Sell Price (core)" },
+    { value: "quantity_in_stock", label: "Quantity / Stock (core)" },
+    { value: "unit", label: "Unit of Measure (core)" },
+    { value: "expiry_date", label: "Expiry Date (core)" },
+    { value: "category", label: "Category (core)" },
+    { value: "supplier", label: "Supplier (core)" },
+    { value: "tax_rate", label: "Tax Rate (core)" },
+    { value: "skip", label: "Skip this column" },
+    { value: "custom", label: "Custom field (enter name below)" },
+  ],
+  customers: [
+    { value: "customer_name", label: "Customer Name (core)" },
+    { value: "email", label: "Email (core)" },
+    { value: "phone", label: "Phone (core)" },
+    { value: "address", label: "Address (core)" },
+    { value: "cnic", label: "CNIC (core)" },
+    { value: "ntn", label: "NTN (core)" },
+    { value: "strn", label: "STRN (core)" },
+    { value: "buyer_type", label: "Buyer Type (core)" },
+    { value: "skip", label: "Skip this column" },
+  ],
+  suppliers: [
+    { value: "supplier_name", label: "Supplier Name (core)" },
+    { value: "contact_person", label: "Contact Person (core)" },
+    { value: "email", label: "Email (core)" },
+    { value: "phone", label: "Phone (core)" },
+    { value: "address", label: "Address (core)" },
+    { value: "tax_number", label: "Tax / NTN Number (core)" },
+    { value: "skip", label: "Skip this column" },
+  ],
+  opening_stock: [
+    { value: "sku", label: "SKU / Item Code (core)" },
+    { value: "name", label: "Product Name (optional, for messages)" },
+    { value: "quantity", label: "Opening Quantity (core)" },
+    { value: "cost_price", label: "Cost Price (core)" },
+    { value: "expiry_date", label: "Expiry Date (core)" },
+    { value: "skip", label: "Skip this column" },
+  ],
+};
+
+// Fields that must be supplied by the file, per target.
+const REQUIRED_FIELDS: Record<ImportTarget, string[]> = {
+  products: ["name", "sku"],
+  customers: ["customer_name"],
+  suppliers: ["supplier_name"],
+  opening_stock: ["sku"],
+};
+
+// Labels used in the confirm/result steps.
+const TARGET_LABELS: Record<ImportTarget, { noun: string; stat: string }> = {
+  products: { noun: "products", stat: "Products Imported" },
+  customers: { noun: "customers", stat: "Customers Imported" },
+  suppliers: { noun: "suppliers", stat: "Suppliers Imported" },
+  opening_stock: { noun: "opening stock rows", stat: "Stock Lines Applied" },
+};
+
+const CONFLICT_OPTIONS = [
+  { value: "skip", label: "Skip existing records" },
+  { value: "overwrite", label: "Overwrite existing records" },
+  { value: "suffix", label: "Add as new (suffix -1, -2…)" },
+];
 
 // ==========================================
 // DESIGN TOKENS — shared, defined in src/theme.ts
@@ -172,26 +277,12 @@ interface ImportWizardProps {
 // CORE FIELD OPTIONS (what the dropdown shows)
 // ==========================================
 
-const CORE_FIELD_OPTIONS = [
-  { value: "name", label: "Product Name (core)" },
-  { value: "sku", label: "SKU / Item Code (core)" },
-  { value: "cost_price", label: "Cost Price (core)" },
-  { value: "sell_price", label: "Sell Price (core)" },
-  { value: "quantity_in_stock", label: "Quantity / Stock (core)" },
-  { value: "unit", label: "Unit of Measure (core)" },
-  { value: "expiry_date", label: "Expiry Date (core)" },
-  { value: "category", label: "Category (core)" },
-  { value: "supplier", label: "Supplier (core)" },
-  { value: "tax_rate", label: "Tax Rate (core)" },
-  { value: "skip", label: "Skip this column" },
-  { value: "custom", label: "Custom field (enter name below)" },
-];
-
 const CONFIDENCE_COLORS: Record<string, string> = {
   high: "green",
   medium: "yellow",
   low: "orange",
   unknown: "gray",
+  manual: "blue",
 };
 
 // Rotating status line shown while the "Analyze" step is active —
@@ -213,6 +304,9 @@ export default function ImportWizard({
 }: ImportWizardProps) {
   const [activeStep, setActiveStep] = useState(0);
 
+  // Import target (products / customers / suppliers / opening stock)
+  const [target, setTarget] = useState<ImportTarget>("products");
+
   // Step 1: File upload
   const [file, setFile] = useState<File | null>(null);
   const [fileBytes, setFileBytes] = useState<number[]>([]);
@@ -227,10 +321,18 @@ export default function ImportWizard({
   const [mappings, setMappings] = useState<FieldMapping[]>([]);
   const [customNames, setCustomNames] = useState<Record<number, string>>({});
 
-  // Step 4: Import
+  // Step 3/4: Import
   const [templateName, setTemplateName] = useState("");
+  const [conflictStrategy, setConflictStrategy] =
+    useState<ConflictStrategy>("skip");
+  const [preview, setPreview] = useState<ImportResult | null>(null);
+  const [previewing, setPreviewing] = useState(false);
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
+  const [rollbackResult, setRollbackResult] = useState<RollbackResult | null>(
+    null,
+  );
+  const [rollingBack, setRollingBack] = useState(false);
 
   const [error, setError] = useState<string | null>(null);
 
@@ -276,6 +378,16 @@ export default function ImportWizard({
 
   // ---- Step 2: Analyze file ----
 
+  function handleTargetChange(next: ImportTarget | null) {
+    if (!next) return;
+    setTarget(next);
+    setAnalysis(null);
+    setMappings([]);
+    setPreview(null);
+    setImportResult(null);
+    setError(null);
+  }
+
   async function handleAnalyze() {
     if (fileBytes.length === 0) {
       setError("No file selected");
@@ -290,6 +402,7 @@ export default function ImportWizard({
       const result = await analyzeImportFile({
         fileBytes,
         fileType,
+        target,
       });
 
       setAnalysis(result);
@@ -364,29 +477,93 @@ export default function ImportWizard({
     });
   }
 
-  // ---- Step 4: Execute import ----
+  // ---- Step 3: Manually added fields (not columns in the file) ----
+
+  // Adds a field that isn't in the spreadsheet. It carries a constant
+  // value applied to every imported row (e.g. "set Category = Medicines").
+  function addManualField() {
+    setMappings((prev) => [
+      ...prev,
+      {
+        sourceColumn: "Manual field",
+        sourceIndex: analysis?.headers.length ?? 0,
+        targetField: "custom:manual_field",
+        fieldCategory: "custom",
+        confidence: "manual",
+        manualValue: "",
+      },
+    ]);
+  }
+
+  function updateManualValue(index: number, value: string) {
+    setMappings((prev) => {
+      const next = [...prev];
+      next[index] = { ...next[index], manualValue: value };
+      return next;
+    });
+  }
+
+  function removeMapping(index: number) {
+    setMappings((prev) => prev.filter((_, i) => i !== index));
+  }
+
+  // Is this a manual field (added in the UI rather than read from the file)?
+  function isManualField(m: FieldMapping) {
+    return m.confidence === "manual" || m.manualValue !== undefined;
+  }
+
+  // ---- Step 4: Preview (dry run) then execute ----
+
+  function buildRequest(dryRun: boolean): Parameters<typeof executeImport>[0] {
+    // Filter out skipped columns
+    const activeMappings = mappings.filter((m) => m.targetField !== "skip");
+    return {
+      target,
+      mappings: activeMappings,
+      fileBytes,
+      fileType,
+      templateName,
+      importData: true,
+      conflictStrategy,
+      dryRun,
+      fileName: file?.name ?? null,
+    };
+  }
+
+  async function handlePreview() {
+    setPreviewing(true);
+    setError(null);
+    setPreview(null);
+
+    try {
+      const result = await executeImport(buildRequest(true));
+      setPreview(result);
+    } catch (err) {
+      const message = getErrorMessage(err);
+      setError(message);
+      notifications.show({
+        title: "Preview failed",
+        message,
+        color: "red",
+      });
+    } finally {
+      setPreviewing(false);
+    }
+  }
 
   async function handleImport() {
     setImporting(true);
     setError(null);
 
     try {
-      // Filter out skipped columns
-      const activeMappings = mappings.filter((m) => m.targetField !== "skip");
-
-      const result = await executeImport({
-        mappings: activeMappings,
-        fileBytes,
-        fileType,
-        templateName,
-        importData: true,
-      });
+      const result = await executeImport(buildRequest(false));
 
       setImportResult(result);
+      setPreview(null);
       setActiveStep(4);
       notifications.show({
         title: "Import complete",
-        message: `${result.productsImported} product(s) imported`,
+        message: `${result.productsImported + result.customersImported + result.itemsImported} ${TARGET_LABELS[target].noun} imported`,
         color: "green",
       });
     } catch (err) {
@@ -403,6 +580,32 @@ export default function ImportWizard({
     }
   }
 
+  async function handleRollback() {
+    if (!importResult?.jobId) return;
+    setRollingBack(true);
+    setError(null);
+
+    try {
+      const result = await rollbackImport(importResult.jobId);
+      setRollbackResult(result);
+      notifications.show({
+        title: "Import rolled back",
+        message: `${result.productsDeleted + result.customersDeleted + result.suppliersDeleted} record(s) removed, ${result.quantityReverted} unit(s) reverted`,
+        color: "yellow",
+      });
+    } catch (err) {
+      const message = getErrorMessage(err);
+      setError(message);
+      notifications.show({
+        title: "Rollback failed",
+        message,
+        color: "red",
+      });
+    } finally {
+      setRollingBack(false);
+    }
+  }
+
   // ---- Count mapped fields ----
   const coreCount = mappings.filter(
     (m) => m.fieldCategory === "core" && m.targetField !== "skip",
@@ -413,9 +616,18 @@ export default function ImportWizard({
   const skippedCount = mappings.filter((m) => m.targetField === "skip").length;
 
   const mappedTargets = mappings.map((m) => m.targetField);
-  const hasName = mappedTargets.includes("name");
-  const hasSku = mappedTargets.includes("sku");
+  const missingRequired = REQUIRED_FIELDS[target].filter(
+    (f) => !mappedTargets.includes(f),
+  );
   const hasExpiry = mappedTargets.includes("expiry_date");
+  const importedCount =
+    (importResult?.productsImported ?? 0) +
+    (importResult?.customersImported ?? 0) +
+    (importResult?.itemsImported ?? 0);
+  const previewCount =
+    (preview?.productsImported ?? 0) +
+    (preview?.customersImported ?? 0) +
+    (preview?.itemsImported ?? 0);
 
   return (
     <Stack>
@@ -465,6 +677,50 @@ export default function ImportWizard({
           icon={<Upload size={16} />}
         >
           <Stack mt="xl" className="wiz-step-enter">
+            <Card
+              withBorder
+              padding="lg"
+              radius="md"
+              style={{ borderColor: INK.border }}
+            >
+              <Stack>
+                <Group gap={8}>
+                  <FileSpreadsheet size={16} color={INK.gold} />
+                  <Text fw={700} size="sm" style={{ color: INK.navy }}>
+                    What are you importing?
+                  </Text>
+                </Group>
+                <SimpleGrid cols={{ base: 1, sm: 2 }}>
+                  {IMPORT_TARGETS.map((t) => (
+                    <Box
+                      key={t.value}
+                      onClick={() => handleTargetChange(t.value)}
+                      role="button"
+                      style={{
+                        border: `2px solid ${
+                          target === t.value ? INK.gold : INK.border
+                        }`,
+                        borderRadius: 10,
+                        padding: "12px 14px",
+                        cursor: "pointer",
+                        background:
+                          target === t.value ? INK.goldSoft : INK.paper,
+                        transition:
+                          "border-color 150ms ease, background-color 150ms ease",
+                      }}
+                    >
+                      <Text fw={700} size="sm" style={{ color: INK.navy }}>
+                        {t.label}
+                      </Text>
+                      <Text size="xs" c="dimmed">
+                        {t.description}
+                      </Text>
+                    </Box>
+                  ))}
+                </SimpleGrid>
+              </Stack>
+            </Card>
+
             <Card
               withBorder
               padding="lg"
@@ -624,11 +880,15 @@ export default function ImportWizard({
                 <Alert color="yellow" variant="light" icon={<Info size={16} />}>
                   <Text size="xs">
                     <strong>Fully file-driven:</strong> every field comes from
-                    your file. A <strong>Product Name</strong> and an{" "}
-                    <strong>SKU</strong> column are required — they are never
-                    auto-generated. A column that looks like an expiry date
-                    (expiry, best before, use by…) is auto-mapped to Expiry
-                    Date, which enables FIFO batch tracking.
+                    your file.{" "}
+                    {target === "products" &&
+                      "A Product Name and an SKU column are required — they are never auto-generated. A column that looks like an expiry date (expiry, best before, use by…) is auto-mapped to Expiry Date, which enables FIFO batch tracking."}
+                    {target === "customers" &&
+                      "A Customer Name column is required — it is never auto-generated."}
+                    {target === "suppliers" &&
+                      "A Supplier Name column is required — it is never auto-generated."}
+                    {target === "opening_stock" &&
+                      "Rows match products by SKU — run the Products import first. A SKU column is required; quantities are added to existing stock."}
                   </Text>
                 </Alert>
 
@@ -663,96 +923,169 @@ export default function ImportWizard({
                         <Table.Th style={{ width: 30 }}>#</Table.Th>
                         <Table.Th>Column Header</Table.Th>
                         <Table.Th>Maps To</Table.Th>
+                        <Table.Th>Fixed Value</Table.Th>
                         <Table.Th>Confidence</Table.Th>
                         <Table.Th>Sample Data</Table.Th>
                       </Table.Tr>
                     </Table.Thead>
                     <Table.Tbody>
-                      {mappings.map((mapping, index) => (
-                        <Table.Tr
-                          key={index}
-                          className="wiz-row-enter"
-                          style={{
-                            animationDelay: `${Math.min(index, 10) * 30}ms`,
-                          }}
-                        >
-                          <Table.Td>
-                            <Text size="xs" c="dimmed" style={LEDGER_NUM}>
-                              {String.fromCharCode(65 + index)}
-                            </Text>
-                          </Table.Td>
-                          <Table.Td>
-                            <Text
-                              fw={600}
-                              size="sm"
-                              style={{ color: INK.navy }}
-                            >
-                              {mapping.sourceColumn}
-                            </Text>
-                          </Table.Td>
-                          <Table.Td>
-                            <Stack gap="xs">
-                              <Select
-                                size="xs"
-                                data={CORE_FIELD_OPTIONS}
-                                value={
-                                  mapping.targetField === "skip"
-                                    ? "skip"
-                                    : mapping.fieldCategory === "custom"
-                                      ? "custom"
-                                      : mapping.targetField
-                                }
-                                onChange={(value) =>
-                                  value && updateMapping(index, value)
-                                }
-                              />
-                              {mapping.fieldCategory === "custom" && (
+                      {mappings.map((mapping, index) => {
+                        const manual = isManualField(mapping);
+                        return (
+                          <Table.Tr
+                            key={index}
+                            className="wiz-row-enter"
+                            style={{
+                              animationDelay: `${Math.min(index, 10) * 30}ms`,
+                              background: manual ? INK.goldSoft : undefined,
+                            }}
+                          >
+                            <Table.Td>
+                              <Text size="xs" c="dimmed" style={LEDGER_NUM}>
+                                {manual ? "＋" : String.fromCharCode(65 + index)}
+                              </Text>
+                            </Table.Td>
+                            <Table.Td>
+                              {manual ? (
                                 <TextInput
                                   size="xs"
-                                  placeholder="Field name"
-                                  value={customNames[index] ?? ""}
-                                  onChange={(e) =>
-                                    updateCustomName(
-                                      index,
-                                      e.currentTarget.value,
-                                    )
+                                  placeholder="Field name (e.g. Batch / Lot)"
+                                  value={mapping.sourceColumn}
+                                  onChange={(e) => {
+                                    const name = e.currentTarget.value;
+                                    setMappings((prev) => {
+                                      const next = [...prev];
+                                      next[index] = {
+                                        ...next[index],
+                                        sourceColumn: name,
+                                        targetField:
+                                          mapping.fieldCategory === "custom"
+                                            ? `custom:${name}`
+                                            : next[index].targetField,
+                                      };
+                                      return next;
+                                    });
+                                  }}
+                                />
+                              ) : (
+                                <Text
+                                  fw={600}
+                                  size="sm"
+                                  style={{ color: INK.navy }}
+                                >
+                                  {mapping.sourceColumn}
+                                </Text>
+                              )}
+                            </Table.Td>
+                            <Table.Td>
+                              <Stack gap="xs">
+                                <Select
+                                  size="xs"
+                                  data={TARGET_FIELD_OPTIONS[target]}
+                                  value={
+                                    mapping.targetField === "skip"
+                                      ? "skip"
+                                      : mapping.fieldCategory === "custom"
+                                        ? "custom"
+                                        : mapping.targetField
                                   }
-                                  label="Custom field name"
+                                  onChange={(value) =>
+                                    value && updateMapping(index, value)
+                                  }
+                                />
+                                {mapping.fieldCategory === "custom" &&
+                                  !manual && (
+                                    <TextInput
+                                      size="xs"
+                                      placeholder="Field name"
+                                      value={customNames[index] ?? ""}
+                                      onChange={(e) =>
+                                        updateCustomName(
+                                          index,
+                                          e.currentTarget.value,
+                                        )
+                                      }
+                                      label="Custom field name"
+                                    />
+                                  )}
+                              </Stack>
+                            </Table.Td>
+                            <Table.Td>
+                              {manual && (
+                                <TextInput
+                                  size="xs"
+                                  placeholder="Fixed value for every row"
+                                  value={mapping.manualValue ?? ""}
+                                  onChange={(e) =>
+                                    updateManualValue(index, e.currentTarget.value)
+                                  }
                                 />
                               )}
-                            </Stack>
-                          </Table.Td>
-                          <Table.Td>
-                            <Badge
-                              color={
-                                CONFIDENCE_COLORS[mapping.confidence] ?? "gray"
-                              }
-                              variant="light"
-                              size="sm"
-                              radius="sm"
-                            >
-                              {mapping.confidence}
-                            </Badge>
-                          </Table.Td>
-                          <Table.Td>
-                            <Text
-                              size="xs"
-                              c="dimmed"
-                              lineClamp={2}
-                              style={LEDGER_NUM}
-                            >
-                              {analysis.sampleRows
-                                .map((row) => row[mapping.sourceIndex] ?? "")
-                                .filter((v) => v)
-                                .slice(0, 3)
-                                .join(", ")}
-                            </Text>
-                          </Table.Td>
-                        </Table.Tr>
-                      ))}
+                            </Table.Td>
+                            <Table.Td>
+                              <Group gap={6} justify="space-between">
+                                <Badge
+                                  color={CONFIDENCE_COLORS[mapping.confidence] ?? "gray"}
+                                  variant="light"
+                                  size="sm"
+                                  radius="sm"
+                                >
+                                  {mapping.confidence}
+                                </Badge>
+                                {manual && (
+                                  <Button
+                                    size="compact-xs"
+                                    variant="subtle"
+                                    color="red"
+                                    onClick={() => removeMapping(index)}
+                                  >
+                                    <Trash2 size={13} />
+                                  </Button>
+                                )}
+                              </Group>
+                            </Table.Td>
+                            <Table.Td>
+                              {manual ? (
+                                <Text size="xs" c="dimmed">
+                                  Applies to all rows
+                                </Text>
+                              ) : (
+                                <Text
+                                  size="xs"
+                                  c="dimmed"
+                                  lineClamp={2}
+                                  style={LEDGER_NUM}
+                                >
+                                  {analysis.sampleRows
+                                    .map((row) => row[mapping.sourceIndex] ?? "")
+                                    .filter((v) => v)
+                                    .slice(0, 3)
+                                    .join(", ")}
+                                </Text>
+                              )}
+                            </Table.Td>
+                          </Table.Tr>
+                        );
+                      })}
                     </Table.Tbody>
                   </Table>
                 </ScrollArea>
+
+                <Group justify="flex-start" mt="sm">
+                  <Button
+                    size="xs"
+                    variant="light"
+                    color="blue"
+                    leftSection={<Plus size={14} />}
+                    onClick={addManualField}
+                  >
+                    Add a field manually
+                  </Button>
+                  <Text size="xs" c="dimmed">
+                    Add values that aren't columns in your file — e.g. set
+                    the same Category or Batch for every imported row.
+                  </Text>
+                </Group>
 
                 {error && (
                   <Alert
@@ -806,7 +1139,7 @@ export default function ImportWizard({
 
             <Divider />
 
-            {(!hasName || !hasSku) && (
+            {missingRequired.length > 0 && (
               <Alert
                 color="yellow"
                 variant="light"
@@ -816,13 +1149,27 @@ export default function ImportWizard({
                   Required fields are not mapped
                 </Text>
                 <Text size="sm">
-                  Every row must supply a <strong>Product Name</strong> and an{" "}
-                  <strong>SKU</strong> directly from your file — the system
-                  never auto-generates them.{" "}
-                  {!hasName && "Map a column to Product Name. "}
-                  {!hasSku && "Map a column to SKU / Item Code. "}
+                  Every row must supply its required fields directly from your
+                  file — the system never auto-generates them.{" "}
+                  {missingRequired.includes("name") &&
+                    "Map a column to Product Name. "}
+                  {missingRequired.includes("sku") && "Map a column to SKU. "}
+                  {missingRequired.includes("customer_name") &&
+                    "Map a column to Customer Name. "}
+                  {missingRequired.includes("supplier_name") &&
+                    "Map a column to Supplier Name. "}
                   Rows without them will fail with a descriptive error (no
                   partial imports).
+                </Text>
+              </Alert>
+            )}
+
+            {target === "opening_stock" && (
+              <Alert color="teal" variant="light" icon={<Info size={16} />}>
+                <Text size="sm">
+                  <strong>Products must already exist:</strong> opening stock
+                  rows are matched to products by SKU. Run the Products import
+                  first, then this file.
                 </Text>
               </Alert>
             )}
@@ -837,6 +1184,29 @@ export default function ImportWizard({
                 </Text>
               </Alert>
             )}
+
+            <Divider />
+
+            {target !== "opening_stock" && (
+              <>
+                <Text fw={700} size="sm" style={{ color: INK.navy }}>
+                  Duplicate handling
+                </Text>
+                <Text size="xs" c="dimmed">
+                  What should happen when a record already exists (matched by
+                  SKU or name)?
+                </Text>
+                <Select
+                  size="sm"
+                  data={CONFLICT_OPTIONS}
+                  value={conflictStrategy}
+                  onChange={(v) => v && setConflictStrategy(v as ConflictStrategy)}
+                  maw={360}
+                />
+              </>
+            )}
+
+            <Divider />
 
             <Text fw={700} size="sm" style={{ color: INK.navy }}>
               Field Mapping
@@ -859,12 +1229,20 @@ export default function ImportWizard({
                       >
                         {m.targetField}
                       </Badge>
+                      {m.confidence === "manual" &&
+                        m.manualValue != null &&
+                        m.manualValue.trim() !== "" && (
+                          <Text span size="xs" c="dimmed">
+                            {" "}
+                            = "{m.manualValue.trim()}"
+                          </Text>
+                        )}
                     </Text>
                   </List.Item>
                 ))}
             </List>
 
-            {customCount > 0 && (
+            {target === "products" && customCount > 0 && (
               <Alert color="blue" variant="light" icon={<Info size={16} />}>
                 <Text size="sm" fw={600} mb="xs">
                   Custom fields will be created:
@@ -904,6 +1282,31 @@ export default function ImportWizard({
               </Alert>
             )}
 
+            {preview && (
+              <Alert color="blue" variant="light" icon={<Info size={16} />}>
+                <Text fw={600} size="sm" mb={4}>
+                  Preview ({previewCount} will be imported)
+                </Text>
+                <List size="sm">
+                  <List.Item>
+                    Ready to import: {previewCount}{" "}
+                    {TARGET_LABELS[target].noun}
+                  </List.Item>
+                  {preview.rowsSkipped > 0 && (
+                    <List.Item>
+                      Skipped (already exist): {preview.rowsSkipped}
+                    </List.Item>
+                  )}
+                  {preview.rowsWithErrors > 0 && (
+                    <List.Item>
+                      Will fail: {preview.rowsWithErrors} row(s) — see list
+                      below
+                    </List.Item>
+                  )}
+                </List>
+              </Alert>
+            )}
+
             <Group justify="space-between" mt="md">
               <Button
                 variant="subtle"
@@ -913,19 +1316,30 @@ export default function ImportWizard({
               >
                 Edit Mapping
               </Button>
-              <Button
-                onClick={handleImport}
-                loading={importing}
-                size="lg"
-                leftSection={<Rocket size={18} />}
-                style={{
-                  backgroundColor: INK.gold,
-                  color: INK.navy,
-                  fontWeight: 700,
-                }}
-              >
-                Import {analysis?.totalRows ?? 0} Products
-              </Button>
+              <Group>
+                <Button
+                  variant="outline"
+                  color="dark"
+                  leftSection={<ClipboardCheck size={16} />}
+                  loading={previewing}
+                  onClick={handlePreview}
+                >
+                  {preview ? "Refresh Preview" : "Preview"}
+                </Button>
+                <Button
+                  onClick={handleImport}
+                  loading={importing}
+                  size="lg"
+                  leftSection={<Rocket size={18} />}
+                  style={{
+                    backgroundColor: INK.gold,
+                    color: INK.navy,
+                    fontWeight: 700,
+                  }}
+                >
+                  Import {analysis?.totalRows ?? 0} {TARGET_LABELS[target].noun}
+                </Button>
+              </Group>
             </Group>
           </Stack>
         </Stepper.Step>
@@ -955,19 +1369,21 @@ export default function ImportWizard({
                     Import Complete
                   </Title>
                   <Text size="sm" c="dimmed">
-                    Your inventory has been updated.
+                    {importedCount.toLocaleString()} {TARGET_LABELS[target].noun}{" "}
+                    processed.
                   </Text>
                 </Stack>
 
                 <SimpleGrid cols={3} mt="md">
                   <SummaryStat
-                    label="Custom Fields Created"
-                    value={importResult.fieldsCreated}
+                    label={TARGET_LABELS[target].stat}
+                    value={importedCount}
+                    tone="success"
                   />
                   <SummaryStat
-                    label="Products Imported"
-                    value={importResult.productsImported}
-                    tone="success"
+                    label="Skipped (already existed)"
+                    value={importResult.rowsSkipped}
+                    tone={importResult.rowsSkipped > 0 ? "warning" : "success"}
                   />
                   <SummaryStat
                     label="Errors"
@@ -978,7 +1394,7 @@ export default function ImportWizard({
                   />
                 </SimpleGrid>
 
-                {importResult.fieldsCreated > 0 && (
+                {target === "products" && importResult.fieldsCreated > 0 && (
                   <Alert color="blue" variant="light" icon={<Info size={16} />}>
                     <Text fw={600} size="sm">
                       {importResult.fieldsCreated} custom field(s) were created.
@@ -1009,6 +1425,65 @@ export default function ImportWizard({
                         ))}
                       </List>
                     </ScrollArea>
+                  </Alert>
+                )}
+
+                {importResult.jobId && (
+                  <Alert
+                    color={rollbackResult ? "yellow" : "blue"}
+                    variant="light"
+                    icon={<Info size={16} />}
+                  >
+                    {rollbackResult ? (
+                      <Stack gap={4}>
+                        <Text fw={600} size="sm">
+                          Import rolled back
+                        </Text>
+                        <Text size="sm">
+                          {rollbackResult.productsDeleted} product(s),{" "}
+                          {rollbackResult.customersDeleted} customer(s),{" "}
+                          {rollbackResult.suppliersDeleted} supplier(s) and{" "}
+                          {rollbackResult.movementsDeleted} movement(s) removed
+                          {rollbackResult.quantityReverted > 0 &&
+                            `; ${rollbackResult.quantityReverted} unit(s) of opening stock reverted`}
+                          .
+                        </Text>
+                      </Stack>
+                    ) : (
+                      <Stack gap={4}>
+                        <Text fw={600} size="sm">
+                          Imported too much?
+                        </Text>
+                        <Text size="sm">
+                          This run can be rolled back within 24 hours. Every
+                          imported record is removed and opening-stock
+                          quantities are reverted.
+                        </Text>
+                      </Stack>
+                    )}
+                    <Group mt="xs">
+                      {!rollbackResult && (
+                        <Button
+                          size="xs"
+                          variant="outline"
+                          color="red"
+                          loading={rollingBack}
+                          onClick={handleRollback}
+                        >
+                          Roll back this import
+                        </Button>
+                      )}
+                    </Group>
+                  </Alert>
+                )}
+
+                {error && (
+                  <Alert
+                    color="red"
+                    variant="light"
+                    icon={<AlertTriangle size={16} />}
+                  >
+                    {error}
                   </Alert>
                 )}
 
@@ -1046,16 +1521,18 @@ function SummaryStat({
   label: string;
   value: number;
   accent?: boolean;
-  tone?: "success" | "danger";
+  tone?: "success" | "danger" | "warning";
 }) {
   const color =
     tone === "success"
       ? INK.success
       : tone === "danger"
         ? INK.danger
-        : accent
+        : tone === "warning"
           ? INK.gold
-          : INK.navy;
+          : accent
+            ? INK.gold
+            : INK.navy;
   return (
     <Card
       withBorder

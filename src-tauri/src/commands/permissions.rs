@@ -190,7 +190,10 @@ mod tests {
         // Expected: Ok.
         let (pool, _p) = setup_pool().await;
         let result = check_permission(&pool, "admin", "inventory", "view").await;
-        assert!(result.is_ok(), "admin inventory view is seeded and must pass");
+        assert!(
+            result.is_ok(),
+            "admin inventory view is seeded and must pass"
+        );
     }
 
     #[tokio::test]
@@ -210,7 +213,10 @@ mod tests {
         // Expected: Ok.
         let (pool, _p) = setup_pool().await;
         let result = check_permission(&pool, "employee", "inventory", "view").await;
-        assert!(result.is_ok(), "employee inventory view is seeded and must pass");
+        assert!(
+            result.is_ok(),
+            "employee inventory view is seeded and must pass"
+        );
     }
 
     #[tokio::test]
@@ -260,13 +266,12 @@ mod tests {
             .await
             .expect("soft_delete should succeed");
         assert_eq!(rows, 1);
-        let deleted: Option<String> = sqlx::query_scalar(
-            "SELECT deleted_at FROM products WHERE id = ?",
-        )
-        .bind(&pid)
-        .fetch_one(&pool)
-        .await
-        .expect("fetch deleted_at");
+        let deleted: Option<String> =
+            sqlx::query_scalar("SELECT deleted_at FROM products WHERE id = ?")
+                .bind(&pid)
+                .fetch_one(&pool)
+                .await
+                .expect("fetch deleted_at");
         assert!(deleted.is_some(), "deleted_at should be set");
     }
 
@@ -276,8 +281,18 @@ mod tests {
         // Expected: first call affects 1 row, second call affects 0 (guard deleted_at IS NULL).
         let (pool, _p) = setup_pool().await;
         let pid = insert_product(&pool, "company-a", "SKU-2").await;
-        assert_eq!(soft_delete(&pool, "products", &pid, "company-a").await.unwrap(), 1);
-        assert_eq!(soft_delete(&pool, "products", &pid, "company-a").await.unwrap(), 0);
+        assert_eq!(
+            soft_delete(&pool, "products", &pid, "company-a")
+                .await
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            soft_delete(&pool, "products", &pid, "company-a")
+                .await
+                .unwrap(),
+            0
+        );
     }
 
     #[tokio::test]
@@ -350,7 +365,9 @@ mod tests {
         // Expected: Err "Record not found or deleted" (query guards deleted_at IS NULL).
         let (pool, _p) = setup_pool().await;
         let pid = insert_product(&pool, "company-a", "SKU-6").await;
-        soft_delete(&pool, "products", &pid, "company-a").await.unwrap();
+        soft_delete(&pool, "products", &pid, "company-a")
+            .await
+            .unwrap();
         let err = check_version(&pool, "products", &pid, 1).await.unwrap_err();
         assert!(err.contains("Record not found"), "got: {err}");
     }
@@ -374,7 +391,9 @@ mod tests {
         // Expected: version becomes 2 after bump.
         let (pool, _p) = setup_pool().await;
         let pid = insert_product(&pool, "company-a", "SKU-7").await;
-        bump_version(&pool, "products", &pid).await.expect("bump succeeds");
+        bump_version(&pool, "products", &pid)
+            .await
+            .expect("bump succeeds");
         let version: i64 = sqlx::query_scalar("SELECT version FROM products WHERE id = ?")
             .bind(&pid)
             .fetch_one(&pool)
@@ -392,4 +411,3 @@ mod tests {
         assert!(result.is_err());
     }
 }
-

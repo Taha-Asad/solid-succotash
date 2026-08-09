@@ -54,6 +54,7 @@ import {
   exportStockCsv,
   exportCustomerLedgerCsv,
   exportSalesCsv,
+  exportReportPdf,
   saveFileDialog,
   getErrorMessage,
 } from "../../api/backend";
@@ -90,22 +91,54 @@ function pct(value: number): string {
 // Recharts-safe money formatter (tooltip values may be undefined).
 const fmtMoney = (value: unknown): string => p(Math.round(Number(value ?? 0) * 100));
 
-// Opens a save dialog and exports the chosen report as CSV.
-async function exportReport(kind: "sales" | "stock" | "ledger"): Promise<void> {
+// Opens a save dialog and exports the chosen report as CSV or PDF.
+async function exportReport(
+  kind: "sales" | "stock" | "ledger",
+  format: "csv" | "pdf",
+): Promise<void> {
   const path = await saveFileDialog({
-    title: `Export ${kind} report as CSV`,
-    defaultPath: `${kind}-report.csv`,
-    filters: [{ name: "CSV", extensions: ["csv"] }],
+    title: `Export ${kind} report as ${format.toUpperCase()}`,
+    defaultPath: `${kind}-report.${format}`,
+    filters: [{ name: format.toUpperCase(), extensions: [format] }],
   });
   if (!path) return;
 
   try {
-    if (kind === "sales") await exportSalesCsv(path);
-    else if (kind === "stock") await exportStockCsv(path);
-    else await exportCustomerLedgerCsv(path);
+    if (format === "pdf") {
+      await exportReportPdf(kind, path);
+    } else if (kind === "sales") {
+      await exportSalesCsv(path);
+    } else if (kind === "stock") {
+      await exportStockCsv(path);
+    } else {
+      await exportCustomerLedgerCsv(path);
+    }
   } catch (err) {
     alert(getErrorMessage(err));
   }
+}
+
+// Inline CSV/PDF export button pair.
+function ExportButtons({
+  kind,
+  align = "flex-end",
+}: {
+  kind: "sales" | "stock" | "ledger";
+  align?: "flex-start" | "flex-end" | "space-between";
+}) {
+  const justify = align === "space-between" ? "space-between" : align;
+  return (
+    <Group justify={justify}>
+      <Group gap="xs">
+        <Button size="xs" variant="outline" onClick={() => exportReport(kind, "csv")}>
+          Export {kind} CSV
+        </Button>
+        <Button size="xs" variant="filled" onClick={() => exportReport(kind, "pdf")}>
+          Export {kind} PDF
+        </Button>
+      </Group>
+    </Group>
+  );
 }
 
 const fadeUp = {
@@ -326,11 +359,7 @@ function SalesReport() {
         <StatCard label="Invoices" value={summary.totalInvoices} tint={INK.chart.violet} footer="across all statuses" />
       </SimpleGrid>
 
-      <Group justify="flex-end">
-        <Button size="xs" variant="outline" onClick={() => exportReport("sales")}>
-          Export Sales CSV
-        </Button>
-      </Group>
+      <ExportButtons kind="sales" />
 
       <motion.div {...fadeUp} transition={{ duration: 0.5, delay: 0.1 }}>
         <Card withBorder shadow="sm" p="lg">
@@ -494,9 +523,7 @@ function StockReport() {
           min={1}
           w={160}
         />
-        <Button size="xs" variant="outline" onClick={() => exportReport("stock")}>
-          Export Stock CSV
-        </Button>
+        <ExportButtons kind="stock" />
       </Group>
 
       <motion.div {...fadeUp} transition={{ duration: 0.5, delay: 0.1 }}>
@@ -830,9 +857,7 @@ function CustomerLedgerReport() {
             <Group justify="space-between" mb="md">
               <Text fw={700} style={{ color: INK.navy }}>Customer Balances</Text>
               <Group>
-                <Button size="xs" variant="outline" onClick={() => exportReport("ledger")}>
-                  Export Ledger CSV
-                </Button>
+                <ExportButtons kind="ledger" align="flex-end" />
                 <Badge color="gold" variant="light">{data.length} customers</Badge>
               </Group>
             </Group>

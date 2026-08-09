@@ -14,6 +14,7 @@
 // If you nest a second MantineProvider inside, styles break.
 
 import "@mantine/core/styles.css";
+import "@mantine/dates/styles.css";
 import "@mantine/notifications/styles.css";
 import "./App.css";
 

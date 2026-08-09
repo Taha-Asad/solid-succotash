@@ -69,15 +69,30 @@ fn get_embedded_migrations() -> Vec<(i64, &'static str, &'static str)> {
             "009_soft_delete_versioning",
             include_str!("../../migrations/sqlite/009_soft_delete_versioning.sql"),
         ),
-                (
+        (
             10,
             "010_fts5_search",
             include_str!("../../migrations/sqlite/010_fts5_search.sql"),
         ),
-                        (
+        (
             11,
             "011_theme_settings",
             include_str!("../../migrations/sqlite/011_theme_settings.sql"),
+        ),
+        (
+            12,
+            "012_accounting_ledger",
+            include_str!("../../migrations/sqlite/012_accounting_ledger.sql"),
+        ),
+        (
+            13,
+            "013_custom_roles",
+            include_str!("../../migrations/sqlite/013_custom_roles.sql"),
+        ),
+        (
+            14,
+            "014_import_batches_and_units",
+            include_str!("../../migrations/sqlite/014_import_batches_and_units.sql"),
         ),
     ]
 }
@@ -136,11 +151,36 @@ pub async fn run_sqlite_migrations(sqlite_url: &str) -> Result<(), Box<dyn std::
             ensure_invoice_item_columns(&pool).await?;
             ensure_soft_delete_columns(&pool).await?;
         }
+
+        if version == 14 {
+            ensure_import_columns(&pool).await?;
+        }
     }
+
+    ensure_batch_number_column(&pool).await?;
 
     let _ = applied;
 
     pool.close().await;
+
+    Ok(())
+}
+
+/// Adds the `stock_batches.batch_number` column that backs batch labelling
+/// (migration 006 now declares it in the CREATE TABLE for fresh databases).
+/// Idempotent — same PRAGMA check as the other ensure_* helpers.
+async fn ensure_batch_number_column(pool: &SqlitePool) -> Result<(), Box<dyn std::error::Error>> {
+    let columns: Vec<String> = sqlx::query("PRAGMA table_info(stock_batches)")
+        .map(|row: sqlx::sqlite::SqliteRow| row.get::<String, _>(1))
+        .fetch_all(pool)
+        .await?;
+
+    if !columns.iter().any(|c| c == "batch_number") {
+        println!("Adding stock_batches.batch_number column (old database)");
+        sqlx::raw_sql("ALTER TABLE stock_batches ADD COLUMN batch_number TEXT")
+            .execute(pool)
+            .await?;
+    }
 
     Ok(())
 }
@@ -201,11 +241,10 @@ async fn ensure_soft_delete_columns(pool: &SqlitePool) -> Result<(), Box<dyn std
         "users",
     ] {
         let info_sql = format!("PRAGMA table_info({table})");
-        let columns: Vec<String> =
-            sqlx::query(sqlx::AssertSqlSafe(&*info_sql))
-                .map(|row: sqlx::sqlite::SqliteRow| row.get::<String, _>(1))
-                .fetch_all(pool)
-                .await?;
+        let columns: Vec<String> = sqlx::query(sqlx::AssertSqlSafe(&*info_sql))
+            .map(|row: sqlx::sqlite::SqliteRow| row.get::<String, _>(1))
+            .fetch_all(pool)
+            .await?;
 
         if !columns.iter().any(|c| c == "deleted_at") {
             println!("Adding {table}.deleted_at column (old database)");
@@ -219,6 +258,45 @@ async fn ensure_soft_delete_columns(pool: &SqlitePool) -> Result<(), Box<dyn std
             println!("Adding {table}.version column (old database)");
             let alter_sql =
                 format!("ALTER TABLE {table} ADD COLUMN version INTEGER NOT NULL DEFAULT 1");
+            sqlx::raw_sql(sqlx::AssertSqlSafe(&*alter_sql))
+                .execute(pool)
+                .await?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Adds the `import_batch_id` columns that back import rollback
+/// (migration 014). Idempotent — same PRAGMA check as the other
+/// ensure_* helpers.
+async fn ensure_import_columns(pool: &SqlitePool) -> Result<(), Box<dyn std::error::Error>> {
+    for table in ["products", "customers", "suppliers"] {
+        let info_sql = format!("PRAGMA table_info({table})");
+        let columns: Vec<String> = sqlx::query(sqlx::AssertSqlSafe(&*info_sql))
+            .map(|row: sqlx::sqlite::SqliteRow| row.get::<String, _>(1))
+            .fetch_all(pool)
+            .await?;
+
+        if !columns.iter().any(|c| c == "import_batch_id") {
+            println!("Adding {table}.import_batch_id column (old database)");
+            let alter_sql = format!("ALTER TABLE {table} ADD COLUMN import_batch_id TEXT");
+            sqlx::raw_sql(sqlx::AssertSqlSafe(&*alter_sql))
+                .execute(pool)
+                .await?;
+        }
+    }
+
+    for table in ["stock_movements", "stock_batches"] {
+        let info_sql = format!("PRAGMA table_info({table})");
+        let columns: Vec<String> = sqlx::query(sqlx::AssertSqlSafe(&*info_sql))
+            .map(|row: sqlx::sqlite::SqliteRow| row.get::<String, _>(1))
+            .fetch_all(pool)
+            .await?;
+
+        if !columns.iter().any(|c| c == "import_batch_id") {
+            println!("Adding {table}.import_batch_id column (old database)");
+            let alter_sql = format!("ALTER TABLE {table} ADD COLUMN import_batch_id TEXT");
             sqlx::raw_sql(sqlx::AssertSqlSafe(&*alter_sql))
                 .execute(pool)
                 .await?;

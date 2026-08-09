@@ -190,7 +190,18 @@ mod tests {
         // Input: a company id, user id/email/role, action "create", resource "product".
         // Expected: exactly one audit_logs row with the given values.
         let (pool, _p) = setup_pool().await;
-        log_audit(&pool, "company-a", "user-1", "a@b.com", "owner", "create", "product", Some("prod-1"), "Created product").await;
+        log_audit(
+            &pool,
+            "company-a",
+            "user-1",
+            "a@b.com",
+            "owner",
+            "create",
+            "product",
+            Some("prod-1"),
+            "Created product",
+        )
+        .await;
 
         let (company_id, action, resource): (String, String, String) = sqlx::query_as(
             "SELECT company_id, action, resource FROM audit_logs WHERE user_id = 'user-1'",
@@ -209,7 +220,10 @@ mod tests {
         // Expected: function returns () even though the DB has no audit_logs row
         // (fire-and-forget semantics) — we only assert it doesn't panic.
         let (pool, _p) = setup_pool().await;
-        log_audit(&pool, "c", "u", "e@e.com", "owner", "update", "product", None, "x").await;
+        log_audit(
+            &pool, "c", "u", "e@e.com", "owner", "update", "product", None, "x",
+        )
+        .await;
     }
 
     // ---------------------------------------------------------------
@@ -236,7 +250,8 @@ mod tests {
         let pool = state_of::<SqlitePool>(&app);
         let company_id = owner.company_id.as_deref().unwrap();
         clear_audit(&pool).await;
-        let employee = insert_user(&pool, company_id, "emp@test.com", "Emp", "employee", true).await;
+        let employee =
+            insert_user(&pool, company_id, "emp@test.com", "Emp", "employee", true).await;
         set_session_user(&app, employee).await;
 
         let err = list_audit_logs(state_of(&app), state_of(&app), None, None)
@@ -254,8 +269,22 @@ mod tests {
         let pool = state_of::<SqlitePool>(&app);
         let company_id = owner.company_id.as_deref().unwrap();
         clear_audit(&pool).await;
-        seed_audit(&pool, company_id, &owner.id, "2026-01-01T00:00:00Z", "create").await;
-        seed_audit(&pool, company_id, &owner.id, "2026-01-02T00:00:00Z", "update").await;
+        seed_audit(
+            &pool,
+            company_id,
+            &owner.id,
+            "2026-01-01T00:00:00Z",
+            "create",
+        )
+        .await;
+        seed_audit(
+            &pool,
+            company_id,
+            &owner.id,
+            "2026-01-02T00:00:00Z",
+            "update",
+        )
+        .await;
 
         let logs = list_audit_logs(state_of(&app), state_of(&app), None, None)
             .await

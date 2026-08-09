@@ -38,7 +38,11 @@ pub async fn get_retention_summary(
     }
     let company_id = user.company_id.as_ref().ok_or("Not assigned")?;
 
-    let years = if retention_years < 1 { 5 } else { retention_years };
+    let years = if retention_years < 1 {
+        5
+    } else {
+        retention_years
+    };
 
     // Calculate cutoff date
     let now = std::time::SystemTime::now()
@@ -61,20 +65,28 @@ pub async fn get_retention_summary(
     .fetch_one(pool.inner()).await.unwrap_or(0);
 
     let mov_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM stock_movements WHERE company_id = ? AND created_at < ?"
+        "SELECT COUNT(*) FROM stock_movements WHERE company_id = ? AND created_at < ?",
     )
-    .bind(company_id).bind(&cutoff)
-    .fetch_one(pool.inner()).await.unwrap_or(0);
+    .bind(company_id)
+    .bind(&cutoff)
+    .fetch_one(pool.inner())
+    .await
+    .unwrap_or(0);
 
     let oldest_inv: Option<String> = sqlx::query_scalar(
-        "SELECT MIN(invoice_date) FROM invoices WHERE company_id = ? AND deleted_at IS NULL"
+        "SELECT MIN(invoice_date) FROM invoices WHERE company_id = ? AND deleted_at IS NULL",
     )
-    .bind(company_id).fetch_one(pool.inner()).await.unwrap_or(None);
+    .bind(company_id)
+    .fetch_one(pool.inner())
+    .await
+    .unwrap_or(None);
 
-    let oldest_mov: Option<String> = sqlx::query_scalar(
-        "SELECT MIN(created_at) FROM stock_movements WHERE company_id = ?"
-    )
-    .bind(company_id).fetch_one(pool.inner()).await.unwrap_or(None);
+    let oldest_mov: Option<String> =
+        sqlx::query_scalar("SELECT MIN(created_at) FROM stock_movements WHERE company_id = ?")
+            .bind(company_id)
+            .fetch_one(pool.inner())
+            .await
+            .unwrap_or(None);
 
     Ok(RetentionSummary {
         invoices_archivable: inv_count,
@@ -99,7 +111,11 @@ pub async fn archive_old_records(
     }
     let company_id = user.company_id.as_ref().ok_or("Not assigned")?;
 
-    let years = if retention_years < 1 { 5 } else { retention_years };
+    let years = if retention_years < 1 {
+        5
+    } else {
+        retention_years
+    };
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -123,7 +139,9 @@ pub async fn archive_old_records(
 
     Ok(format!(
         "Archived {} invoices and {} purchase orders older than {} years.",
-        inv.rows_affected(), po.rows_affected(), years
+        inv.rows_affected(),
+        po.rows_affected(),
+        years
     ))
 }
 
@@ -132,13 +150,39 @@ fn format_timestamp(secs: u64) -> String {
     let mut y = 1970u64;
     let mut rem = days;
     loop {
-        let d = if (y%4==0&&y%100!=0)||(y%400==0) {366} else {365};
-        if rem < d { break; }
-        rem -= d; y += 1;
+        let d = if (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0) {
+            366
+        } else {
+            365
+        };
+        if rem < d {
+            break;
+        }
+        rem -= d;
+        y += 1;
     }
-    let leap = (y%4==0&&y%100!=0)||(y%400==0);
-    let md = [31,if leap{29}else{28},31,30,31,30,31,31,30,31,30,31];
+    let leap = (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0);
+    let md = [
+        31,
+        if leap { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
     let mut mo = 1u64;
-    for &d in &md { if rem < d { break; } rem -= d; mo += 1; }
+    for &d in &md {
+        if rem < d {
+            break;
+        }
+        rem -= d;
+        mo += 1;
+    }
     format!("{:04}-{:02}-{:02}", y, mo, rem + 1)
 }
