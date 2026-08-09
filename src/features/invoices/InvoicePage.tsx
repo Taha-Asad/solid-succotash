@@ -66,6 +66,7 @@ import type {
 } from "../../types/backend";
 
 import { INK } from "../../theme";
+import { AppDateInput } from "../../components/AppDateInput";
 import { ReceiptText, Plus } from "lucide-react";
 
 // ==========================================
@@ -237,7 +238,7 @@ function InvoiceListView({
           >
             Billing
           </Text>
-          <Title order={2} style={{ color: INK.navy, letterSpacing: -0.3 }}>
+          <Title order={2} style={{ color: INK.text, letterSpacing: -0.3 }}>
             Invoices
           </Title>
           <Text size="sm" c="dimmed">
@@ -268,7 +269,7 @@ function InvoiceListView({
           <Text size="xs" fw={600} style={{ color: "#5C6B84", textTransform: "uppercase", letterSpacing: 0.4 }}>
             Total Invoices
           </Text>
-          <Title order={2} className="tabular" style={{ color: INK.navy }}>{totalInvoices}</Title>
+          <Title order={2} className="tabular" style={{ color: INK.text }}>{totalInvoices}</Title>
           <Text size="xs" c="dimmed" mt={4}>across all statuses</Text>
         </Card>
         <Card withBorder shadow="sm" padding="lg">
@@ -314,7 +315,7 @@ function InvoiceListView({
             >
               <ReceiptText size={22} />
             </div>
-            <Text fw={600} style={{ color: INK.navy }}>
+            <Text fw={600} style={{ color: INK.text }}>
               No invoices yet
             </Text>
             <Text size="sm" c="dimmed" maw={320}>
@@ -345,7 +346,7 @@ function InvoiceListView({
                     onClick={() => onOpenInvoice(inv.id)}
                   >
                     <Table.Td>
-                      <Text fw={600} size="sm" className="mono" style={{ color: INK.navy }}>
+                      <Text fw={600} size="sm" className="mono" style={{ color: INK.text }}>
                         {inv.invoiceNumber}
                       </Text>
                     </Table.Td>
@@ -522,16 +523,16 @@ function CreateInvoiceModal({
             </Group>
 
             <SimpleGrid cols={2}>
-              <TextInput
+              <AppDateInput
                 label="Invoice Date"
-                type="date"
                 required
-                {...form.getInputProps("invoiceDate")}
+                value={form.values.invoiceDate}
+                onChange={(v) => form.setFieldValue("invoiceDate", v)}
               />
-              <TextInput
+              <AppDateInput
                 label="Due Date"
-                type="date"
-                {...form.getInputProps("dueDate")}
+                value={form.values.dueDate}
+                onChange={(v) => form.setFieldValue("dueDate", v)}
               />
             </SimpleGrid>
 
@@ -1456,10 +1457,10 @@ function PaymentModal({
               ]}
               {...form.getInputProps("paymentMethod")}
             />
-            <TextInput
+            <AppDateInput
               label="Payment Date"
-              type="date"
-              {...form.getInputProps("paymentDate")}
+              value={form.values.paymentDate}
+              onChange={(v) => form.setFieldValue("paymentDate", v)}
             />
           </SimpleGrid>
 

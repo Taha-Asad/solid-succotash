@@ -222,7 +222,7 @@ export default function UserManagementView({
                 <Users size={20} />
               </div>
               <Stack gap={0}>
-                <Title order={3} style={{ color: INK.navy, letterSpacing: -0.3 }}>
+                <Title order={3} style={{ color: INK.text, letterSpacing: -0.3 }}>
                   Team Members
                 </Title>
                 <Text size="sm" c="dimmed">
@@ -286,7 +286,7 @@ export default function UserManagementView({
                           <Avatar color={ROLE_COLORS[u.role]} radius="xl" size="sm" style={{ fontWeight: 700 }}>
                             {u.fullName.charAt(0).toUpperCase()}
                           </Avatar>
-                          <Text size="sm" fw={600} style={{ color: INK.navy }}>
+                          <Text size="sm" fw={600} style={{ color: INK.text }}>
                             {u.fullName}
                           </Text>
                           {u.id === currentUser.id && (
@@ -595,7 +595,7 @@ function RolesPermissionsCard({
               <Shield size={20} />
             </div>
             <Stack gap={0}>
-              <Title order={3} style={{ color: INK.navy, letterSpacing: -0.3 }}>
+              <Title order={3} style={{ color: INK.text, letterSpacing: -0.3 }}>
                 Roles & Permissions
               </Title>
               <Text size="sm" c="dimmed">
@@ -670,7 +670,7 @@ function RolesPermissionsCard({
                         return (
                           <Table.Tr key={module}>
                             <Table.Td>
-                              <Text size="sm" fw={600} style={{ color: INK.navy }}>
+                              <Text size="sm" fw={600} style={{ color: INK.text }}>
                                 {MODULE_LABELS[module] ?? module}
                               </Text>
                             </Table.Td>

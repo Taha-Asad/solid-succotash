@@ -490,6 +490,10 @@ export function analyzeInvoiceExcelTemplate(): Promise<ExcelTemplateAnalysis> {
   return invoke<ExcelTemplateAnalysis>("analyze_invoice_excel_template");
 }
 
+export function downloadSampleInvoiceTemplate(savePath: string): Promise<string> {
+  return invoke<string>("download_sample_invoice_template", { savePath });
+}
+
 // ==========================================
 // PURCHASE ORDERS
 // ==========================================
@@ -519,7 +523,7 @@ export function addPOItem(input: {
   quantity: number;
   unitCost: number;
   taxRate: number;
-  expiryDate: string;
+  expiryDate?: string;
 }): Promise<PublicPOItem[]> {
   return invoke<PublicPOItem[]>("add_po_item", input);
 }
@@ -537,8 +541,14 @@ export function submitPurchaseOrder(
   return invoke<PublicPurchaseOrder>("submit_purchase_order", { poId });
 }
 
-export function receivePOItems(poId: string): Promise<PublicPurchaseOrder> {
-  return invoke<PublicPurchaseOrder>("receive_po_items", { poId });
+// Expiry dates are entered at RECEIVE time (from the supplier's delivery
+// note), not when the PO item is added — the expiry isn't known until the
+// physical goods arrive.
+export function receivePOItems(
+  poId: string,
+  expiries: { itemId: string; expiryDate: string }[],
+): Promise<PublicPurchaseOrder> {
+  return invoke<PublicPurchaseOrder>("receive_po_items", { poId, expiries });
 }
 
 export function recordPOPayment(input: {

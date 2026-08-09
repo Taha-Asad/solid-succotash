@@ -48,6 +48,7 @@ import type {
 } from "../../types/backend";
 
 import { INK } from "../../theme";
+import { AppDateInput } from "../../components/AppDateInput";
 
 const fadeUp = {
   initial: { opacity: 0, y: 14 },
@@ -89,7 +90,7 @@ export default function AccountsPage() {
           >
             Accounting
           </Text>
-          <Text fw={800} size="xl" style={{ color: INK.navy, letterSpacing: -0.4 }}>
+          <Text fw={800} size="xl" style={{ color: INK.text, letterSpacing: -0.4 }}>
             Ledger & Accounts
           </Text>
           <Text  c="dimmed">
@@ -181,7 +182,7 @@ function TrialBalance() {
       <Card withBorder shadow="sm" p="lg">
         <Group justify="space-between" mb="md">
           <Stack gap={0}>
-            <Text fw={700} style={{ color: INK.navy }}>Trial Balance</Text>
+            <Text fw={700} style={{ color: INK.text }}>Trial Balance</Text>
             <Text size="xs" c="dimmed">
               Sum of debits must equal sum of credits
             </Text>
@@ -215,7 +216,7 @@ function TrialBalance() {
                     <Badge size="xs" variant="light" color="gray">{a.code}</Badge>
                   </Table.Td>
                   <Table.Td>
-                    <Text fw={600}  style={{ color: INK.navy }}>{a.name}</Text>
+                    <Text fw={600}  style={{ color: INK.text }}>{a.name}</Text>
                   </Table.Td>
                   <Table.Td>
                     <Badge size="xs" variant="light" color={TYPE_COLOR[a.accountType] ?? "gray"}>
@@ -257,7 +258,7 @@ function TrialBalance() {
 
       <SimpleGrid cols={{ base: 1, sm: 2 }} mt="md">
         <Card withBorder shadow="sm" p="lg">
-          <Text fw={700}  style={{ color: INK.navy }} mb="xs">
+          <Text fw={700}  style={{ color: INK.text }} mb="xs">
             Account Types
           </Text>
           <Stack gap={6}>
@@ -266,14 +267,14 @@ function TrialBalance() {
               return (
                 <Group key={key} justify="space-between">
                   <Text  c="dimmed">{label}</Text>
-                  <Text  fw={600} style={{ color: INK.navy }}>{count}</Text>
+                  <Text  fw={600} style={{ color: INK.text }}>{count}</Text>
                 </Group>
               );
             })}
           </Stack>
         </Card>
         <Card withBorder shadow="sm" p="lg">
-          <Text fw={700}  style={{ color: INK.navy }} mb="xs">
+          <Text fw={700}  style={{ color: INK.text }} mb="xs">
             Health
           </Text>
           <Stack gap={6}>
@@ -301,7 +302,7 @@ function TrialBalance() {
         title={selected ? `${selected.code} · ${selected.name}` : "Account Ledger"}
         size="lg"
         centered
-        styles={{ title: { fontWeight: 800, color: INK.navy } }}
+        styles={{ title: { fontWeight: 800, color: INK.text } }}
       >
         <ScrollArea style={{ maxHeight: 440 }}>
           <Table highlightOnHover stickyHeader>
@@ -367,7 +368,7 @@ function JournalList() {
     <Card withBorder shadow="sm" p="lg">
       <Group justify="space-between" mb="md">
         <Stack gap={0}>
-          <Text fw={700} style={{ color: INK.navy }}>Journal Entries</Text>
+          <Text fw={700} style={{ color: INK.text }}>Journal Entries</Text>
           <Text size="xs" c="dimmed">Latest {entries.length} postings</Text>
         </Stack>
         {error && <Badge color="red" variant="light">{error}</Badge>}
@@ -387,7 +388,7 @@ function JournalList() {
               <Box
                 key={entry.id}
                 style={{
-                  border: "1px solid #E8ECF6",
+                  border: `1px solid ${INK.border}`,
                   borderRadius: 12,
                   padding: 14,
                   background: INK.paper,
@@ -398,7 +399,7 @@ function JournalList() {
                     <Badge  variant="filled" color="gray" style={{ textTransform: "capitalize" }}>
                       {entry.referenceType}
                     </Badge>
-                    <Text size="xs" fw={600} style={{ color: INK.navy }}>
+                    <Text size="xs" fw={600} style={{ color: INK.text }}>
                       {entry.entryDate}
                     </Text>
                   </Group>
@@ -406,7 +407,7 @@ function JournalList() {
                     {p(debit)} = {p(credit)}
                   </Text>
                 </Group>
-                <Text  fw={600} mb="xs" style={{ color: INK.navy }}>
+                <Text  fw={600} mb="xs" style={{ color: INK.text }}>
                   {entry.description ?? "Journal entry"}
                 </Text>
                 <Table withTableBorder>
@@ -516,13 +517,12 @@ function ManualEntryForm() {
   return (
     <SimpleGrid cols={{ base: 1, lg: 3 }}>
       <Card withBorder shadow="sm" p="lg">
-        <Text fw={700} style={{ color: INK.navy }} mb="md">New Journal Entry</Text>
+        <Text fw={700} style={{ color: INK.text }} mb="md">New Journal Entry</Text>
         <Stack gap="sm">
-          <TextInput
+          <AppDateInput
             label="Date"
-            type="date"
             value={entryDate}
-            onChange={(e) => setEntryDate(e.currentTarget.value)}
+            onChange={setEntryDate}
           />
           <TextInput
             label="Description"
@@ -532,11 +532,11 @@ function ManualEntryForm() {
           />
           <Group justify="space-between" pt="xs">
             <Text  c="dimmed">Debit total</Text>
-            <Text  fw={700} style={{ color: INK.navy }}>Rs {totalDebit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</Text>
+            <Text  fw={700} style={{ color: INK.text }}>Rs {totalDebit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</Text>
           </Group>
           <Group justify="space-between">
             <Text  c="dimmed">Credit total</Text>
-            <Text  fw={700} style={{ color: INK.navy }}>Rs {totalCredit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</Text>
+            <Text  fw={700} style={{ color: INK.text }}>Rs {totalCredit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</Text>
           </Group>
           <Badge color={balanced ? "green" : "red"} variant="light" size="lg">
             {balanced
@@ -562,7 +562,7 @@ function ManualEntryForm() {
 
       <Card withBorder shadow="sm" p="lg" style={{ gridColumn: "span 2" }}>
         <Group justify="space-between" mb="md">
-          <Text fw={700} style={{ color: INK.navy }}>Entry Lines</Text>
+          <Text fw={700} style={{ color: INK.text }}>Entry Lines</Text>
           <Button size="xs" variant="light" onClick={addLine}>
             Add line
           </Button>
@@ -573,7 +573,7 @@ function ManualEntryForm() {
               <Box
                 key={index}
                 style={{
-                  border: "1px solid #E8ECF6",
+                  border: `1px solid ${INK.border}`,
                   borderRadius: 10,
                   padding: 10,
                 }}

@@ -13,6 +13,7 @@ import {
 
 import {
   Avatar,
+  ActionIcon,
   Badge,
   Box,
   Button,
@@ -37,6 +38,8 @@ import {
   Settings2,
   Download,
   ContactRound,
+  Moon,
+  Sun,
 } from "lucide-react";
 
 import {
@@ -63,6 +66,7 @@ import AccountsPage from "../features/accounts/AccountsPage";
 import SearchBar from "./SearchBar";
 import NotificationBell from "./NotificationBell";
 import { INK } from "../theme";
+import { useAppTheme } from "../theme/AppThemeProvider";
 
 // ==========================================
 // NAV MODEL
@@ -230,6 +234,7 @@ export default function AppShell({
     companyName: "Ijaz & Company",
     theme: null,
   });
+  const { isDark, toggleColorScheme } = useAppTheme();
 
   useEffect(() => {
     Promise.all([getCompany(), getTheme()])
@@ -543,8 +548,8 @@ export default function AppShell({
             alignItems: "center",
             justifyContent: "space-between",
             padding: "18px 28px",
-            borderBottom: "1px solid #E3E8F1",
-            background: "rgba(246,248,252,0.85)",
+            borderBottom: "1px solid var(--app-border)",
+            background: "color-mix(in srgb, var(--app-bg) 85%, transparent)",
             backdropFilter: "blur(8px)",
             position: "sticky",
             top: 0,
@@ -561,7 +566,7 @@ export default function AppShell({
               <Text size="sm" style={{ color: accentLabel, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase" }}>
                 {current?.label}
               </Text>
-              <Text fw={800} size="lg" style={{ color: INK.navy, letterSpacing: -0.3 }}>
+              <Text fw={800} size="lg" style={{ color: INK.text, letterSpacing: -0.3 }}>
                 {current?.description}
               </Text>
             </Stack>
@@ -602,6 +607,22 @@ export default function AppShell({
                 </Button>
               </Tooltip>
             )}
+            <Tooltip label={isDark ? "Switch to light mode" : "Switch to dark mode"}>
+              <ActionIcon
+                variant="light"
+                size="lg"
+                radius="md"
+                onClick={toggleColorScheme}
+                aria-label="Toggle color scheme"
+                style={{
+                  color: INK.gold,
+                  background: isDark ? "rgba(201,149,42,0.14)" : "rgba(201,149,42,0.10)",
+                  border: `1px solid ${hexToRgba(accent, 0.25)}`,
+                }}
+              >
+                {isDark ? <Sun size={17} /> : <Moon size={17} />}
+              </ActionIcon>
+            </Tooltip>
             <NotificationBell
               onNavigate={(view) => setView(view)}
             />
@@ -664,7 +685,7 @@ export default function AppShell({
         onClose={() => setUpdateOpen(false)}
         title="Update available"
         centered
-        styles={{ title: { fontWeight: 800, color: INK.navy } }}
+        styles={{ title: { fontWeight: 800, color: INK.text } }}
       >
         <Stack gap="md">
           <Text size="sm">
@@ -681,7 +702,7 @@ export default function AppShell({
                 borderRadius: 8,
               }}
             >
-              <Text size="xs" style={{ whiteSpace: "pre-wrap", color: INK.navy }}>
+              <Text size="xs" style={{ whiteSpace: "pre-wrap", color: INK.text }}>
                 {updateResult.update.body}
               </Text>
             </Box>

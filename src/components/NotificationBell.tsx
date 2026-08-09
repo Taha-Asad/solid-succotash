@@ -45,9 +45,9 @@ const SEVERITY_ICON: Record<string, React.ReactNode> = {
 };
 
 const RESOURCE_ICON: Record<string, React.ReactNode> = {
-  product: <Package size={15} style={{ color: INK.navySoft }} />,
-  invoice: <ReceiptText size={15} style={{ color: INK.navySoft }} />,
-  batch: <PackageCheck size={15} style={{ color: INK.navySoft }} />,
+  product: <Package size={15} style={{ color: INK.textSoft }} />,
+  invoice: <ReceiptText size={15} style={{ color: INK.textSoft }} />,
+  batch: <PackageCheck size={15} style={{ color: INK.textSoft }} />,
 };
 
 export default function NotificationBell({
@@ -99,9 +99,9 @@ export default function NotificationBell({
             styles={{
               root: {
                 border: `1px solid ${INK.border}`,
-                background: "#fff",
-                color: INK.navy,
-                "&:hover": { background: INK.paper },
+                background: "var(--app-surface)",
+                color: INK.text,
+                "&:hover": { background: "var(--app-soft)" },
               },
             }}
           >
@@ -118,7 +118,7 @@ export default function NotificationBell({
             py="sm"
             style={{ borderBottom: `1px solid ${INK.border}`, background: INK.paper }}
           >
-            <Text fw={700} size="sm" style={{ color: INK.navy }}>
+            <Text fw={700} size="sm" style={{ color: INK.text }}>
               Notifications
             </Text>
             <Badge
@@ -152,7 +152,7 @@ export default function NotificationBell({
                     }}
                     onClick={() => handleClick(notif)}
                     onMouseEnter={(e) =>
-                      (e.currentTarget.style.background = "#EEF2FA")
+                      (e.currentTarget.style.background = "var(--app-soft)")
                     }
                     onMouseLeave={(e) =>
                       (e.currentTarget.style.background = "transparent")
@@ -165,7 +165,7 @@ export default function NotificationBell({
                       {RESOURCE_ICON[notif.resourceType]}
                     </Group>
                     <Stack gap={0} style={{ flex: 1, minWidth: 0 }}>
-                      <Text size="sm" fw={600} style={{ color: INK.navy }} lineClamp={1}>
+                      <Text size="sm" fw={600} style={{ color: INK.text }} lineClamp={1}>
                         {notif.title}
                       </Text>
                       <Text size="xs" c="dimmed" lineClamp={2}>
@@ -185,7 +185,7 @@ export default function NotificationBell({
                 <Text
                   size="xs"
                   fw={600}
-                  style={{ color: INK.navySoft, cursor: "pointer" }}
+                  style={{ color: INK.textSoft, cursor: "pointer" }}
                   onClick={() => {
                     setOpened(false);
                     onNavigate("inventory");

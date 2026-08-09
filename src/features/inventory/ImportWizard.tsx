@@ -62,12 +62,16 @@ import {
   FileCheck2,
   Plus,
   Trash2,
+  History,
+  RefreshCw,
+  Undo2,
 } from "lucide-react";
 
 import {
   analyzeImportFile,
   executeImport,
   getErrorMessage,
+  listImportJobs,
   rollbackImport,
 } from "../../api/backend";
 
@@ -77,6 +81,7 @@ import type {
   ConflictStrategy,
   FieldMapping,
   FileAnalysis,
+  ImportJob,
   ImportResult,
   ImportTarget,
   PublicUser,
@@ -255,8 +260,15 @@ function WizardStyles() {
         background-size: 200% 100%;
         animation: wiz-shimmer 1.4s linear infinite;
       }
+      .wiz-glow-bar {
+        height: 4px;
+        border-radius: 999px;
+        background-image: linear-gradient(90deg, ${INK.navy} 0%, ${INK.gold} 50%, ${INK.navy} 100%);
+        background-size: 200% 100%;
+        animation: wiz-shimmer 2.6s linear infinite;
+      }
       @media (prefers-reduced-motion: reduce) {
-        .wiz-step-enter, .wiz-row-enter, .wiz-pop-in, .wiz-scan-icon, .wiz-shimmer-bar > div {
+        .wiz-step-enter, .wiz-row-enter, .wiz-pop-in, .wiz-scan-icon, .wiz-shimmer-bar > div, .wiz-glow-bar {
           animation: none !important;
         }
       }
@@ -334,7 +346,30 @@ export default function ImportWizard({
   );
   const [rollingBack, setRollingBack] = useState(false);
 
+  // Import history (recent runs, with rollback where available)
+  const [importJobs, setImportJobs] = useState<ImportJob[]>([]);
+  const [jobsLoading, setJobsLoading] = useState(false);
+  const [historyRollbackId, setHistoryRollbackId] = useState<string | null>(
+    null,
+  );
+
   const [error, setError] = useState<string | null>(null);
+
+  async function loadJobs() {
+    setJobsLoading(true);
+    try {
+      const jobs = await listImportJobs();
+      setImportJobs(jobs);
+    } catch {
+      setImportJobs([]);
+    } finally {
+      setJobsLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadJobs();
+  }, []);
 
   // Rotate the analyzing status message while that step is showing
   useEffect(() => {
@@ -561,6 +596,7 @@ export default function ImportWizard({
       setImportResult(result);
       setPreview(null);
       setActiveStep(4);
+      loadJobs();
       notifications.show({
         title: "Import complete",
         message: `${result.productsImported + result.customersImported + result.itemsImported} ${TARGET_LABELS[target].noun} imported`,
@@ -588,6 +624,7 @@ export default function ImportWizard({
     try {
       const result = await rollbackImport(importResult.jobId);
       setRollbackResult(result);
+      loadJobs();
       notifications.show({
         title: "Import rolled back",
         message: `${result.productsDeleted + result.customersDeleted + result.suppliersDeleted} record(s) removed, ${result.quantityReverted} unit(s) reverted`,
@@ -603,6 +640,31 @@ export default function ImportWizard({
       });
     } finally {
       setRollingBack(false);
+    }
+  }
+
+  // Roll back an import from the recent-imports history list.
+  async function handleHistoryRollback(jobId: string) {
+    setHistoryRollbackId(jobId);
+    setError(null);
+    try {
+      const result = await rollbackImport(jobId);
+      loadJobs();
+      notifications.show({
+        title: "Import rolled back",
+        message: `${result.productsDeleted + result.customersDeleted + result.suppliersDeleted} record(s) removed, ${result.quantityReverted} unit(s) reverted`,
+        color: "yellow",
+      });
+    } catch (err) {
+      const message = getErrorMessage(err);
+      setError(message);
+      notifications.show({
+        title: "Rollback failed",
+        message,
+        color: "red",
+      });
+    } finally {
+      setHistoryRollbackId(null);
     }
   }
 
@@ -633,10 +695,12 @@ export default function ImportWizard({
     <Stack>
       <WizardStyles />
 
+      <Box className="wiz-glow-bar" />
+
       <Group justify="space-between" align="flex-end">
         <Stack gap={2}>
           <Eyebrow>Onboarding</Eyebrow>
-          <Title order={3} style={{ color: INK.navy, letterSpacing: -0.3 }}>
+          <Title order={3} style={{ color: INK.text, letterSpacing: -0.3 }}>
             Import Wizard
           </Title>
           <Text c="dimmed" size="sm" maw={520}>
@@ -686,7 +750,7 @@ export default function ImportWizard({
               <Stack>
                 <Group gap={8}>
                   <FileSpreadsheet size={16} color={INK.gold} />
-                  <Text fw={700} size="sm" style={{ color: INK.navy }}>
+                  <Text fw={700} size="sm" style={{ color: INK.text }}>
                     What are you importing?
                   </Text>
                 </Group>
@@ -709,7 +773,7 @@ export default function ImportWizard({
                           "border-color 150ms ease, background-color 150ms ease",
                       }}
                     >
-                      <Text fw={700} size="sm" style={{ color: INK.navy }}>
+                      <Text fw={700} size="sm" style={{ color: INK.text }}>
                         {t.label}
                       </Text>
                       <Text size="xs" c="dimmed">
@@ -730,7 +794,7 @@ export default function ImportWizard({
               <Stack>
                 <Group gap={8}>
                   <FileSpreadsheet size={16} color={INK.gold} />
-                  <Text fw={700} size="sm" style={{ color: INK.navy }}>
+                  <Text fw={700} size="sm" style={{ color: INK.text }}>
                     Select your inventory file
                   </Text>
                 </Group>
@@ -758,7 +822,7 @@ export default function ImportWizard({
                   }}
                 >
                   <Stack align="center" gap={6}>
-                    <Upload size={22} color={INK.navy} />
+                    <Upload size={22} color={INK.text} />
                     <FileInput
                       placeholder="Click to browse or drag a file here"
                       accept=".xlsx,.xls,.csv,.docx"
@@ -971,7 +1035,7 @@ export default function ImportWizard({
                                 <Text
                                   fw={600}
                                   size="sm"
-                                  style={{ color: INK.navy }}
+                                  style={{ color: INK.text }}
                                 >
                                   {mapping.sourceColumn}
                                 </Text>
@@ -1189,7 +1253,7 @@ export default function ImportWizard({
 
             {target !== "opening_stock" && (
               <>
-                <Text fw={700} size="sm" style={{ color: INK.navy }}>
+                <Text fw={700} size="sm" style={{ color: INK.text }}>
                   Duplicate handling
                 </Text>
                 <Text size="xs" c="dimmed">
@@ -1208,7 +1272,7 @@ export default function ImportWizard({
 
             <Divider />
 
-            <Text fw={700} size="sm" style={{ color: INK.navy }}>
+            <Text fw={700} size="sm" style={{ color: INK.text }}>
               Field Mapping
             </Text>
             <List size="sm" spacing="xs">
@@ -1217,7 +1281,7 @@ export default function ImportWizard({
                 .map((m, i) => (
                   <List.Item key={i}>
                     <Text size="sm">
-                      <Text span fw={600} style={{ color: INK.navy }}>
+                      <Text span fw={600} style={{ color: INK.text }}>
                         {m.sourceColumn}
                       </Text>
                       {" → "}
@@ -1333,7 +1397,7 @@ export default function ImportWizard({
                   leftSection={<Rocket size={18} />}
                   style={{
                     backgroundColor: INK.gold,
-                    color: INK.navy,
+                    color: "#131C39",
                     fontWeight: 700,
                   }}
                 >
@@ -1359,13 +1423,13 @@ export default function ImportWizard({
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center",
-                      background: "#E7F3EC",
+                      background: "color-mix(in srgb, #1E8E5A 14%, transparent)",
                       color: INK.success,
                     }}
                   >
                     <CheckCircle2 size={30} />
                   </Box>
-                  <Title order={3} ta="center" style={{ color: INK.navy }}>
+                  <Title order={3} ta="center" style={{ color: INK.text }}>
                     Import Complete
                   </Title>
                   <Text size="sm" c="dimmed">
@@ -1506,6 +1570,139 @@ export default function ImportWizard({
           </Stack>
         </Stepper.Completed>
       </Stepper>
+
+      {/* ---- RECENT IMPORTS (history + rollback) ---- */}
+      <Card
+        withBorder
+        padding="lg"
+        radius="md"
+        mt="xl"
+        style={{ borderColor: INK.border }}
+      >
+        <Group justify="space-between" mb="md">
+          <Group gap={8}>
+            <History size={16} color={INK.gold} />
+            <Text fw={700} size="sm" style={{ color: INK.text }}>
+              Recent Imports
+            </Text>
+            <Badge color="gray" variant="light" radius="sm" size="sm">
+              {importJobs.length}
+            </Badge>
+          </Group>
+          <Button
+            size="xs"
+            variant="light"
+            leftSection={<RefreshCw size={13} />}
+            loading={jobsLoading}
+            onClick={loadJobs}
+          >
+            Refresh
+          </Button>
+        </Group>
+
+        {importJobs.length === 0 ? (
+          <Text size="sm" c="dimmed">
+            No imports yet — completed runs appear here and can be rolled back
+            within 24 hours.
+          </Text>
+        ) : (
+          <ScrollArea>
+            <Table withTableBorder verticalSpacing="xs">
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>File</Table.Th>
+                  <Table.Th>Target</Table.Th>
+                  <Table.Th>Imported</Table.Th>
+                  <Table.Th>Errors</Table.Th>
+                  <Table.Th>When</Table.Th>
+                  <Table.Th>Status</Table.Th>
+                  <Table.Th ta="right" />
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {importJobs.map((job) => {
+                  const rollbackLoading = historyRollbackId === job.id;
+                  const targetLabel =
+                    TARGET_LABELS[job.fileType as ImportTarget]?.noun ??
+                    job.fileType;
+                  const statusColor =
+                    job.status === "completed"
+                      ? "green"
+                      : job.status === "rolled_back"
+                        ? "yellow"
+                        : "blue";
+                  return (
+                    <Table.Tr key={job.id}>
+                      <Table.Td>
+                        <Text
+                          size="sm"
+                          fw={600}
+                          style={{ color: INK.text }}
+                          lineClamp={1}
+                          maw={220}
+                        >
+                          {job.fileName ?? "Import file"}
+                        </Text>
+                      </Table.Td>
+                      <Table.Td>
+                        <Badge color="brand" variant="light" radius="sm" size="sm">
+                          {targetLabel}
+                        </Badge>
+                      </Table.Td>
+                      <Table.Td>
+                        <Text size="sm" style={LEDGER_NUM}>
+                          {job.importedRecords}
+                        </Text>
+                      </Table.Td>
+                      <Table.Td>
+                        <Text
+                          size="sm"
+                          style={{
+                            ...LEDGER_NUM,
+                            color: job.errorRows > 0 ? INK.danger : INK.muted,
+                          }}
+                        >
+                          {job.errorRows}
+                        </Text>
+                      </Table.Td>
+                      <Table.Td>
+                        <Text size="xs" c="dimmed">
+                          {new Date(job.createdAt).toLocaleString()}
+                        </Text>
+                      </Table.Td>
+                      <Table.Td>
+                        <Badge
+                          color={statusColor}
+                          variant="light"
+                          radius="sm"
+                          size="sm"
+                        >
+                          {job.status.replace("_", " ")}
+                        </Badge>
+                      </Table.Td>
+                      <Table.Td ta="right">
+                        {job.rollbackAvailable && (
+                          <Button
+                            size="compact-xs"
+                            variant="outline"
+                            color="red"
+                            leftSection={<Undo2 size={12} />}
+                            loading={rollbackLoading}
+                            disabled={jobsLoading}
+                            onClick={() => handleHistoryRollback(job.id)}
+                          >
+                            Roll back
+                          </Button>
+                        )}
+                      </Table.Td>
+                    </Table.Tr>
+                  );
+                })}
+              </Table.Tbody>
+            </Table>
+          </ScrollArea>
+        )}
+      </Card>
     </Stack>
   );
 }
@@ -1532,7 +1729,7 @@ function SummaryStat({
           ? INK.gold
           : accent
             ? INK.gold
-            : INK.navy;
+            : INK.text;
   return (
     <Card
       withBorder

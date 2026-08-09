@@ -116,7 +116,7 @@ export default function SearchBar({ onSelect }: SearchBarProps) {
           radius="md"
           styles={{
             input: {
-              background: "#fff",
+              background: "var(--app-surface)",
               border: `1px solid ${INK.border}`,
               "&:focus": {
                 borderColor: INK.gold,
@@ -139,7 +139,7 @@ export default function SearchBar({ onSelect }: SearchBarProps) {
               color="gray"
               radius="xl"
               size="xl"
-              style={{ background: "#EEF2FA" }}
+              style={{ background: "var(--app-soft)" }}
             >
               <SearchX size={22} style={{ color: INK.muted }} />
             </ThemeIcon>
@@ -195,7 +195,7 @@ function ResultGroup({
         <Text
           size="xs"
           fw={800}
-          style={{ color: INK.navy, letterSpacing: 1.2, textTransform: "uppercase" }}
+          style={{ color: INK.text, letterSpacing: 1.2, textTransform: "uppercase" }}
         >
           {label}
         </Text>
@@ -217,7 +217,9 @@ function ResultGroup({
               cursor: "pointer",
               transition: "background 0.15s ease",
             }}
-            onMouseEnter={(e) => (e.currentTarget.style.background = "#EEF2FA")}
+            onMouseEnter={(e) =>
+              (e.currentTarget.style.background = "var(--app-soft)")
+            }
             onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
           >
             <ThemeIcon
@@ -233,7 +235,7 @@ function ResultGroup({
               )}
             </ThemeIcon>
             <Box style={{ flex: 1, minWidth: 0 }}>
-              <Text size="sm" fw={600} style={{ color: INK.navy }} lineClamp={1}>
+              <Text size="sm" fw={600} style={{ color: INK.text }} lineClamp={1}>
                 {item.name}
               </Text>
               <Text size="xs" c="dimmed" lineClamp={1}>

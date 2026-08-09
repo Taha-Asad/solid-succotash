@@ -174,7 +174,7 @@ export default function DashboardHome({ user }: { user: PublicUser }) {
             width: 40,
             height: 40,
             borderRadius: 12,
-            border: "3px solid #E3E8F1",
+            border: `3px solid ${INK.border}`,
             borderTopColor: INK.gold,
           }}
         />
@@ -344,7 +344,7 @@ export default function DashboardHome({ user }: { user: PublicUser }) {
           <Card withBorder shadow="sm" p="lg" style={{ height: "100%" }}>
             <Group justify="space-between" mb="md">
               <Stack gap={2}>
-                <Text fw={700} style={{ color: INK.navy }}>Revenue Trend</Text>
+                <Text fw={700} style={{ color: INK.text }}>Revenue Trend</Text>
                 <Text size="xs" c="dimmed">Monthly invoiced vs collected</Text>
               </Stack>
               <Badge color="gold" variant="light" size="sm">PKR</Badge>
@@ -370,8 +370,8 @@ export default function DashboardHome({ user }: { user: PublicUser }) {
                     <YAxis tick={{ fontSize: 11, fill: "#5C6B84" }} tickLine={false} axisLine={false} tickFormatter={(v) => `${v >= 1000 ? `${(v / 1000).toFixed(1)}k` : v}`} />
                     <Tooltip
                       formatter={(value) => [fmtMoney(value), ""]}
-                      labelStyle={{ fontWeight: 700, color: INK.navy }}
-                      contentStyle={{ borderRadius: 12, border: "1px solid #E3E8F1", boxShadow: "0 10px 30px -12px rgba(29,43,84,0.25)" }}
+                      labelStyle={{ fontWeight: 700, color: INK.text }}
+                      contentStyle={{ borderRadius: 12, border: `1px solid ${INK.border}`, boxShadow: "0 10px 30px -12px rgba(29,43,84,0.25)" }}
                     />
                     <Area type="monotone" dataKey="Revenue" stroke={INK.chart.navy} strokeWidth={2.5} fill="url(#revFill)" animationDuration={900} />
                     <Area type="monotone" dataKey="Collected" stroke={INK.chart.gold} strokeWidth={2} fill="url(#paidFill)" animationDuration={900} />
@@ -385,7 +385,7 @@ export default function DashboardHome({ user }: { user: PublicUser }) {
         {/* Invoice status donut */}
         <motion.div {...fadeUp} transition={{ duration: 0.5, delay: 0.16 }} style={{ flex: 1, minWidth: 260 }}>
           <Card withBorder shadow="sm" p="lg" style={{ height: "100%" }}>
-            <Text fw={700} style={{ color: INK.navy }} mb="md">Invoice Status</Text>
+            <Text fw={700} style={{ color: INK.text }} mb="md">Invoice Status</Text>
             {statusData.length === 0 ? (
               <EmptyChart message="No invoices yet." />
             ) : (
@@ -409,7 +409,7 @@ export default function DashboardHome({ user }: { user: PublicUser }) {
                       </Pie>
                       <Tooltip
                         formatter={(value, name) => [`${Number(value ?? 0)} invoices`, String(name)]}
-                        contentStyle={{ borderRadius: 12, border: "1px solid #E3E8F1" }}
+                        contentStyle={{ borderRadius: 12, border: `1px solid ${INK.border}` }}
                       />
                     </PieChart>
                   </ResponsiveContainer>
@@ -424,7 +424,7 @@ export default function DashboardHome({ user }: { user: PublicUser }) {
                       pointerEvents: "none",
                     }}
                   >
-                    <Text fw={800} size="xl" style={{ color: INK.navy }} className="tabular">
+                    <Text fw={800} size="xl" style={{ color: INK.text }} className="tabular">
                       {sales?.totalInvoices ?? 0}
                     </Text>
                     <Text size="xs" c="dimmed">total invoices</Text>
@@ -452,7 +452,7 @@ export default function DashboardHome({ user }: { user: PublicUser }) {
         {/* Top products */}
         <motion.div {...fadeUp} transition={{ duration: 0.5, delay: 0.22 }} style={{ flex: 2, minWidth: 300 }}>
           <Card withBorder shadow="sm" p="lg" style={{ height: "100%" }}>
-            <Text fw={700} style={{ color: INK.navy }} mb="md">Top Products by Revenue</Text>
+            <Text fw={700} style={{ color: INK.text }} mb="md">Top Products by Revenue</Text>
             {productData.length === 0 ? (
               <EmptyChart message="Finalize invoices to surface your best sellers." />
             ) : (
@@ -464,7 +464,7 @@ export default function DashboardHome({ user }: { user: PublicUser }) {
                     <YAxis type="category" dataKey="name" width={120} tick={{ fontSize: 11, fill: "#5C6B84" }} tickLine={false} axisLine={false} />
                     <Tooltip
                       formatter={(value) => [fmtMoney(value), "Revenue"]}
-                      contentStyle={{ borderRadius: 12, border: "1px solid #E3E8F1" }}
+                      contentStyle={{ borderRadius: 12, border: `1px solid ${INK.border}` }}
                       cursor={{ fill: "rgba(29,43,84,0.04)" }}
                     />
                     <Bar dataKey="Value" radius={[0, 8, 8, 0]} animationDuration={900}>
@@ -483,7 +483,7 @@ export default function DashboardHome({ user }: { user: PublicUser }) {
         <motion.div {...fadeUp} transition={{ duration: 0.5, delay: 0.28 }} style={{ flex: 1, minWidth: 260 }}>
           <Card withBorder shadow="sm" p="lg" style={{ height: "100%" }}>
             <Group justify="space-between" mb="md">
-              <Text fw={700} style={{ color: INK.navy }}>Stock Health</Text>
+              <Text fw={700} style={{ color: INK.text }}>Stock Health</Text>
               <Badge color={lowStockItems.length > 0 ? "orange" : "green"} variant="light" size="sm">
                 {lowStockItems.length} low
               </Badge>
@@ -521,7 +521,7 @@ export default function DashboardHome({ user }: { user: PublicUser }) {
                       return (
                         <Box key={item.productId}>
                           <Group justify="space-between" mb={4}>
-                            <Text size="xs" fw={600} style={{ color: INK.navy }} truncate>
+                            <Text size="xs" fw={600} style={{ color: INK.text }} truncate>
                               {item.productName}
                             </Text>
                             <Text size="xs" className="tabular" c={item.quantityInStock <= 0 ? "red" : "orange"}>
@@ -552,7 +552,7 @@ export default function DashboardHome({ user }: { user: PublicUser }) {
         <Card withBorder shadow="sm" p="lg">
           <Group justify="space-between" mb="md">
             <Stack gap={2}>
-              <Text fw={700} style={{ color: INK.navy }}>Recent Invoices</Text>
+              <Text fw={700} style={{ color: INK.text }}>Recent Invoices</Text>
               <Text size="xs" c="dimmed">Latest billing activity</Text>
             </Stack>
             <Badge color="gold" variant="light" size="sm">
@@ -582,7 +582,7 @@ export default function DashboardHome({ user }: { user: PublicUser }) {
                       transition={{ delay: 0.05 * i, duration: 0.3 }}
                     >
                       <Table.Td>
-                        <Text size="sm" fw={600} style={{ color: INK.navy }} className="mono">
+                        <Text size="sm" fw={600} style={{ color: INK.text }} className="mono">
                           {inv.invoiceNumber}
                         </Text>
                       </Table.Td>
@@ -632,7 +632,7 @@ export default function DashboardHome({ user }: { user: PublicUser }) {
         <Card withBorder shadow="sm" p="lg">
           <Group justify="space-between" mb="md">
             <Stack gap={2}>
-              <Text fw={700} style={{ color: INK.navy }}>Recent Purchase Orders</Text>
+              <Text fw={700} style={{ color: INK.text }}>Recent Purchase Orders</Text>
               <Text size="xs" c="dimmed">Latest procurement activity</Text>
             </Stack>
             <Badge color="gold" variant="light" size="sm">
@@ -662,7 +662,7 @@ export default function DashboardHome({ user }: { user: PublicUser }) {
                       transition={{ delay: 0.05 * i, duration: 0.3 }}
                     >
                       <Table.Td>
-                        <Text size="sm" fw={600} style={{ color: INK.navy }} className="mono">
+                        <Text size="sm" fw={600} style={{ color: INK.text }} className="mono">
                           {po.poNumber}
                         </Text>
                       </Table.Td>
@@ -742,7 +742,7 @@ function StatCard({
             <Text size="xs" fw={600} style={{ color: "#5C6B84", letterSpacing: 0.4, textTransform: "uppercase" }}>
               {label}
             </Text>
-            <Text fw={800} size="xl" style={{ color: INK.navy, letterSpacing: -0.5 }} className="tabular">
+            <Text fw={800} size="xl" style={{ color: INK.text, letterSpacing: -0.5 }} className="tabular">
               {isDash ? (
                 "—"
               ) : isMoney ? (
@@ -786,8 +786,8 @@ function EmptyChart({ message }: { message: string }) {
         alignItems: "center",
         justifyContent: "center",
         borderRadius: 12,
-        background: "#F3F6FB",
-        border: "1px dashed #D3DCEB",
+        background: "var(--app-soft)",
+        border: "1px dashed var(--app-border)",
       }}
     >
       <Text size="sm" c="dimmed" ta="center" maw={260}>

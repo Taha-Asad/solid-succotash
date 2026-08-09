@@ -13,7 +13,7 @@
 use crate::commands::audit::log_audit;
 use crate::commands::auth::{require_current_user, SessionState};
 use crate::commands::permissions::check_permission;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, SqlitePool};
 use tauri::State;
 
@@ -66,6 +66,16 @@ pub struct PublicPOItem {
 pub struct PurchaseOrderWithItems {
     pub order: PublicPurchaseOrder,
     pub items: Vec<PublicPOItem>,
+}
+
+// Expiry dates entered by the user when RECEIVING goods. The supplier's
+// expiry is only known once the physical stock arrives, so it is captured
+// at receive time (per item), never when the PO item is first added.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReceiveItemExpiry {
+    pub item_id: String,
+    pub expiry_date: Option<String>,
 }
 
 // #[derive(Debug, Clone, Serialize)]
@@ -262,7 +272,7 @@ pub async fn add_po_item(
     quantity: i64,
     unit_cost: i64,
     tax_rate: i64,
-    expiry_date: String,
+    expiry_date: Option<String>,
 ) -> Result<Vec<PublicPOItem>, String> {
     let user = require_current_user(pool.inner(), session.inner()).await?;
     check_permission(pool.inner(), &user.role, "purchase_orders", "edit").await?;
@@ -302,7 +312,7 @@ pub async fn add_po_item(
     )
     .bind(&id).bind(&po_id).bind(company_id).bind(&product_id)
     .bind(&pname).bind(&psku).bind(quantity).bind(unit_cost)
-    .bind(tax_rate).bind(tax_amount).bind(line_total).bind(clean(&expiry_date))
+    .bind(tax_rate).bind(tax_amount).bind(line_total).bind(clean(&expiry_date.unwrap_or_default()))
     .execute(pool.inner()).await.map_err(|e| format!("Error: {e}"))?;
 
     // Recalculate totals
@@ -423,6 +433,7 @@ pub async fn receive_po_items(
     pool: State<'_, SqlitePool>,
     session: State<'_, SessionState>,
     po_id: String,
+    expiries: Vec<ReceiveItemExpiry>,
 ) -> Result<PublicPurchaseOrder, String> {
     let user = require_current_user(pool.inner(), session.inner()).await?;
     check_permission(pool.inner(), &user.role, "purchase_orders", "finalize").await?;
@@ -460,6 +471,18 @@ pub async fn receive_po_items(
             continue;
         }
 
+        // Expiry comes from the user at receive time (from the supplier's
+        // delivery note). Fall back to any date stored on the item so older
+        // flows keep working.
+        let expiry_override = expiries
+            .iter()
+            .find(|e| e.item_id == *item_id)
+            .and_then(|e| e.expiry_date.as_deref());
+        let effective_expiry: Option<String> = match expiry_override {
+            Some(exp) if !exp.is_empty() => Some(exp.to_string()),
+            _ => expiry.clone().filter(|e| !e.is_empty()),
+        };
+
         // Update item received qty
         sqlx::query(
             "UPDATE purchase_order_items SET quantity_received = quantity_ordered WHERE id = ?",
@@ -481,22 +504,28 @@ pub async fn receive_po_items(
             .bind(format!("PO {}", po_id)).bind(&user.id)
             .execute(&mut *tx).await.map_err(|e| format!("Error: {e}"))?;
 
-        // If expiry date provided, create a batch (auto-numbered)
-        if let Some(ref exp) = expiry {
-            if !exp.is_empty() {
-                crate::commands::inventory::add_batch(
-                    &mut tx,
-                    company_id,
-                    product_id,
-                    qty_to_receive,
-                    *unit_cost,
-                    exp,
-                    "purchase",
-                    None,
-                )
+        // If an expiry date is known, record it on the item and create a
+        // batch (auto-numbered) so FIFO expiry tracking kicks in.
+        if let Some(ref exp) = effective_expiry {
+            sqlx::query("UPDATE purchase_order_items SET expiry_date = ? WHERE id = ?")
+                .bind(exp)
+                .bind(item_id)
+                .execute(&mut *tx)
                 .await
                 .map_err(|e| format!("Error: {e}"))?;
-            }
+
+            crate::commands::inventory::add_batch(
+                &mut tx,
+                company_id,
+                product_id,
+                qty_to_receive,
+                *unit_cost,
+                exp,
+                "purchase",
+                None,
+            )
+            .await
+            .map_err(|e| format!("Error: {e}"))?;
         }
     }
 
@@ -729,7 +758,7 @@ mod tests {
             10,
             500,
             0,
-            "".to_string(),
+            None,
         )
         .await
         .expect("add item");
@@ -900,7 +929,7 @@ mod tests {
             10,
             500,
             0,
-            "".to_string(),
+            None,
         )
         .await
         .expect("item 1");
@@ -913,7 +942,7 @@ mod tests {
             5,
             200,
             1700,
-            "".to_string(),
+            None,
         )
         .await
         .expect("item 2");
@@ -944,7 +973,7 @@ mod tests {
             0,
             500,
             0,
-            "".to_string(),
+            None,
         )
         .await
         .unwrap_err();
@@ -967,7 +996,7 @@ mod tests {
             1,
             500,
             0,
-            "".to_string(),
+            None,
         )
         .await
         .unwrap_err();
@@ -989,7 +1018,7 @@ mod tests {
             1,
             500,
             0,
-            "".to_string(),
+            None,
         )
         .await
         .unwrap_err();
@@ -1011,7 +1040,7 @@ mod tests {
             1,
             500,
             0,
-            "".to_string(),
+            None,
         )
         .await
         .unwrap_err();
@@ -1046,7 +1075,7 @@ mod tests {
             1,
             500,
             0,
-            "".to_string(),
+            None,
         )
         .await
         .expect("owner can add an item");
@@ -1092,7 +1121,7 @@ mod tests {
             1,
             500,
             0,
-            "".to_string(),
+            None,
         )
         .await
         .unwrap_err();
@@ -1120,7 +1149,7 @@ mod tests {
             10,
             500,
             0,
-            "".to_string(),
+            None,
         )
         .await
         .expect("item 1");
@@ -1132,7 +1161,7 @@ mod tests {
             5,
             200,
             0,
-            "".to_string(),
+            None,
         )
         .await
         .expect("item 2");
@@ -1170,7 +1199,7 @@ mod tests {
             10,
             500,
             0,
-            "".to_string(),
+            None,
         )
         .await
         .expect("add item");
@@ -1263,7 +1292,7 @@ mod tests {
         let app = owner_app().await;
         let (po, product) = ordered_po_with_item(&app).await;
 
-        let received = receive_po_items(app.state(), app.state(), po.id.clone())
+        let received = receive_po_items(app.state(), app.state(), po.id.clone(), vec![])
             .await
             .expect("receive");
         assert_eq!(received.status, "received");
@@ -1300,7 +1329,7 @@ mod tests {
             10,
             500,
             0,
-            "2026-01-01".to_string(),
+            Some("2026-01-01".to_string()),
         )
         .await
         .expect("add item with expiry");
@@ -1308,7 +1337,7 @@ mod tests {
             .await
             .expect("submit");
 
-        receive_po_items(app.state(), app.state(), po.id.clone())
+        receive_po_items(app.state(), app.state(), po.id.clone(), vec![])
             .await
             .expect("receive");
 
@@ -1325,6 +1354,61 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn receive_uses_expiry_entered_at_receive_time() {
+        // Input: ordered PO whose item has NO stored expiry, but the user
+        // supplies an expiry when receiving (the normal flow — the supplier's
+        // date is only known once the goods arrive).
+        // Expected: stock_batch created with the receive-time expiry.
+        let app = owner_app().await;
+        let supplier = make_supplier(&app, "Acme").await;
+        let product = make_product(&app, "Syrup").await;
+        let po = make_po(&app, &supplier.id).await;
+        add_po_item(
+            app.state(),
+            app.state(),
+            po.id.clone(),
+            product.id.clone(),
+            5,
+            400,
+            0,
+            None,
+        )
+        .await
+        .expect("add item without expiry");
+        submit_purchase_order(app.state(), app.state(), po.id.clone())
+            .await
+            .expect("submit");
+
+        let details = get_purchase_order(app.state(), app.state(), po.id.clone())
+            .await
+            .expect("details");
+        let item = &details.items[0];
+
+        receive_po_items(
+            app.state(),
+            app.state(),
+            po.id.clone(),
+            vec![ReceiveItemExpiry {
+                item_id: item.id.clone(),
+                expiry_date: Some("2026-09-15".to_string()),
+            }],
+        )
+        .await
+        .expect("receive with expiry");
+
+        let batches = crate::commands::inventory::list_product_batches(
+            app.state(),
+            app.state(),
+            product.id.clone(),
+        )
+        .await
+        .expect("batches");
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0].expiry_date, "2026-09-15");
+        assert_eq!(batches[0].quantity, 5);
+    }
+
+    #[tokio::test]
     async fn receive_rejects_non_ordered_po() {
         // Input: receive a draft PO.
         // Expected: Err "PO must be in 'ordered' status to receive".
@@ -1332,7 +1416,7 @@ mod tests {
         let supplier = make_supplier(&app, "Acme").await;
         let po = make_po(&app, &supplier.id).await;
 
-        let err = receive_po_items(app.state(), app.state(), po.id.clone())
+        let err = receive_po_items(app.state(), app.state(), po.id.clone(), vec![])
             .await
             .unwrap_err();
         assert_eq!(err, "PO must be in 'ordered' status to receive");
@@ -1343,7 +1427,7 @@ mod tests {
         // Input: a random PO id.
         // Expected: Err "PO not found".
         let app = owner_app().await;
-        let err = receive_po_items(app.state(), app.state(), Uuid::new_v4().to_string())
+        let err = receive_po_items(app.state(), app.state(), Uuid::new_v4().to_string(), vec![])
             .await
             .unwrap_err();
         assert_eq!(err, "PO not found");
@@ -1356,11 +1440,11 @@ mod tests {
         // receive is blocked by the status guard, so stock cannot double in.
         let app = owner_app().await;
         let (po, _product) = ordered_po_with_item(&app).await;
-        receive_po_items(app.state(), app.state(), po.id.clone())
+        receive_po_items(app.state(), app.state(), po.id.clone(), vec![])
             .await
             .expect("first receive");
 
-        let err = receive_po_items(app.state(), app.state(), po.id.clone())
+        let err = receive_po_items(app.state(), app.state(), po.id.clone(), vec![])
             .await
             .unwrap_err();
         assert!(err.contains("must be in 'ordered' status"), "got: {err}");
@@ -1521,7 +1605,7 @@ mod tests {
             10,
             500,
             0,
-            "".to_string(),
+            None,
         )
         .await
         .expect("add item");

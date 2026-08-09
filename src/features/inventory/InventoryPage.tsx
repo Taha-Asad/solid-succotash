@@ -50,12 +50,9 @@ import {
   Divider,
 } from "@mantine/core";
 
-import { DateInput } from "@mantine/dates";
-
 import { useForm } from "@mantine/form";
 
 import { useMediaQuery } from "@mantine/hooks";
-
 import {
   Boxes,
   Package,
@@ -109,6 +106,10 @@ import type {
 
 import ImportWizard from "./ImportWizard";
 
+import {
+  AppDateInput,
+  parseDateOnly,
+} from "../../components/AppDateInput";
 import { INK } from "../../theme";
 
 // ==========================================
@@ -154,27 +155,6 @@ function formatDate(dateStr: string): string {
   } catch {
     return dateStr;
   }
-}
-
-// Parse a "YYYY-MM-DD" date as LOCAL midnight (avoids the UTC day-shift
-// that `new Date("YYYY-MM-DD")` causes in negative timezones).
-function parseDateOnly(dateStr: string): Date {
-  const parts = dateStr.split("-").map(Number);
-  if (parts.length !== 3 || parts.some((n) => isNaN(n))) {
-    return new Date(dateStr);
-  }
-  return new Date(parts[0], parts[1] - 1, parts[2]);
-}
-
-// Format a Date as a LOCAL "YYYY-MM-DD" string (the inverse of parseDateOnly).
-// Never use toISOString() here — it converts to UTC first and can shift the
-// date by a day, which is exactly what made the calendar look "wrong" (it
-// would open on, or save, a different day than the one that was clicked).
-function formatDateOnly(date: Date): string {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, "0");
-  const d = String(date.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
 }
 
 // Days from today until the given date-only string (negative = already past).
@@ -231,7 +211,7 @@ function EmptyState({
       >
         {icon}
       </Box>
-      <Text fw={600} size="sm" mt={8} style={{ color: INK.navy }}>
+      <Text fw={600} size="sm" mt={8} style={{ color: INK.text }}>
         {title}
       </Text>
       <Text size="xs" c="dimmed" ta="center" maw={320}>
@@ -270,7 +250,7 @@ export default function InventoryPage({ user }: InventoryPageProps) {
       <Group justify="space-between" align="flex-end" wrap="wrap">
         <Stack gap={2}>
           <Eyebrow>Inventory</Eyebrow>
-          <Title order={2} style={{ color: INK.navy, letterSpacing: -0.3 }}>
+          <Title order={2} style={{ color: INK.text, letterSpacing: -0.3 }}>
             Inventory Management
           </Title>
           <Text size="sm" c="dimmed">
@@ -303,7 +283,7 @@ export default function InventoryPage({ user }: InventoryPageProps) {
           tab: {
             fontWeight: 600,
             "&[data-active]": {
-              color: INK.navy,
+              color: INK.text,
               borderColor: INK.gold,
             },
           },
@@ -513,7 +493,7 @@ function CategoriesTab({ canManage }: { canManage: boolean }) {
                 {filtered.map((cat) => (
                   <Table.Tr key={cat.id}>
                     <Table.Td>
-                      <Text fw={600} size="sm" style={{ color: INK.navy }}>
+                      <Text fw={600} size="sm" style={{ color: INK.text }}>
                         {cat.name}
                       </Text>
                     </Table.Td>
@@ -674,7 +654,7 @@ function CategoryModal({
       title={
         <Group gap={8}>
           <Tags size={16} color={INK.gold} />
-          <Text fw={700} style={{ color: INK.navy }}>
+          <Text fw={700} style={{ color: INK.text }}>
             {initial ? "Edit Category" : "New Category"}
           </Text>
         </Group>
@@ -909,7 +889,7 @@ function SuppliersTab({ canManage }: { canManage: boolean }) {
                 {filtered.map((sup) => (
                   <Table.Tr key={sup.id}>
                     <Table.Td>
-                      <Text fw={600} size="sm" style={{ color: INK.navy }}>
+                      <Text fw={600} size="sm" style={{ color: INK.text }}>
                         {sup.name}
                       </Text>
                     </Table.Td>
@@ -1051,7 +1031,7 @@ function SupplierModal({
       title={
         <Group gap={8}>
           <Truck size={16} color={INK.gold} />
-          <Text fw={700} style={{ color: INK.navy }}>
+          <Text fw={700} style={{ color: INK.text }}>
             {initial ? "Edit Supplier" : "New Supplier"}
           </Text>
         </Group>
@@ -1408,7 +1388,7 @@ function ProductsTab({ canManage }: { canManage: boolean }) {
             <Group justify="space-between" wrap="wrap">
               <Group gap={8}>
                 <CalendarClock size={18} color={INK.warning} />
-                <Text fw={700} style={{ color: INK.navy }}>
+                <Text fw={700} style={{ color: INK.text }}>
                   Expiring Stock
                 </Text>
               </Group>
@@ -1441,7 +1421,7 @@ function ProductsTab({ canManage }: { canManage: boolean }) {
                   {expiringBatches.map((b) => (
                     <Table.Tr key={b.id}>
                       <Table.Td>
-                        <Text size="sm" fw={600} style={{ color: INK.navy }}>
+                        <Text size="sm" fw={600} style={{ color: INK.text }}>
                           {b.productName}
                         </Text>
                         <Text size="xs" c="dimmed">
@@ -1595,7 +1575,7 @@ function ProductsTab({ canManage }: { canManage: boolean }) {
                           </Badge>
                         </Table.Td>
                         <Table.Td>
-                          <Text fw={600} size="sm" style={{ color: INK.navy }}>
+                          <Text fw={600} size="sm" style={{ color: INK.text }}>
                             {prod.name}
                           </Text>
                         </Table.Td>
@@ -1783,7 +1763,7 @@ function StatCard({
         ? INK.warning
         : tone === "success"
           ? INK.success
-          : INK.navy;
+          : INK.text;
 
   return (
     <Card
@@ -1830,8 +1810,8 @@ function StatCard({
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            background: accent ? INK.goldSoft : "#EEF0F5",
-            color: accent ? INK.gold : INK.navy,
+            background: accent ? INK.goldSoft : "var(--app-soft)",
+            color: accent ? INK.gold : INK.text,
             flexShrink: 0,
           }}
         >
@@ -1983,7 +1963,7 @@ function ProductModal({
       title={
         <Group gap={8}>
           <Package size={16} color={INK.gold} />
-          <Text fw={700} style={{ color: INK.navy }}>
+          <Text fw={700} style={{ color: INK.text }}>
             {isEdit ? "Edit Product" : "New Product"}
           </Text>
         </Group>
@@ -2231,7 +2211,7 @@ function StockAdjustModal({
       title={
         <Group gap={8}>
           <PackagePlus size={16} color={INK.gold} />
-          <Text fw={700} style={{ color: INK.navy }}>
+          <Text fw={700} style={{ color: INK.text }}>
             Adjust Stock: {product?.name ?? ""}
           </Text>
         </Group>
@@ -2252,7 +2232,7 @@ function StockAdjustModal({
               <Text size="sm" c="dimmed">
                 Current stock
               </Text>
-              <Text fw={700} style={{ ...LEDGER_NUM, color: INK.navy }}>
+              <Text fw={700} style={{ ...LEDGER_NUM, color: INK.text }}>
                 {product?.quantityInStock ?? 0} {product?.unit ?? "units"}
               </Text>
             </Group>
@@ -2303,7 +2283,7 @@ function StockAdjustModal({
             product && (
               <Text size="sm" c="dimmed">
                 Resulting stock:{" "}
-                <Text component="span" fw={700} style={{ color: INK.navy }}>
+                <Text component="span" fw={700} style={{ color: INK.text }}>
                   {(
                     product.quantityInStock + form.values.quantity
                   ).toLocaleString()}{" "}
@@ -2318,7 +2298,7 @@ function StockAdjustModal({
             product && (
               <Text size="sm" c="dimmed">
                 Quantity stays{" "}
-                <Text component="span" fw={700} style={{ color: INK.navy }}>
+                <Text component="span" fw={700} style={{ color: INK.text }}>
                   {product.quantityInStock.toLocaleString()}{" "}
                   {product.unit ?? "units"}
                 </Text>{" "}
@@ -2331,7 +2311,7 @@ function StockAdjustModal({
             form.values.movementType === "return" ||
             form.values.movementType === "adjustment") && (
             <>
-              <DateInput
+              <AppDateInput
                 label="Expiry date (optional)"
                 description={
                   form.values.movementType === "adjustment"
@@ -2339,50 +2319,9 @@ function StockAdjustModal({
                     : "Pick a date to track this batch's expiry. Leave blank if this stock doesn't expire."
                 }
                 placeholder="Select a date"
-                valueFormat="DD MMM YYYY"
-                clearable
                 size="sm"
-                defaultDate={new Date()}
-                firstDayOfWeek={1}
-                weekendDays={[0]}
-                highlightToday
-                hideOutsideDates
-                // The form stores a plain "YYYY-MM-DD" string, but the
-                // calendar itself needs a real Date object to know which
-                // day/month to highlight and open on — passing the raw
-                // string here was the root cause of the calendar showing
-                // the wrong (or no) selected day.
-                value={
-                  form.values.expiryDate
-                    ? parseDateOnly(form.values.expiryDate)
-                    : null
-                }
-                onChange={(value) => {
-                  if (!value) {
-                    form.setFieldValue("expiryDate", "");
-                    return;
-                  }
-                  // Different Mantine versions return either a Date or an
-                  // already-formatted string here — handle both so this
-                  // keeps working across upgrades, and always convert using
-                  // LOCAL date parts (never toISOString) to avoid an
-                  // off-by-one-day shift near midnight.
-                  const asDate =
-                    typeof value === "string" ? parseDateOnly(value) : value;
-                  form.setFieldValue("expiryDate", formatDateOnly(asDate));
-                }}
-                popoverProps={{
-                  withArrow: false,
-                  radius: "md",
-                  zIndex: 3000,
-                  styles: {
-                    dropdown: {
-                      border: `1px solid ${INK.border}`,
-                      padding: 10,
-                      boxShadow: "0 14px 34px -14px rgba(29,43,84,0.35)",
-                    },
-                  },
-                }}
+                value={form.values.expiryDate}
+                onChange={(value) => form.setFieldValue("expiryDate", value)}
               />
               <Text size="xs" c="dimmed">
                 Once this product has any batch with an expiry date, sales and
@@ -2479,7 +2418,7 @@ function MovementsModal({
       title={
         <Group gap={8}>
           <History size={16} color={INK.gold} />
-          <Text fw={700} style={{ color: INK.navy }}>
+          <Text fw={700} style={{ color: INK.text }}>
             Stock History: {product?.name ?? ""}
           </Text>
         </Group>
@@ -2606,7 +2545,7 @@ function BatchesModal({
         title={
           <Group gap={8}>
             <CalendarDays size={16} color={INK.gold} />
-            <Text fw={700} style={{ color: INK.navy }}>
+            <Text fw={700} style={{ color: INK.text }}>
               Expiry Batches: {product?.name ?? ""}
             </Text>
           </Group>
@@ -2655,7 +2594,7 @@ function BatchesModal({
                 {batches.map((b) => (
                   <Table.Tr key={b.id}>
                     <Table.Td>
-                      <Text size="sm" fw={600} style={{ color: INK.navy }}>
+                      <Text size="sm" fw={600} style={{ color: INK.text }}>
                         {b.batchNumber || "—"}
                       </Text>
                     </Table.Td>
@@ -2778,7 +2717,7 @@ function WriteOffModal({
       title={
         <Group gap={8}>
           <Trash2 size={16} color="red" />
-          <Text fw={700} style={{ color: INK.navy }}>
+          <Text fw={700} style={{ color: INK.text }}>
             Write off batch
           </Text>
         </Group>
@@ -2802,7 +2741,7 @@ function WriteOffModal({
               <Text size="sm" c="dimmed">
                 Batch {batch.batchNumber || "—"}
               </Text>
-              <Text fw={700} style={{ ...LEDGER_NUM, color: INK.navy }}>
+              <Text fw={700} style={{ ...LEDGER_NUM, color: INK.text }}>
                 {batch.quantity} available
               </Text>
             </Group>

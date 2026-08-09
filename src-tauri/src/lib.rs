@@ -33,11 +33,43 @@ fn attach_console() {
 #[cfg(not(target_os = "windows"))]
 fn attach_console() {}
 
+/// WebKitGTK ships an accelerated DMA-BUF compositor that crashes with
+/// `corrupted double-linked list` (heap corruption in the web process) on
+/// WSL2/NVIDIA and a few other Linux setups. The same crash is hit on some
+/// pages (e.g. the Journal tab) depending on how the page composites.
+///
+/// This must run BEFORE the Tauri builder creates the webview, and it only
+/// affects the web process, so it is safe to force for all Linux users.
+/// Docs: https://webkitgtk.org -> `WEBKIT_DISABLE_DMABUF_RENDERER`
+#[cfg(target_os = "linux")]
+fn harden_webkit() {
+    // WebKitGTK's accelerated DMA-BUF compositor is known to crash the web
+    // process with `corrupted double-linked list` (heap corruption) on
+    // WSL2/WSLg and certain NVIDIA setups. The journal tab hit this abort
+    // because of how the page composites. The upstream-sanctioned fix is
+    // disabling the DMA-BUF renderer; disabling accelerated compositing too
+    // is the strongest fallback when the crash persists.
+    for (var, val) in [
+        ("WEBKIT_DISABLE_DMABUF_RENDERER", "1"),
+        ("WEBKIT_DISABLE_COMPOSITING_MODE", "1"),
+    ] {
+        if std::env::var_os(var).is_none() {
+            println!("harden_webkit: setting {var}={val}");
+            std::env::set_var(var, val);
+        }
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn harden_webkit() {}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 #[tokio::main]
 pub async fn run() {
     // Attach to console so errors show in Command Prompt
     attach_console();
+    // Avoid the WebKitGTK compositing crash before the webview starts
+    harden_webkit();
 
     println!("=== Ijaz & Company ERP Starting ===");
 
@@ -144,6 +176,7 @@ pub async fn run() {
             commands::invoices::generate_invoice_excel,
             commands::invoices::save_invoice_excel_template,
             commands::invoices::analyze_invoice_excel_template,
+            commands::invoices::download_sample_invoice_template,
             commands::auth::save_session,
             commands::auth::load_saved_session,
             commands::auth::clear_saved_session,

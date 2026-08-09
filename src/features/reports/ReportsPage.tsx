@@ -148,7 +148,7 @@ const fadeUp = {
 
 const tooltipStyle = {
   borderRadius: 12,
-  border: "1px solid #E3E8F1",
+  border: `1px solid ${INK.border}`,
   boxShadow: "0 10px 30px -12px rgba(29,43,84,0.25)",
 };
 
@@ -162,7 +162,7 @@ function LoadingState() {
           width: 36,
           height: 36,
           borderRadius: 12,
-          border: "3px solid #E3E8F1",
+          border: `3px solid ${INK.border}`,
           borderTopColor: INK.gold,
         }}
       />
@@ -189,8 +189,8 @@ function EmptyChart({ message }: { message: string }) {
         alignItems: "center",
         justifyContent: "center",
         borderRadius: 12,
-        background: "#F3F6FB",
-        border: "1px dashed #D3DCEB",
+        background: "var(--app-soft)",
+        border: "1px dashed var(--app-border)",
       }}
     >
       <Text size="sm" c="dimmed" ta="center" maw={280}>
@@ -247,7 +247,7 @@ export default function ReportsPage() {
           <Text size="xs" fw={700} style={{ color: INK.gold, letterSpacing: 1.4, textTransform: "uppercase" }}>
             Analytics
           </Text>
-          <Text fw={800} size="xl" style={{ color: INK.navy, letterSpacing: -0.4 }}>
+          <Text fw={800} size="xl" style={{ color: INK.text, letterSpacing: -0.4 }}>
             Reports & Analytics
           </Text>
           <Text size="sm" c="dimmed">
@@ -365,7 +365,7 @@ function SalesReport() {
         <Card withBorder shadow="sm" p="lg">
           <Group justify="space-between" mb="md">
             <Stack gap={2}>
-              <Text fw={700} style={{ color: INK.navy }}>Monthly Sales Trend</Text>
+              <Text fw={700} style={{ color: INK.text }}>Monthly Sales Trend</Text>
               <Text size="xs" c="dimmed">Revenue vs collected over time</Text>
             </Stack>
             <Badge color="gold" variant="light">PKR</Badge>
@@ -402,7 +402,7 @@ function SalesReport() {
       <SimpleGrid cols={{ base: 1, lg: 2 }}>
         <motion.div {...fadeUp} transition={{ duration: 0.5, delay: 0.16 }}>
           <Card withBorder shadow="sm" p="lg" style={{ height: "100%" }}>
-            <Text fw={700} style={{ color: INK.navy }} mb="md">Top Products</Text>
+            <Text fw={700} style={{ color: INK.text }} mb="md">Top Products</Text>
             {productData.length === 0 ? (
               <EmptyChart message="Finalize invoices to reveal top products." />
             ) : (
@@ -427,7 +427,7 @@ function SalesReport() {
 
         <motion.div {...fadeUp} transition={{ duration: 0.5, delay: 0.22 }}>
           <Card withBorder shadow="sm" p="lg" style={{ height: "100%" }}>
-            <Text fw={700} style={{ color: INK.navy }} mb="md">Customer Revenue Share</Text>
+            <Text fw={700} style={{ color: INK.text }} mb="md">Customer Revenue Share</Text>
             {customerData.length === 0 ? (
               <EmptyChart message="Customer data will appear once invoices are created." />
             ) : (
@@ -528,7 +528,7 @@ function StockReport() {
 
       <motion.div {...fadeUp} transition={{ duration: 0.5, delay: 0.1 }}>
         <Card withBorder shadow="sm" p="lg">
-          <Text fw={700} style={{ color: INK.navy }} mb="md">
+          <Text fw={700} style={{ color: INK.text }} mb="md">
             Stock Levels — Top 10
           </Text>
           {data.items.length === 0 ? (
@@ -556,7 +556,7 @@ function StockReport() {
       <motion.div {...fadeUp} transition={{ duration: 0.5, delay: 0.16 }}>
         <Card withBorder shadow="sm" p="lg">
           <Group justify="space-between" mb="md">
-            <Text fw={700} style={{ color: INK.navy }}>Stock Register</Text>
+            <Text fw={700} style={{ color: INK.text }}>Stock Register</Text>
             <Badge color="gold" variant="light">{data.items.length} rows</Badge>
           </Group>
           <ScrollArea>
@@ -585,7 +585,7 @@ function StockReport() {
                       <Badge variant="outline" size="sm" color="gray">{item.productSku}</Badge>
                     </Table.Td>
                     <Table.Td>
-                      <Text size="sm" fw={600} style={{ color: INK.navy }}>{item.productName}</Text>
+                      <Text size="sm" fw={600} style={{ color: INK.text }}>{item.productName}</Text>
                     </Table.Td>
                     <Table.Td>
                       <Text size="sm" c="dimmed">{item.categoryName ?? "—"}</Text>
@@ -663,7 +663,7 @@ function ProfitLossReport() {
       <SimpleGrid cols={{ base: 1, lg: 2 }}>
         <motion.div {...fadeUp} transition={{ duration: 0.5, delay: 0.1 }}>
           <Card withBorder shadow="sm" p="lg" style={{ height: "100%" }}>
-            <Text fw={700} style={{ color: INK.navy }} mb="md">Revenue vs Cost</Text>
+            <Text fw={700} style={{ color: INK.text }} mb="md">Revenue vs Cost</Text>
             <Box h={280}>
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={barData} margin={{ top: 8, right: 8, left: -8, bottom: 0 }}>
@@ -684,7 +684,7 @@ function ProfitLossReport() {
 
         <motion.div {...fadeUp} transition={{ duration: 0.5, delay: 0.16 }}>
           <Card withBorder shadow="sm" p="lg" style={{ height: "100%" }}>
-            <Text fw={700} style={{ color: INK.navy }} mb="md">Breakdown</Text>
+            <Text fw={700} style={{ color: INK.text }} mb="md">Breakdown</Text>
             <Stack gap="md">
               <Row label="Revenue (from sales)" value={p(data.totalRevenue)} />
               <Row label="− Cost of goods sold" value={`−${p(data.totalCost)}`} valueColor={INK.chart.red} />
@@ -703,7 +703,7 @@ function ProfitLossReport() {
                 }}
               >
                 <Group justify="space-between">
-                  <Text size="sm" fw={700} style={{ color: INK.navy }}>Profit margin</Text>
+                  <Text size="sm" fw={700} style={{ color: INK.text }}>Profit margin</Text>
                   <Text size="lg" fw={800} className="tabular" style={{ color: data.profitMarginPct >= 0 ? INK.chart.green : INK.chart.red }}>
                     {pct(data.profitMarginPct)}
                   </Text>
@@ -757,7 +757,7 @@ function Row({
 
 function ProgressBar({ pct, color }: { pct: number; color: string }) {
   return (
-    <Box mt="sm" style={{ height: 8, borderRadius: 999, background: "#E3E8F1", overflow: "hidden" }}>
+    <Box mt="sm" style={{ height: 8, borderRadius: 999, background: INK.border, overflow: "hidden" }}>
       <motion.div
         initial={{ width: 0 }}
         animate={{ width: `${pct}%` }}
@@ -816,7 +816,7 @@ function CustomerLedgerReport() {
       <SimpleGrid cols={{ base: 1, lg: 3 }}>
         <motion.div {...fadeUp} transition={{ duration: 0.5, delay: 0.1 }} style={{ gridColumn: "1 / 2" }}>
           <Card withBorder shadow="sm" p="lg" style={{ height: "100%" }}>
-            <Text fw={700} style={{ color: INK.navy }} mb="md">Receivables Health</Text>
+            <Text fw={700} style={{ color: INK.text }} mb="md">Receivables Health</Text>
             {donutData.length === 0 ? (
               <EmptyChart message="No customer activity yet." />
             ) : (
@@ -833,7 +833,7 @@ function CustomerLedgerReport() {
                     </PieChart>
                   </ResponsiveContainer>
                   <Box style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", pointerEvents: "none" }}>
-                    <Text fw={800} size="xl" className="tabular" style={{ color: INK.navy }}>{collectionRate}%</Text>
+                    <Text fw={800} size="xl" className="tabular" style={{ color: INK.text }}>{collectionRate}%</Text>
                   </Box>
                 </Box>
                 <Stack gap={6}>
@@ -855,7 +855,7 @@ function CustomerLedgerReport() {
         <motion.div {...fadeUp} transition={{ duration: 0.5, delay: 0.16 }} style={{ gridColumn: "2 / 4" }}>
           <Card withBorder shadow="sm" p="lg" style={{ height: "100%" }}>
             <Group justify="space-between" mb="md">
-              <Text fw={700} style={{ color: INK.navy }}>Customer Balances</Text>
+              <Text fw={700} style={{ color: INK.text }}>Customer Balances</Text>
               <Group>
                 <ExportButtons kind="ledger" align="flex-end" />
                 <Badge color="gold" variant="light">{data.length} customers</Badge>
@@ -882,7 +882,7 @@ function CustomerLedgerReport() {
                     {data.map((entry, i) => (
                       <motion.tr key={entry.customerId} initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.02 * i, duration: 0.25 }}>
                         <Table.Td>
-                          <Text size="sm" fw={600} style={{ color: INK.navy }}>{entry.customerName}</Text>
+                          <Text size="sm" fw={600} style={{ color: INK.text }}>{entry.customerName}</Text>
                           <Text size="xs" c="dimmed">Last invoice {entry.lastInvoiceDate ?? "—"}</Text>
                         </Table.Td>
                         <Table.Td ta="right" className="tabular">{entry.invoiceCount}</Table.Td>
@@ -957,7 +957,7 @@ function StockMovementsReport() {
 
       <motion.div {...fadeUp} transition={{ duration: 0.5, delay: 0.1 }}>
         <Card withBorder shadow="sm" p="lg">
-          <Text fw={700} style={{ color: INK.navy }} mb="md">Purchased vs Sold — Top 10</Text>
+          <Text fw={700} style={{ color: INK.text }} mb="md">Purchased vs Sold — Top 10</Text>
           {chartData.length === 0 ? (
             <EmptyChart message="Record stock movements to see comparisons." />
           ) : (
@@ -980,7 +980,7 @@ function StockMovementsReport() {
       <motion.div {...fadeUp} transition={{ duration: 0.5, delay: 0.16 }}>
         <Card withBorder shadow="sm" p="lg">
           <Group justify="space-between" mb="md">
-            <Text fw={700} style={{ color: INK.navy }}>Movement Register</Text>
+            <Text fw={700} style={{ color: INK.text }}>Movement Register</Text>
             <Badge color="gold" variant="light">{data.length} products</Badge>
           </Group>
           {data.length === 0 ? (
@@ -1007,7 +1007,7 @@ function StockMovementsReport() {
                         <Badge variant="outline" size="sm" color="gray">{item.productSku}</Badge>
                       </Table.Td>
                       <Table.Td>
-                        <Text size="sm" fw={600} style={{ color: INK.navy }}>{item.productName}</Text>
+                        <Text size="sm" fw={600} style={{ color: INK.text }}>{item.productName}</Text>
                       </Table.Td>
                       <Table.Td ta="right" className="tabular" style={{ color: INK.chart.green }}>+{item.totalPurchased}</Table.Td>
                       <Table.Td ta="right" className="tabular" style={{ color: INK.chart.blue }}>−{item.totalSold}</Table.Td>

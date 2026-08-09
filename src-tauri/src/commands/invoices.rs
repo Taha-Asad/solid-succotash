@@ -2372,10 +2372,15 @@ pub async fn save_invoice_excel_template(
     }
 
     sqlx::query(
-        "UPDATE company_invoice_settings SET excel_template_base64 = ?, updated_at = CURRENT_TIMESTAMP WHERE company_id = ?",
+        "INSERT INTO company_invoice_settings (id, company_id, excel_template_base64, updated_at) \
+         VALUES (?, ?, ?, CURRENT_TIMESTAMP) \
+         ON CONFLICT(company_id) DO UPDATE SET \
+           excel_template_base64 = excluded.excel_template_base64, \
+           updated_at = CURRENT_TIMESTAMP",
     )
-    .bind(&template_base64)
+    .bind(uuid::Uuid::new_v4().to_string())
     .bind(company_id)
+    .bind(&template_base64)
     .execute(pool.inner())
     .await
     .map_err(|e| format!("Failed to save template: {e}"))?;
@@ -2500,6 +2505,17 @@ pub async fn generate_invoice_excel(
     } else {
         Ok(BASE64.encode(filled))
     }
+}
+
+/// Writes the bundled starter .xlsx invoice template to `save_path` so users
+/// have a ready-made, placeholder-filled layout to edit in Excel.
+#[tauri::command]
+pub fn download_sample_invoice_template(save_path: String) -> Result<String, String> {
+    static SAMPLE: &[u8] =
+        include_bytes!("../../../src/assets/sample-invoice-template.xlsx");
+    std::fs::write(&save_path, SAMPLE)
+        .map_err(|e| format!("Failed to write sample template: {e}"))?;
+    Ok(save_path)
 }
 
 /// Renders an invoice to a real PDF file. When `save_path` is provided the
@@ -4115,5 +4131,265 @@ mod tests {
         .fetch_one(&*pool)
         .await
         .unwrap()
+    }
+
+    // ---------------------------------------------------------------
+    // excel template: extract_tokens / is_known_placeholder (pure)
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn extract_tokens_finds_well_formed_tokens() {
+        // Input: mixed text with {{token}}, {single} and empty {{}}.
+        // Expected: only the well-formed {{token}} pairs.
+        let text = "A {{customer_name}} B {{items_1_name}} C {not_a_token} D {{}} E";
+        assert_eq!(extract_tokens(text), vec!["customer_name", "items_1_name"]);
+    }
+
+    #[test]
+    fn extract_tokens_ignores_unclosed_braces() {
+        // Input: an unclosed token.
+        // Expected: no tokens.
+        assert_eq!(extract_tokens("{{oops"), Vec::<String>::new());
+    }
+
+    #[test]
+    fn is_known_placeholder_recognises_core_items_and_footer() {
+        // Input: core, footer and item tokens plus garbage.
+        // Expected: core/footer/item true, garbage false.
+        assert!(is_known_placeholder("customer_name"));
+        assert!(is_known_placeholder("terms_conditions"));
+        assert!(is_known_placeholder("disclaimer"));
+        assert!(is_known_placeholder("copyright"));
+        assert!(is_known_placeholder("bank_details"));
+        assert!(is_known_placeholder("items_3_sku"));
+        assert!(!is_known_placeholder("anything_random"));
+        assert!(is_known_placeholder("items_0_name"), "any numeric index is accepted");
+        assert!(!is_known_placeholder("items_x_price"));
+    }
+
+    // ---------------------------------------------------------------
+    // excel template: fill_excel_template (pure, in-memory zip)
+    // ---------------------------------------------------------------
+
+    /// Builds a minimal but structurally valid xlsx whose only cell text is
+    /// `sheet_text` (so tests can assert on placeholder filling).
+    fn build_test_xlsx(sheet_text: &str) -> Vec<u8> {
+        use std::io::Write;
+        let mut zw = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let opts = zip::write::SimpleFileOptions::default();
+        zw.start_file("[Content_Types].xml", opts).unwrap();
+        zw.write_all(
+            br#"<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/></Types>"#,
+        )
+        .unwrap();
+        zw.start_file("xl/workbook.xml", opts).unwrap();
+        zw.write_all(
+            br#"<?xml version="1.0"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets></workbook>"#,
+        )
+        .unwrap();
+        zw.start_file("xl/worksheets/sheet1.xml", opts).unwrap();
+        zw.write_all(
+            format!(
+                r#"<?xml version="1.0"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="s"><v>{sheet_text}</v></c></row></sheetData></worksheet>"#
+            )
+            .as_bytes(),
+        )
+        .unwrap();
+        zw.finish().unwrap().into_inner()
+    }
+
+    /// Reads the sheet1.xml text back out of a (possibly filled) xlsx.
+    fn sheet_text_from_xlsx(bytes: &[u8]) -> String {
+        use std::io::Read;
+        let mut archive =
+            zip::ZipArchive::new(std::io::Cursor::new(bytes.to_vec())).expect("valid zip");
+        for i in 0..archive.len() {
+            let mut entry = archive.by_index(i).expect("entry");
+            if entry.name().ends_with("sheet1.xml") {
+                let mut text = String::new();
+                entry.read_to_string(&mut text).expect("read sheet");
+                return text;
+            }
+        }
+        String::new()
+    }
+
+    #[test]
+    fn fill_excel_template_replaces_known_tokens() {
+        // Input: xlsx containing {{customer_name}}, {{grand_total}} and an
+        //        unknown token.
+        // Expected: known tokens replaced, unknown left intact.
+        let xlsx = build_test_xlsx("{{customer_name}} owes {{grand_total}} {{unknown_one}}");
+        let mut map = HashMap::new();
+        map.insert("customer_name".to_string(), "Aisha Traders".to_string());
+        map.insert("grand_total".to_string(), "Rs 1,234.50".to_string());
+        let filled = fill_excel_template(&xlsx, &map).expect("fill");
+        let text = sheet_text_from_xlsx(&filled);
+        assert!(text.contains("Aisha Traders"), "got: {text}");
+        assert!(text.contains("Rs 1,234.50"), "got: {text}");
+        assert!(text.contains("{{unknown_one}}"), "got: {text}");
+    }
+
+    #[test]
+    fn fill_excel_template_rejects_non_zip() {
+        // Input: garbage bytes.
+        // Expected: Err mentioning "not a valid Excel".
+        let err =
+            fill_excel_template(b"this is not a zip file at all", &HashMap::new()).unwrap_err();
+        assert!(err.contains("not a valid Excel"), "got: {err}");
+    }
+
+    // ---------------------------------------------------------------
+    // excel template: save / analyze / generate (DB-backed)
+    // ---------------------------------------------------------------
+
+    #[tokio::test]
+    async fn save_excel_template_rejects_non_zip() {
+        // Input: base64 of non-zip bytes.
+        // Expected: Err "Uploaded file is not a valid Excel".
+        let app = owner_app().await;
+        use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+        let err = save_invoice_excel_template(app.state(), app.state(), BASE64.encode("hello"))
+            .await
+            .unwrap_err();
+        assert!(err.contains("not a valid Excel"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn analyze_excel_template_without_template() {
+        // Input: fresh company with no template uploaded.
+        // Expected: has_template false, no known/unknown, all common missing.
+        let app = owner_app().await;
+        let analysis = analyze_invoice_excel_template(app.state(), app.state())
+            .await
+            .expect("analyze");
+        assert!(!analysis.has_template);
+        assert!(analysis.known_tokens.is_empty());
+        assert!(analysis.unknown_tokens.is_empty());
+        assert_eq!(
+            analysis.missing_common_tokens.len(),
+            COMMON_PLACEHOLDERS.len()
+        );
+    }
+
+    #[tokio::test]
+    async fn save_and_analyze_excel_template_roundtrip() {
+        // Input: upload a template containing every common token plus a bogus
+        //        one.
+        // Expected: has_template true, known tokens include customer_name,
+        //           unknown tokens include bogus_one, nothing missing.
+        let app = owner_app().await;
+        let xlsx = build_test_xlsx(
+            "{{company_name}} {{customer_name}} {{invoice_number}} {{invoice_date}} \
+             {{subtotal}} {{tax_total}} {{grand_total}} {{status}} {{bogus_one}}",
+        );
+        use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+        let saved = save_invoice_excel_template(app.state(), app.state(), BASE64.encode(&xlsx))
+            .await
+            .expect("save");
+        assert!(saved.excel_template_base64.is_some());
+
+        let analysis = analyze_invoice_excel_template(app.state(), app.state())
+            .await
+            .expect("analyze");
+        assert!(analysis.has_template);
+        assert!(analysis
+            .known_tokens
+            .contains(&"customer_name".to_string()));
+        assert_eq!(analysis.unknown_tokens, vec!["bogus_one".to_string()]);
+        assert!(
+            analysis.missing_common_tokens.is_empty(),
+            "got: {:?}",
+            analysis.missing_common_tokens
+        );
+    }
+
+    #[tokio::test]
+    async fn generate_invoice_excel_writes_filled_file() {
+        // Input: finalized invoice + uploaded template with {{customer_name}}
+        //        and {{invoice_number}}.
+        // Expected: file written to save_path with every token filled.
+        let app = owner_app().await;
+        let (inv, _) = finalized_invoice_with_stock(&app).await;
+
+        let xlsx = build_test_xlsx("Customer: {{customer_name}} Invoice: {{invoice_number}}");
+        use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+        save_invoice_excel_template(app.state(), app.state(), BASE64.encode(&xlsx))
+            .await
+            .expect("save");
+
+        let path = std::env::temp_dir()
+            .join(format!("invoice-excel-{}.xlsx", Uuid::new_v4()))
+            .to_str()
+            .unwrap()
+            .to_string();
+        let out = generate_invoice_excel(app.state(), app.state(), inv.id.clone(), Some(path.clone()))
+            .await
+            .expect("generate");
+        assert_eq!(out, path);
+
+        let bytes = std::fs::read(&path).expect("read file");
+        std::fs::remove_file(&path).ok();
+        let text = sheet_text_from_xlsx(&bytes);
+        assert!(text.contains("Customer: Walk-in"), "got: {text}");
+        assert!(text.contains("Invoice: "), "got: {text}");
+        assert!(!text.contains("{{"), "tokens left unfilled: {text}");
+    }
+
+    #[test]
+    fn download_sample_invoice_template_writes_file() {
+        // Input: a temp save path.
+        // Expected: a non-empty xlsx (zip) is written at that path.
+        let path = std::env::temp_dir()
+            .join(format!("sample-invoice-{}.xlsx", Uuid::new_v4()))
+            .to_str()
+            .unwrap()
+            .to_string();
+        let out = download_sample_invoice_template(path.clone()).expect("download");
+        assert_eq!(out, path);
+        let bytes = std::fs::read(&path).expect("read file");
+        std::fs::remove_file(&path).ok();
+        assert!(!bytes.is_empty());
+        assert!(zip::ZipArchive::new(std::io::Cursor::new(bytes)).is_ok());
+    }
+
+    #[tokio::test]
+    async fn placeholder_values_include_footer_fields_and_items() {
+        // Input: finalized invoice with the new footer settings set.
+        // Expected: the fill map carries terms/disclaimer/copyright/bank and
+        //           per-item tokens.
+        let app = owner_app().await;
+        let (inv, _) = finalized_invoice_with_stock(&app).await;
+
+        update_invoice_settings(
+            app.state(),
+            app.state(),
+            "".to_string(),
+            "".to_string(),
+            "".to_string(),
+            "INV".to_string(),
+            30,
+            "footer".to_string(),
+            "terms".to_string(),
+            "classic".to_string(),
+            "#1d2b54".to_string(),
+            true,
+            "disclaimer".to_string(),
+            "copyright".to_string(),
+            "bank".to_string(),
+        )
+        .await
+        .expect("update settings");
+
+        let cid = company_id(&app).await;
+        let pool = app.state::<SqlitePool>();
+        let doc = load_invoice_doc(&pool, &inv.id, &cid).await.expect("doc");
+        let m = invoice_placeholder_values(&doc);
+        assert_eq!(m.get("terms_conditions").map(String::as_str), Some("terms"));
+        assert_eq!(m.get("disclaimer").map(String::as_str), Some("disclaimer"));
+        assert_eq!(m.get("copyright").map(String::as_str), Some("copyright"));
+        assert_eq!(m.get("bank_details").map(String::as_str), Some("bank"));
+        assert_eq!(m.get("items_1_name").map(String::as_str), Some("Widget"));
+        assert_eq!(m.get("items_1_qty").map(String::as_str), Some("2"));
     }
 }

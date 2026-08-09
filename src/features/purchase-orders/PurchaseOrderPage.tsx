@@ -6,7 +6,9 @@
 //   1. Create PO → select supplier
 //   2. Add items → select products, quantity, cost
 //   3. Submit → marks as ordered
-//   4. Receive → stock goes UP, batches created if expiry
+//   4. Receive → enter the supplier's expiry per item (from the delivery
+//      note — it's only known when the goods arrive), stock goes UP, batches
+//      created for items with an expiry
 //   5. Record payment → pay the supplier
 
 import { useCallback, useEffect, useState } from "react";
@@ -30,6 +32,7 @@ import {
   Table,
   Text,
   TextInput,
+  Textarea,
   ThemeIcon,
   Title,
   ScrollArea,
@@ -41,6 +44,7 @@ import {
   listPurchaseOrders,
   getPurchaseOrder,
   createPurchaseOrder,
+  createSupplier,
   addPOItem,
   removePOItem,
   submitPurchaseOrder,
@@ -52,6 +56,7 @@ import {
 } from "../../api/backend";
 
 import type {
+  PublicPOItem,
   PublicPurchaseOrder,
   PublicProduct,
   PublicSupplier,
@@ -60,6 +65,7 @@ import type {
 } from "../../types/backend";
 
 import AnimatedNumber from "../../components/AnimatedNumber";
+import { AppDateInput } from "../../components/AppDateInput";
 import { INK } from "../../theme";
 import {
   ArrowLeft,
@@ -183,7 +189,7 @@ function StatCard({
             >
               {label}
             </Text>
-            <Text fw={800} size="xl" style={{ color: INK.navy, letterSpacing: -0.5 }} className="tabular">
+            <Text fw={800} size="xl" style={{ color: INK.text, letterSpacing: -0.5 }} className="tabular">
               {isDash ? (
                 "—"
               ) : isMoney ? (
@@ -283,7 +289,7 @@ function POListView({
           >
             Procurement
           </Text>
-          <Title order={2} style={{ color: INK.navy, letterSpacing: -0.3 }}>
+          <Title order={2} style={{ color: INK.text, letterSpacing: -0.3 }}>
             Purchase Orders
           </Title>
           <Text size="sm" c="dimmed">
@@ -371,7 +377,7 @@ function POListView({
             >
               <ShoppingCart size={22} />
             </div>
-            <Text fw={600} style={{ color: INK.navy }}>
+            <Text fw={600} style={{ color: INK.text }}>
               No purchase orders yet
             </Text>
             <Text size="sm" c="dimmed" maw={320}>
@@ -402,7 +408,7 @@ function POListView({
                     onClick={() => onOpen(po.id)}
                   >
                     <Table.Td>
-                      <Text fw={600} size="sm" className="mono" style={{ color: INK.navy }}>
+                      <Text fw={600} size="sm" className="mono" style={{ color: INK.text }}>
                         {po.poNumber}
                       </Text>
                     </Table.Td>
@@ -448,6 +454,7 @@ function POListView({
         onClose={() => setCreateOpen(false)}
         onCreate={handleCreate}
         suppliers={suppliers}
+        onSupplierCreated={load}
       />
     </Stack>
   );
@@ -462,6 +469,7 @@ function CreatePOModal({
   onClose,
   onCreate,
   suppliers,
+  onSupplierCreated,
 }: {
   opened: boolean;
   onClose: () => void;
@@ -472,9 +480,12 @@ function CreatePOModal({
     referenceNote: string;
   }) => Promise<void>;
   suppliers: PublicSupplier[];
+  onSupplierCreated: () => Promise<void>;
 }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showNewSupplier, setShowNewSupplier] = useState(false);
+
   const form = useForm({
     initialValues: {
       supplierId: "",
@@ -484,6 +495,20 @@ function CreatePOModal({
     },
     validate: {
       supplierId: (v) => (v ? null : "Select a supplier"),
+    },
+  });
+
+  const newSupplierForm = useForm({
+    initialValues: {
+      name: "",
+      contactPerson: "",
+      email: "",
+      phone: "",
+      address: "",
+      taxNumber: "",
+    },
+    validate: {
+      name: (v) => (v.trim().length < 1 ? "Name is required" : null),
     },
   });
 
@@ -500,37 +525,110 @@ function CreatePOModal({
     }
   }
 
+  async function handleCreateSupplier(values: typeof newSupplierForm.values) {
+    try {
+      const supplier = await createSupplier(values);
+      await onSupplierCreated();
+      form.setFieldValue("supplierId", supplier.id);
+      setShowNewSupplier(false);
+      newSupplierForm.reset();
+    } catch (err) {
+      setError(getErrorMessage(err));
+    }
+  }
+
   return (
     <Modal opened={opened} onClose={onClose} title="New Purchase Order" centered>
-      <form onSubmit={form.onSubmit(submit)}>
+      {!showNewSupplier ? (
+        <form onSubmit={form.onSubmit(submit)}>
+          <Stack gap="md">
+            <Group justify="space-between">
+              <Select
+                label="Supplier"
+                placeholder="Select supplier"
+                data={suppliers
+                  .filter((s) => s.isActive)
+                  .map((s) => ({ value: s.id, label: s.name }))}
+                required
+                searchable
+                style={{ flex: 1 }}
+                {...form.getInputProps("supplierId")}
+              />
+              <Button
+                variant="subtle"
+                size="sm"
+                mt={24}
+                onClick={() => setShowNewSupplier(true)}
+              >
+                + New Supplier
+              </Button>
+            </Group>
+            <SimpleGrid cols={2}>
+              <AppDateInput
+                label="PO Date"
+                required
+                value={form.values.poDate}
+                onChange={(v) => form.setFieldValue("poDate", v)}
+              />
+              <AppDateInput
+                label="Expected Date"
+                value={form.values.expectedDate}
+                onChange={(v) => form.setFieldValue("expectedDate", v)}
+              />
+            </SimpleGrid>
+            <TextInput
+              label="Reference / Note"
+              placeholder="Supplier quote, etc."
+              {...form.getInputProps("referenceNote")}
+            />
+            {error && (
+              <Text c="red" size="sm">
+                {error}
+              </Text>
+            )}
+            <Group justify="flex-end">
+              <Button variant="subtle" onClick={onClose}>
+                Cancel
+              </Button>
+              <Button type="submit" loading={loading} styles={gradientButton}>
+                Create PO
+              </Button>
+            </Group>
+          </Stack>
+        </form>
+      ) : (
         <Stack gap="md">
-          <Select
-            label="Supplier"
-            placeholder="Select supplier"
-            data={suppliers
-              .filter((s) => s.isActive)
-              .map((s) => ({ value: s.id, label: s.name }))}
+          <Title order={5}>New Supplier</Title>
+          <TextInput
+            label="Name"
+            placeholder="Supplier name"
             required
-            searchable
-            {...form.getInputProps("supplierId")}
+            {...newSupplierForm.getInputProps("name")}
           />
           <SimpleGrid cols={2}>
             <TextInput
-              label="PO Date"
-              type="date"
-              required
-              {...form.getInputProps("poDate")}
+              label="Contact Person"
+              {...newSupplierForm.getInputProps("contactPerson")}
             />
             <TextInput
-              label="Expected Date"
-              type="date"
-              {...form.getInputProps("expectedDate")}
+              label="Phone"
+              {...newSupplierForm.getInputProps("phone")}
             />
           </SimpleGrid>
-          <TextInput
-            label="Reference / Note"
-            placeholder="Supplier quote, etc."
-            {...form.getInputProps("referenceNote")}
+          <SimpleGrid cols={2}>
+            <TextInput
+              label="Email"
+              {...newSupplierForm.getInputProps("email")}
+            />
+            <TextInput
+              label="Tax / NTN Number"
+              {...newSupplierForm.getInputProps("taxNumber")}
+            />
+          </SimpleGrid>
+          <Textarea
+            label="Address"
+            rows={2}
+            {...newSupplierForm.getInputProps("address")}
           />
           {error && (
             <Text c="red" size="sm">
@@ -538,15 +636,18 @@ function CreatePOModal({
             </Text>
           )}
           <Group justify="flex-end">
-            <Button variant="subtle" onClick={onClose}>
-              Cancel
+            <Button variant="subtle" onClick={() => setShowNewSupplier(false)}>
+              Back
             </Button>
-            <Button type="submit" loading={loading} styles={gradientButton}>
-              Create PO
+            <Button
+              onClick={() => newSupplierForm.onSubmit(handleCreateSupplier)()}
+              styles={gradientButton}
+            >
+              Create Supplier
             </Button>
           </Group>
         </Stack>
-      </form>
+      )}
     </Modal>
   );
 }
@@ -569,6 +670,7 @@ function PODetailView({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [addItemOpen, setAddItemOpen] = useState(false);
+  const [receiveOpen, setReceiveOpen] = useState(false);
   const [payOpen, setPayOpen] = useState(false);
 
   const canManage = user.role === "owner" || user.role === "admin";
@@ -596,7 +698,6 @@ function PODetailView({
     quantity: number;
     unitCost: number;
     taxRate: number;
-    expiryDate: string;
   }) {
     try {
       await addPOItem({ poId, ...values });
@@ -624,9 +725,10 @@ function PODetailView({
     }
   }
 
-  async function handleReceive() {
+  async function handleReceive(expiries: { itemId: string; expiryDate: string }[]) {
     try {
-      await receivePOItems(poId);
+      await receivePOItems(poId, expiries);
+      setReceiveOpen(false);
       await load();
     } catch (err) {
       setError(getErrorMessage(err));
@@ -667,7 +769,7 @@ function PODetailView({
           <Button variant="subtle" leftSection={<ArrowLeft size={16} />} onClick={onBack}>
             Back
           </Button>
-          <Title order={3} className="mono" style={{ color: INK.navy }}>
+          <Title order={3} className="mono" style={{ color: INK.text }}>
             {order.poNumber}
           </Title>
           <Badge
@@ -686,7 +788,11 @@ function PODetailView({
             </Button>
           )}
           {isOrdered && canManage && (
-            <Button color="green" leftSection={<PackageCheck size={15} />} onClick={handleReceive}>
+            <Button
+              color="green"
+              leftSection={<PackageCheck size={15} />}
+              onClick={() => setReceiveOpen(true)}
+            >
               Receive Items
             </Button>
           )}
@@ -754,7 +860,7 @@ function PODetailView({
       <motion.div {...fadeUp} transition={{ duration: 0.4, delay: 0.08 }}>
         <Group justify="space-between" mb="md">
           <Stack gap={2}>
-            <Text fw={700} style={{ color: INK.navy }}>
+            <Text fw={700} style={{ color: INK.text }}>
               Items
             </Text>
             <Text size="xs" c="dimmed">
@@ -881,6 +987,13 @@ function PODetailView({
         onAdd={handleAddItem}
         products={products}
       />
+      <ReceivePOItemsModal
+        opened={receiveOpen}
+        onClose={() => setReceiveOpen(false)}
+        onReceive={handleReceive}
+        items={items.filter((i) => i.quantityReceived < i.quantityOrdered)}
+        poNumber={order.poNumber}
+      />
       <POPaymentModal
         opened={payOpen}
         onClose={() => setPayOpen(false)}
@@ -908,7 +1021,6 @@ function AddPOItemModal({
     quantity: number;
     unitCost: number;
     taxRate: number;
-    expiryDate: string;
   }) => Promise<void>;
   products: PublicProduct[];
 }) {
@@ -920,7 +1032,6 @@ function AddPOItemModal({
       quantity: 1,
       unitCost: 0,
       taxRate: 0,
-      expiryDate: "",
     },
     validate: {
       productId: (v) => (v ? null : "Select a product"),
@@ -981,22 +1092,15 @@ function AddPOItemModal({
               {...form.getInputProps("unitCost")}
             />
           </SimpleGrid>
-          <SimpleGrid cols={2}>
-            <NumberInput
-              label="Tax %"
-              decimalScale={2}
-              fixedDecimalScale
-              suffix="%"
-              min={0}
-              max={100}
-              {...form.getInputProps("taxRate")}
-            />
-            <TextInput
-              label="Expiry Date (optional)"
-              placeholder="YYYY-MM-DD"
-              {...form.getInputProps("expiryDate")}
-            />
-          </SimpleGrid>
+          <NumberInput
+            label="Tax %"
+            decimalScale={2}
+            fixedDecimalScale
+            suffix="%"
+            min={0}
+            max={100}
+            {...form.getInputProps("taxRate")}
+          />
           {error && (
             <Text c="red" size="sm">
               {error}
@@ -1012,6 +1116,111 @@ function AddPOItemModal({
           </Group>
         </Stack>
       </form>
+    </Modal>
+  );
+}
+
+// ==========================================
+// RECEIVE ITEMS MODAL
+// ==========================================
+
+function ReceivePOItemsModal({
+  opened,
+  onClose,
+  onReceive,
+  items,
+  poNumber,
+}: {
+  opened: boolean;
+  onClose: () => void;
+  onReceive: (expiries: { itemId: string; expiryDate: string }[]) => Promise<void>;
+  items: PublicPOItem[];
+  poNumber: string;
+}) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [expiries, setExpiries] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    if (opened) setExpiries({});
+  }, [opened]);
+
+  async function submit() {
+    setError(null);
+    setLoading(true);
+    try {
+      const entered = Object.entries(expiries)
+        .filter(([, v]) => v.trim().length > 0)
+        .map(([itemId, expiryDate]) => ({ itemId, expiryDate }));
+      await onReceive(entered);
+    } catch (err) {
+      setError(getErrorMessage(err));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <Modal opened={opened} onClose={onClose} title={`Receive Items — ${poNumber}`} centered size="xl">
+      <Stack gap="md">
+        <Text size="sm" c="dimmed">
+          Enter each item&apos;s expiry date from the supplier&apos;s delivery note. Leave it
+          blank if the product has no expiry. Items without an expiry won&apos;t create an
+          expiry batch.
+        </Text>
+        <ScrollArea.Autosize mah={360}>
+          <Table striped highlightOnHover verticalSpacing="sm">
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>SKU</Table.Th>
+                <Table.Th>Product</Table.Th>
+                <Table.Th ta="right">To Receive</Table.Th>
+                <Table.Th>Expiry Date</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {items.map((item) => (
+                <Table.Tr key={item.id}>
+                  <Table.Td>
+                    <Badge variant="outline" size="sm">
+                      {item.productSku}
+                    </Badge>
+                  </Table.Td>
+                  <Table.Td>
+                    <Text size="sm">{item.productName}</Text>
+                  </Table.Td>
+                  <Table.Td ta="right">
+                    <Text size="sm" fw={600}>
+                      {item.quantityOrdered - item.quantityReceived}
+                    </Text>
+                  </Table.Td>
+                  <Table.Td>
+                    <AppDateInput
+                      value={expiries[item.id] ?? ""}
+                      onChange={(v) =>
+                        setExpiries((prev) => ({ ...prev, [item.id]: v }))
+                      }
+                    />
+                  </Table.Td>
+                </Table.Tr>
+              ))}
+            </Table.Tbody>
+          </Table>
+        </ScrollArea.Autosize>
+        {error && (
+          <Text c="red" size="sm">
+            {error}
+          </Text>
+        )}
+        <Group justify="flex-end">
+          <Button variant="subtle" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="submit" loading={loading} color="green" onClick={submit}>
+            Confirm Receipt
+          </Button>
+        </Group>
+      </Stack>
     </Modal>
   );
 }
@@ -1095,10 +1304,10 @@ function POPaymentModal({
               )}
               {...form.getInputProps("paymentMethod")}
             />
-            <TextInput
+            <AppDateInput
               label="Date"
-              type="date"
-              {...form.getInputProps("paymentDate")}
+              value={form.values.paymentDate}
+              onChange={(v) => form.setFieldValue("paymentDate", v)}
             />
           </SimpleGrid>
           <TextInput

@@ -254,7 +254,7 @@ export default function SetupPage({ onSetupComplete }: SetupPageProps) {
               <Text size="xs" fw={700} style={{ color: INK.gold, letterSpacing: 1.5, textTransform: "uppercase" }}>
                 First launch
               </Text>
-              <Text fw={800} size="xl" style={{ color: INK.navy, letterSpacing: -0.4 }}>
+              <Text fw={800} size="xl" style={{ color: INK.text, letterSpacing: -0.4 }}>
                 Create your workspace
               </Text>
               <Text size="sm" c="dimmed">
@@ -265,7 +265,7 @@ export default function SetupPage({ onSetupComplete }: SetupPageProps) {
             <form onSubmit={handleSubmit}>
               <Stack gap="md">
                 {/* COMPANY */}
-                <Text size="xs" fw={700} style={{ color: INK.navy, letterSpacing: 1, textTransform: "uppercase" }}>
+                <Text size="xs" fw={700} style={{ color: INK.text, letterSpacing: 1, textTransform: "uppercase" }}>
                   Company Information
                 </Text>
                 <TextInput
@@ -311,7 +311,7 @@ export default function SetupPage({ onSetupComplete }: SetupPageProps) {
                 />
 
                 {/* OWNER */}
-                <Text size="xs" fw={700} style={{ color: INK.navy, letterSpacing: 1, textTransform: "uppercase", marginTop: 4 }}>
+                <Text size="xs" fw={700} style={{ color: INK.text, letterSpacing: 1, textTransform: "uppercase", marginTop: 4 }}>
                   Owner Account
                 </Text>
                 <TextInput

@@ -99,6 +99,11 @@ fn get_embedded_migrations() -> Vec<(i64, &'static str, &'static str)> {
             "015_invoice_designs",
             include_str!("../../migrations/sqlite/015_invoice_designs.sql"),
         ),
+        (
+            16,
+            "016_import_jobs_target",
+            include_str!("../../migrations/sqlite/016_import_jobs_target.sql"),
+        ),
     ]
 }
 
@@ -164,6 +169,7 @@ pub async fn run_sqlite_migrations(sqlite_url: &str) -> Result<(), Box<dyn std::
 
     ensure_batch_number_column(&pool).await?;
     ensure_invoice_design_columns(&pool).await?;
+    ensure_import_job_columns(&pool).await?;
 
     let _ = applied;
 
@@ -362,6 +368,25 @@ async fn ensure_import_columns(pool: &SqlitePool) -> Result<(), Box<dyn std::err
                 .execute(pool)
                 .await?;
         }
+    }
+
+    Ok(())
+}
+
+/// Adds the `import_jobs.target` column introduced by migration 016 so every
+/// job records what kind of data it imported. Idempotent — same PRAGMA check
+/// as the other ensure_* helpers.
+async fn ensure_import_job_columns(pool: &SqlitePool) -> Result<(), Box<dyn std::error::Error>> {
+    let columns: Vec<String> = sqlx::query("PRAGMA table_info(import_jobs)")
+        .map(|row: sqlx::sqlite::SqliteRow| row.get::<String, _>(1))
+        .fetch_all(pool)
+        .await?;
+
+    if !columns.iter().any(|c| c == "target") {
+        println!("Adding import_jobs.target column (old database)");
+        sqlx::raw_sql("ALTER TABLE import_jobs ADD COLUMN target TEXT NOT NULL DEFAULT 'products'")
+            .execute(pool)
+            .await?;
     }
 
     Ok(())

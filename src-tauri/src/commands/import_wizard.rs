@@ -160,6 +160,8 @@ pub struct ImportJob {
     pub id: String,
     pub file_type: String,
     pub file_name: Option<String>,
+    /// "products" | "customers" | "opening_stock" | "suppliers"
+    pub target: String,
     pub status: String,
     pub total_rows: i64,
     pub processed_rows: i64,
@@ -240,6 +242,14 @@ pub async fn analyze_import_file(
 
     if file_bytes.is_empty() {
         return Err("File is empty".to_string());
+    }
+
+    if file_bytes.len() > MAX_IMPORT_FILE_BYTES {
+        return Err(format!(
+            "File too large ({} bytes). Maximum allowed is {} MB.",
+            file_bytes.len(),
+            MAX_IMPORT_FILE_BYTES / (1024 * 1024)
+        ));
     }
 
     match file_type.as_str() {
@@ -452,14 +462,22 @@ pub async fn execute_import(
     let strategy = request.conflict_strategy;
 
     // ---- 1. Create the import job (enables rollback) ----
-    let job_id = create_import_job(
-        pool.inner(),
-        company_id,
-        &current_user,
-        &request,
-        data_rows,
-    )
-    .await?;
+    // Only record a job when data is actually being written; template/custom
+    // field setup without import data has nothing to roll back.
+    let job_id: Option<String> = if request.import_data {
+        Some(
+            create_import_job(
+                pool.inner(),
+                company_id,
+                &current_user,
+                &request,
+                data_rows,
+            )
+            .await?,
+        )
+    } else {
+        None
+    };
 
     // ---- 2. Create custom field definitions (products only) ----
     // Customers, suppliers and opening stock have no free-form custom fields.
@@ -559,6 +577,10 @@ pub async fn execute_import(
             continue;
         }
 
+        // When import_data is false the row loop is empty (all_rows is
+        // empty), so the job_id is always present here.
+        let jid = job_id.as_deref().unwrap_or_default();
+
         let outcome = match target {
             "customers" => {
                 import_one_customer_row(
@@ -566,7 +588,7 @@ pub async fn execute_import(
                     company_id,
                     &request.mappings,
                     row,
-                    &job_id,
+                    jid,
                     strategy,
                 )
                 .await
@@ -577,7 +599,7 @@ pub async fn execute_import(
                     company_id,
                     &request.mappings,
                     row,
-                    &job_id,
+                    jid,
                 )
                 .await
             }
@@ -587,7 +609,7 @@ pub async fn execute_import(
                     company_id,
                     &request.mappings,
                     row,
-                    &job_id,
+                    jid,
                     strategy,
                 )
                 .await
@@ -598,7 +620,7 @@ pub async fn execute_import(
                     company_id,
                     &request.mappings,
                     row,
-                    &job_id,
+                    jid,
                     strategy,
                 )
                 .await
@@ -635,14 +657,16 @@ pub async fn execute_import(
     }
 
     // ---- 5. Finalize the job ----
-    finish_import_job(
-        pool.inner(),
-        &job_id,
-        (products_imported + customers_imported + items_imported) as i64,
-        rows_with_errors as i64,
-        &errors,
-    )
-    .await;
+    if let Some(ref jid) = job_id {
+        finish_import_job(
+            pool.inner(),
+            jid,
+            (products_imported + customers_imported + items_imported) as i64,
+            rows_with_errors as i64,
+            &errors,
+        )
+        .await;
+    }
 
     let entity = match target {
         "customers" => "customers",
@@ -676,7 +700,7 @@ pub async fn execute_import(
         items_imported,
         rows_with_errors,
         rows_skipped,
-        job_id: Some(job_id),
+        job_id,
         errors,
     })
 }
@@ -696,21 +720,25 @@ async fn create_import_job(
     let id = uuid::Uuid::new_v4().to_string();
     let now = import_timestamp(now_unix());
     let file_name = request.file_name.clone().unwrap_or_default();
+    let mappings_json =
+        serde_json::to_string(&request.mappings).unwrap_or_else(|_| "[]".to_string());
 
     sqlx::query(
         r#"
         INSERT INTO import_jobs
-            (id, company_id, file_type, file_name, status,
-             total_rows, processed_rows, error_rows,
+            (id, company_id, file_type, file_name, status, target,
+             total_rows, processed_rows, error_rows, column_mappings,
              created_by, started_at, created_at)
-        VALUES (?, ?, ?, ?, 'processing', ?, 0, 0, ?, ?, ?)
+        VALUES (?, ?, ?, ?, 'processing', ?, ?, 0, 0, ?, ?, ?, ?)
         "#,
     )
     .bind(&id)
     .bind(company_id)
     .bind(&request.file_type)
     .bind(&file_name)
+    .bind(&request.target)
     .bind(data_rows as i64)
+    .bind(&mappings_json)
     .bind(&user.id)
     .bind(&now)
     .bind(&now)
@@ -741,7 +769,13 @@ async fn finish_import_job(
         .ok()
     };
     let now = import_timestamp(now_unix());
-    let status = if error_rows > 0 { "completed" } else { "completed" };
+    // Mark the job as failed when nothing was imported but errors occurred
+    // (e.g. every row rejected). Any successful import counts as completed.
+    let status = if error_rows > 0 && processed_rows == 0 {
+        "failed"
+    } else {
+        "completed"
+    };
 
     let _ = sqlx::query(
         r#"
@@ -771,9 +805,9 @@ pub async fn list_import_jobs(
     let company_id = user.company_id.as_ref().ok_or("You are not assigned to a company")?;
 
     let now = now_unix();
-    let rows = sqlx::query_as::<_, (String, String, Option<String>, String, i64, i64, i64, Option<String>, String, Option<String>, String)>(
+    let rows = sqlx::query_as::<_, (String, String, Option<String>, String, String, i64, i64, i64, Option<String>, String, Option<String>, String)>(
         r#"
-        SELECT id, file_type, file_name, status, total_rows, processed_rows,
+        SELECT id, file_type, file_name, target, status, total_rows, processed_rows,
                error_rows, error_details, created_by, completed_at, created_at
         FROM import_jobs
         WHERE company_id = ?
@@ -788,7 +822,7 @@ pub async fn list_import_jobs(
 
     Ok(rows
         .into_iter()
-        .map(|(id, file_type, file_name, status, total_rows, processed_rows, error_rows, error_details, created_by, completed_at, created_at)| {
+        .map(|(id, file_type, file_name, target, status, total_rows, processed_rows, error_rows, error_details, created_by, completed_at, created_at)| {
             let rollback_available = status == "completed"
                 && completed_at
                     .as_deref()
@@ -800,6 +834,7 @@ pub async fn list_import_jobs(
                 id,
                 file_type,
                 file_name,
+                target,
                 status,
                 total_rows,
                 processed_rows,
@@ -4662,5 +4697,123 @@ mod tests {
             .await
             .expect_err("second rollback should fail");
         assert!(err.contains("already been rolled back"), "got: {err}");
+    }
+
+    // ---------------------------------------------------------------
+    // import job metadata: target / failed status / no job on setup
+    // ---------------------------------------------------------------
+
+    #[tokio::test]
+    async fn import_job_records_target_and_is_listed() {
+        // Input: import customers.
+        // Expected: the created job lists target "customers" and the
+        //           list_import_jobs command returns it with counts.
+        let app = owner_app().await;
+        let csv = "Customer Name,Email\nAcme Corp,a@b.com\n";
+        let result = execute_import(
+            app.state(),
+            app.state(),
+            ImportRequest {
+                target: "customers".to_string(),
+                mappings: vec![
+                    mapping("Customer Name", 0, "customer_name", "core", "high"),
+                    mapping("Email", 1, "customer_email", "core", "medium"),
+                ],
+                file_bytes: csv.as_bytes().to_vec(),
+                file_type: "csv".to_string(),
+                template_name: String::new(),
+                import_data: true,
+                conflict_strategy: ConflictStrategy::default(),
+                dry_run: false,
+                file_name: Some("customers.csv".to_string()),
+            },
+        )
+        .await
+        .expect("import");
+        let job_id = result.job_id.expect("job created");
+
+        let jobs = list_import_jobs(app.state(), app.state()).await.expect("list");
+        let job = jobs.into_iter().find(|j| j.id == job_id).expect("job found");
+        assert_eq!(job.target, "customers");
+        assert_eq!(job.file_name.as_deref(), Some("customers.csv"));
+        assert_eq!(job.status, "completed");
+        assert_eq!(job.imported_records, 1);
+        assert_eq!(job.error_rows, 0);
+        assert!(job.rollback_available, "fresh job should be rollback-able");
+    }
+
+    #[tokio::test]
+    async fn import_job_marked_failed_when_all_rows_error() {
+        // Input: every row is missing a required field (no name mapping).
+        // Expected: job status "failed" (not completed).
+        let app = owner_app().await;
+        let csv = "SKU,Product Name\nA-1,Widget\n";
+        let result = execute_import(
+            app.state(),
+            app.state(),
+            ImportRequest {
+                target: "products".to_string(),
+                mappings: vec![
+                    // Only SKU mapped; required "name" is missing so the row
+                    // fails validation.
+                    mapping("SKU", 0, "sku", "core", "high"),
+                ],
+                file_bytes: csv.as_bytes().to_vec(),
+                file_type: "csv".to_string(),
+                template_name: String::new(),
+                import_data: true,
+                conflict_strategy: ConflictStrategy::default(),
+                dry_run: false,
+                file_name: None,
+            },
+        )
+        .await
+        .expect("import");
+        let job_id = result.job_id.expect("job created");
+        assert_eq!(result.products_imported, 0);
+        assert!(result.rows_with_errors >= 1);
+
+        let status: String = sqlx::query_scalar("SELECT status FROM import_jobs WHERE id = ?")
+            .bind(&job_id)
+            .fetch_one(&*app.state::<SqlitePool>())
+            .await
+            .expect("status");
+        assert_eq!(status, "failed");
+    }
+
+    #[tokio::test]
+    async fn setup_only_import_creates_no_job() {
+        // Input: import_data = false (field/template setup only).
+        // Expected: result.job_id is None and no import_jobs row exists.
+        let app = owner_app().await;
+        let csv = "SKU,Product Name,Flavor\nA-1,Widget,Vanilla\n";
+        let result = execute_import(
+            app.state(),
+            app.state(),
+            ImportRequest {
+                target: "products".to_string(),
+                mappings: vec![
+                    mapping("SKU", 0, "sku", "core", "high"),
+                    mapping("Product Name", 1, "name", "core", "high"),
+                    mapping("Flavor", 2, "custom:flavor", "custom", "unknown"),
+                ],
+                file_bytes: csv.as_bytes().to_vec(),
+                file_type: "csv".to_string(),
+                template_name: String::new(),
+                import_data: false,
+                conflict_strategy: ConflictStrategy::default(),
+                dry_run: false,
+                file_name: None,
+            },
+        )
+        .await
+        .expect("import");
+        assert!(result.job_id.is_none());
+
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM import_jobs")
+            .fetch_one(&*app.state::<SqlitePool>())
+            .await
+            .expect("count");
+        assert_eq!(count, 0);
     }
 }

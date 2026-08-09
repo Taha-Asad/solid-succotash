@@ -8,8 +8,6 @@
     "Helvetica Neue", Arial, sans-serif;
   font-size: 15px;
   line-height: 1.55;
-  color: #1d2b54;
-  background-color: #f6f8fc;
 
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -18,13 +16,54 @@
   -webkit-text-size-adjust: 100%;
 }
 
+/* ==========================================
+   SCHEME TOKENS — light & dark
+   Pages reference these via the INK tokens in
+   src/theme.ts so the whole app re-skins when
+   the Mantine color scheme changes.
+   ========================================== */
+
+:root[data-mantine-color-scheme="light"] {
+  --app-bg: #f4f7fc;
+  --app-surface: #ffffff;
+  --app-border: #dfe6f1;
+  --app-text: #1d2b54;
+  --app-text-soft: #4a5670;
+  --app-muted: #5c6b84;
+  --app-soft: #eef2fa;
+  --app-gold-soft: #fbf2d8;
+  --app-gold-deep: #8c611c;
+  --app-on-primary: #ffffff;
+  --app-hover: rgba(29, 43, 84, 0.05);
+  --app-scroll: #cdd6e6;
+  --app-scroll-hover: #a9b8d4;
+  --app-shadow: 0 10px 34px -16px rgba(16, 24, 58, 0.18);
+}
+
+:root[data-mantine-color-scheme="dark"] {
+  --app-bg: #0a0f1e;
+  --app-surface: #101a30;
+  --app-border: #2a3656;
+  --app-text: #edf1fb;
+  --app-text-soft: #c6d0e6;
+  --app-muted: #a8b6d4;
+  --app-soft: #182342;
+  --app-gold-soft: #2b2410;
+  --app-gold-deep: #e6c965;
+  --app-on-primary: #ffffff;
+  --app-hover: rgba(201, 149, 42, 0.09);
+  --app-scroll: #2b3652;
+  --app-scroll-hover: #3a4a6e;
+  --app-shadow: 0 12px 34px -16px rgba(0, 0, 0, 0.65);
+}
+
 html,
 body {
   margin: 0;
   padding: 0;
   min-height: 100%;
-  background-color: #f6f8fc;
-  color: #1d2b54;
+  background-color: var(--app-bg);
+  color: var(--app-text);
 }
 
 a {
@@ -50,13 +89,13 @@ h6 {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #cdd6e6;
+  background: var(--app-scroll);
   border-radius: 8px;
   border: 2px solid transparent;
   background-clip: content-box;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #a9b8d4;
+  background: var(--app-scroll-hover);
   border: 2px solid transparent;
   background-clip: content-box;
 }
@@ -115,7 +154,7 @@ h6 {
 .mantine-DateInput-calendarHeader {
   margin-bottom: 4px;
   padding: 2px 4px 6px;
-  border-bottom: 1px solid #e3e8f1;
+  border-bottom: 1px solid var(--app-border);
 }
 
 .mantine-DateInput-calendarHeaderLevel {
@@ -123,20 +162,20 @@ h6 {
   font-weight: 700;
   letter-spacing: 0.5px;
   text-transform: uppercase;
-  color: #1d2b54;
+  color: var(--app-text);
   border-radius: 6px;
 }
 .mantine-DateInput-calendarHeaderLevel:hover {
-  background: #eef2f9;
+  background: var(--app-soft);
 }
 
 .mantine-DateInput-calendarHeaderControl {
   border-radius: 6px;
-  color: #1d2b54;
+  color: var(--app-text);
   transition: background-color 0.12s ease, color 0.12s ease;
 }
 .mantine-DateInput-calendarHeaderControl:hover {
-  background: #eef2f9;
+  background: var(--app-soft);
   color: #c9952a;
 }
 .mantine-DateInput-calendarHeaderControlIcon {
@@ -144,7 +183,7 @@ h6 {
 }
 
 .mantine-DateInput-weekdaysRow {
-  border-bottom: 1px solid #e3e8f1;
+  border-bottom: 1px solid var(--app-border);
 }
 .mantine-DateInput-weekday {
   padding-bottom: 6px;
@@ -152,18 +191,19 @@ h6 {
   font-weight: 700;
   letter-spacing: 0.6px;
   text-transform: uppercase;
-  color: #8c611c;
+  color: var(--app-gold-deep);
 }
 
 .mantine-DateInput-day {
   border-radius: 8px;
   font-size: 12.5px;
   font-weight: 500;
+  color: var(--app-text);
   transition: background-color 0.12s ease, color 0.12s ease,
     box-shadow 0.12s ease;
 }
 .mantine-DateInput-day:hover {
-  background: #eef2f9;
+  background: var(--app-soft);
 }
 .mantine-DateInput-day[data-weekend] {
   color: #c9952a;

@@ -38,19 +38,42 @@ const gold: MantineColorsTuple = [
   "#4F3610", // 9
 ];
 
+// ---- Dark-mode neutral scale (navy-tinted) ----------------------------
+// Replaces Mantine's default grey-dark so dark mode stays on-brand.
+
+const dark: MantineColorsTuple = [
+  "#E9EDF6", // 0  primary text
+  "#CAD3E4", // 1
+  "#A7B4CE", // 2
+  "#7E8CAB", // 3
+  "#53607E", // 4
+  "#303B57", // 5
+  "#1E2842", // 6
+  "#161F37", // 7  body background
+  "#101A30", // 8  card / surface
+  "#0A1224", // 9  deepest
+];
+
 // ---- Semantic tokens used directly by pages ---------------------------
+//
+// The surface/text tokens below read CSS variables that switch with the
+// Mantine color scheme (light/dark), so pages automatically adapt. Brand
+// colours (navy, gold) stay fixed.
 
 export const INK = {
   navy: "#1D2B54",
-  navySoft: "#2E4178",
+  navySoft: "var(--app-soft)",
   navyDeep: "#0E1530",
   gold: "#C9952A",
-  goldSoft: gold[1],
-  goldDeep: "#8C611C",
+  goldSoft: "var(--app-gold-soft)",
+  goldDeep: "var(--app-gold-deep)",
   goldBright: "#E6C965",
-  paper: "#F6F8FC",
-  border: "#E3E8F1",
-  muted: "#5C6B84",
+  paper: "var(--app-bg)",
+  border: "var(--app-border)",
+  muted: "var(--app-muted)",
+  text: "var(--app-text)",
+  textSoft: "var(--app-text-soft)",
+  onPrimary: "var(--app-on-primary)",
   success: "#1E8E5A",
   danger: "#D64545",
   warning: "#C08A1E",
@@ -85,6 +108,7 @@ export const theme = createTheme({
   colors: {
     brand,
     gold,
+    dark,
   },
   components: {
     Card: {

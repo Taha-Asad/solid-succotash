@@ -259,7 +259,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
               <Text size="xs" fw={700} style={{ color: INK.gold, letterSpacing: 1.5, textTransform: "uppercase" }}>
                 Welcome back
               </Text>
-              <Text fw={800} size="xl" style={{ color: INK.navy, letterSpacing: -0.4 }}>
+              <Text fw={800} size="xl" style={{ color: INK.text, letterSpacing: -0.4 }}>
                 Sign in to your workspace
               </Text>
               <Text size="sm" c="dimmed">

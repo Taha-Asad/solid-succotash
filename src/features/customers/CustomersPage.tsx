@@ -93,7 +93,7 @@ export default function CustomersPage({ user }: { user: PublicUser }) {
           >
             Sales
           </Text>
-          <Title order={2} style={{ color: INK.navy, letterSpacing: -0.3 }}>
+          <Title order={2} style={{ color: INK.text, letterSpacing: -0.3 }}>
             Customer Directory
           </Title>
           <Text size="sm" c="dimmed">
@@ -134,7 +134,7 @@ export default function CustomersPage({ user }: { user: PublicUser }) {
                 {filtered.map((customer) => (
                   <Table.Tr key={customer.id}>
                     <Table.Td>
-                      <Text fw={600} size="sm" style={{ color: INK.navy }}>
+                      <Text fw={600} size="sm" style={{ color: INK.text }}>
                         {customer.name}
                       </Text>
                     </Table.Td>

@@ -37,6 +37,8 @@ import {
 
 import { useForm } from "@mantine/form";
 
+import { useAppTheme } from "../../theme/AppThemeProvider";
+
 import {
   getCompany,
   updateCompany,
@@ -55,6 +57,7 @@ import {
   archiveOldRecords,
   saveInvoiceExcelTemplate,
   analyzeInvoiceExcelTemplate,
+  downloadSampleInvoiceTemplate,
 } from "../../api/backend";
 
 import type {
@@ -250,6 +253,7 @@ function InvoiceSettingsTab() {
     useState<ExcelTemplateAnalysis | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [downloadingSample, setDownloadingSample] = useState(false);
 
   const form = useForm({
     initialValues: {
@@ -345,6 +349,26 @@ function InvoiceSettingsTab() {
     }
   }
 
+  async function handleDownloadSampleTemplate() {
+    try {
+      const path = await saveFileDialog({
+        title: "Save sample invoice template",
+        defaultPath: "sample-invoice-template.xlsx",
+        filters: [{ name: "Excel Workbook", extensions: ["xlsx"] }],
+      });
+      if (!path) return;
+      setDownloadingSample(true);
+      setError(null);
+      setSuccess(null);
+      await downloadSampleInvoiceTemplate(path);
+      setSuccess("Sample template saved. Open it in Excel to edit the layout.");
+    } catch (err) {
+      setError(getErrorMessage(err));
+    } finally {
+      setDownloadingSample(false);
+    }
+  }
+
   if (loading) return <Text c="dimmed">Loading...</Text>;
 
   return (
@@ -402,6 +426,7 @@ function InvoiceSettingsTab() {
                 { value: "classic", label: "Classic" },
                 { value: "modern", label: "Modern" },
                 { value: "minimal", label: "Minimal" },
+                { value: "excel", label: "Excel Template" },
               ]}
               {...form.getInputProps("invoiceDesign")}
             />
@@ -471,6 +496,13 @@ function InvoiceSettingsTab() {
             </Button>
             <Button variant="light" onClick={handleAnalyzeTemplate} loading={analyzing}>
               Analyze Template
+            </Button>
+            <Button
+              variant="subtle"
+              onClick={handleDownloadSampleTemplate}
+              loading={downloadingSample}
+            >
+              Download Sample
             </Button>
           </Group>
           {templateAnalysis && (
@@ -549,6 +581,7 @@ function ThemeBrandingTab() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const { setColorScheme } = useAppTheme();
 
   const form = useForm({
     initialValues: DEFAULT_THEME,
@@ -566,6 +599,9 @@ function ThemeBrandingTab() {
     getTheme()
       .then((t) => {
         form.setValues(t);
+        if (t.colorScheme) {
+          setColorScheme(t.colorScheme as "light" | "dark" | "auto");
+        }
         setLoading(false);
       })
       .catch((err) => {
@@ -651,6 +687,10 @@ function ThemeBrandingTab() {
                 { value: "auto", label: "Auto (follow system)" },
               ]}
               {...form.getInputProps("colorScheme")}
+              onChange={(value) => {
+                form.setFieldValue("colorScheme", value ?? "light");
+                if (value) setColorScheme(value);
+              }}
             />
             <TextInput
               label="Company Tagline"
@@ -1029,7 +1069,7 @@ function RetentionTab() {
                 <Text size="xs" c="dimmed">
                   Archivable Invoices
                 </Text>
-                <Title order={4} style={{ color: INK.navy }}>
+                <Title order={4} style={{ color: INK.text }}>
                   {summary.invoicesArchivable}
                 </Title>
               </Card>
@@ -1037,7 +1077,7 @@ function RetentionTab() {
                 <Text size="xs" c="dimmed">
                   Archivable Purchase Orders
                 </Text>
-                <Title order={4} style={{ color: INK.navy }}>
+                <Title order={4} style={{ color: INK.text }}>
                   {summary.poArchivable}
                 </Title>
               </Card>
@@ -1045,7 +1085,7 @@ function RetentionTab() {
                 <Text size="xs" c="dimmed">
                   Archivable Stock Movements
                 </Text>
-                <Title order={4} style={{ color: INK.navy }}>
+                <Title order={4} style={{ color: INK.text }}>
                   {summary.movementsArchivable}
                 </Title>
               </Card>
