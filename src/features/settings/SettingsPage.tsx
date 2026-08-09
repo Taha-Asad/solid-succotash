@@ -30,6 +30,9 @@ import {
   Box,
   Image,
   ActionIcon,
+  Switch,
+  Textarea,
+  Kbd,
 } from "@mantine/core";
 
 import { useForm } from "@mantine/form";
@@ -50,12 +53,15 @@ import {
   readFileBase64,
   getRetentionSummary,
   archiveOldRecords,
+  saveInvoiceExcelTemplate,
+  analyzeInvoiceExcelTemplate,
 } from "../../api/backend";
 
 import type {
   AuditEntry,
   CompanyTheme,
   RetentionSummary,
+  ExcelTemplateAnalysis,
 } from "../../api/backend";
 
 import type { PublicUser } from "../../types/backend";
@@ -240,6 +246,11 @@ function InvoiceSettingsTab() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
+  const [templateAnalysis, setTemplateAnalysis] =
+    useState<ExcelTemplateAnalysis | null>(null);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [uploading, setUploading] = useState(false);
+
   const form = useForm({
     initialValues: {
       companyNtn: "",
@@ -250,6 +261,12 @@ function InvoiceSettingsTab() {
       defaultDueDays: 30,
       invoiceFooter: "",
       termsConditions: "",
+      invoiceDesign: "classic",
+      designAccentColor: "#1d2b54",
+      showQr: true,
+      disclaimer: "",
+      copyright: "",
+      bankDetails: "",
     },
   });
 
@@ -265,6 +282,12 @@ function InvoiceSettingsTab() {
           defaultDueDays: s.defaultDueDays,
           invoiceFooter: s.invoiceFooter ?? "",
           termsConditions: s.termsConditions ?? "",
+          invoiceDesign: s.invoiceDesign,
+          designAccentColor: s.designAccentColor,
+          showQr: s.showQr,
+          disclaimer: s.disclaimer ?? "",
+          copyright: s.copyright ?? "",
+          bankDetails: s.bankDetails ?? "",
         });
         setLoading(false);
       })
@@ -285,10 +308,47 @@ function InvoiceSettingsTab() {
     }
   }
 
+  async function handleUploadTemplate() {
+    try {
+      const result = await openFileDialog({
+        title: "Select Excel invoice template",
+        filters: [{ name: "Excel Workbook", extensions: ["xlsx"] }],
+      });
+      const path = Array.isArray(result) ? result[0] : result;
+      if (!path) return;
+
+      setUploading(true);
+      setError(null);
+      setSuccess(null);
+      const dataUri = await readFileBase64(path);
+      const rawBase64 = dataUri.includes(",") ? dataUri.split(",")[1] : dataUri;
+      await saveInvoiceExcelTemplate(rawBase64);
+      setTemplateAnalysis(null);
+      setSuccess("Excel template uploaded. Run analysis to verify placeholders.");
+    } catch (err) {
+      setError(getErrorMessage(err));
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function handleAnalyzeTemplate() {
+    try {
+      setAnalyzing(true);
+      setError(null);
+      const analysis = await analyzeInvoiceExcelTemplate();
+      setTemplateAnalysis(analysis);
+    } catch (err) {
+      setError(getErrorMessage(err));
+    } finally {
+      setAnalyzing(false);
+    }
+  }
+
   if (loading) return <Text c="dimmed">Loading...</Text>;
 
   return (
-    <Card withBorder padding="lg" maw={600}>
+    <Card withBorder padding="lg" maw={700}>
       <Title order={5} mb="md">
         Invoice Settings
       </Title>
@@ -334,17 +394,120 @@ function InvoiceSettingsTab() {
           </SimpleGrid>
 
           <Divider />
+          <Title order={6}>Invoice Design</Title>
+          <SimpleGrid cols={2}>
+            <Select
+              label="Design"
+              data={[
+                { value: "classic", label: "Classic" },
+                { value: "modern", label: "Modern" },
+                { value: "minimal", label: "Minimal" },
+              ]}
+              {...form.getInputProps("invoiceDesign")}
+            />
+            <ColorInput
+              label="Accent Color"
+              format="hex"
+              swatches={[
+                "#1d2b54",
+                "#2563eb",
+                "#0d9488",
+                "#c9952a",
+                "#b91c1c",
+                "#374151",
+              ]}
+              {...form.getInputProps("designAccentColor")}
+            />
+          </SimpleGrid>
+          <Switch
+            label="Show FBR QR code on finalized invoices"
+            {...form.getInputProps("showQr", { type: "checkbox" })}
+          />
+
+          <Divider />
           <Title order={6}>Invoice Content</Title>
           <TextInput
             label="Footer Text"
             placeholder="Thank you for your business!"
             {...form.getInputProps("invoiceFooter")}
           />
-          <TextInput
+          <Textarea
             label="Terms & Conditions"
             placeholder="Payment due within 30 days..."
+            autosize
+            minRows={2}
             {...form.getInputProps("termsConditions")}
           />
+          <Textarea
+            label="Bank Details"
+            placeholder="Meezan Bank · A/C 0101-1234567 · IBAN PK00MEZN..."
+            autosize
+            minRows={2}
+            {...form.getInputProps("bankDetails")}
+          />
+          <Textarea
+            label="Disclaimer"
+            placeholder="Goods once sold are not returnable..."
+            autosize
+            minRows={2}
+            {...form.getInputProps("disclaimer")}
+          />
+          <TextInput
+            label="Copyright"
+            placeholder="© 2026 Ijaz & Company"
+            {...form.getInputProps("copyright")}
+          />
+
+          <Divider />
+          <Title order={6}>Excel Template</Title>
+          <Text size="sm" c="dimmed">
+            Upload an .xlsx invoice layout and the system fills placeholders
+            like <Kbd>{"{{customer_name}}"}</Kbd>, <Kbd>{"{{invoice_number}}"}</Kbd>,{" "}
+            <Kbd>{"{{grand_total}}"}</Kbd> and <Kbd>{"{{items_1_name}}"}</Kbd>.
+          </Text>
+          <Group gap="sm">
+            <Button variant="outline" onClick={handleUploadTemplate} loading={uploading}>
+              Upload Template
+            </Button>
+            <Button variant="light" onClick={handleAnalyzeTemplate} loading={analyzing}>
+              Analyze Template
+            </Button>
+          </Group>
+          {templateAnalysis && (
+            <Stack gap={6}>
+              {templateAnalysis.unknownTokens.length > 0 && (
+                <Alert color="red" title="Unknown placeholders found">
+                  {templateAnalysis.unknownTokens.join(", ")}
+                </Alert>
+              )}
+              {templateAnalysis.missingCommonTokens.length > 0 && (
+                <Alert color="yellow" title="Recommended placeholders missing">
+                  {templateAnalysis.missingCommonTokens.join(", ")}
+                </Alert>
+              )}
+              {templateAnalysis.knownTokens.length === 0 &&
+                templateAnalysis.unknownTokens.length === 0 &&
+                templateAnalysis.missingCommonTokens.length > 0 && (
+                  <Alert color="gray" title="No placeholders detected">
+                    Add placeholders like {"{{customer_name}}"} to your template
+                    cells.
+                  </Alert>
+                )}
+              {templateAnalysis.knownTokens.length > 0 &&
+                templateAnalysis.unknownTokens.length === 0 &&
+                templateAnalysis.missingCommonTokens.length === 0 && (
+                  <Alert color="green" title="Template looks good">
+                    All detected placeholders are recognised.
+                  </Alert>
+                )}
+              {templateAnalysis.hasTemplate && templateAnalysis.knownTokens.length > 0 && (
+                <Text size="sm" c="dimmed">
+                  Recognised: {templateAnalysis.knownTokens.length} placeholder
+                  token(s).
+                </Text>
+              )}
+            </Stack>
+          )}
 
           {error && (
             <Text c="red" size="sm">

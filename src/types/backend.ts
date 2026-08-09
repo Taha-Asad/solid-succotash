@@ -400,6 +400,13 @@ export type InvoiceSettings = {
   defaultDueDays: number;
   invoiceFooter: string | null;
   termsConditions: string | null;
+  invoiceDesign: string;
+  designAccentColor: string;
+  showQr: boolean;
+  excelTemplateBase64: string | null;
+  disclaimer: string | null;
+  copyright: string | null;
+  bankDetails: string | null;
 };
 
 // ==========================================

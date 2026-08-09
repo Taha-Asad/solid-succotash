@@ -94,6 +94,11 @@ fn get_embedded_migrations() -> Vec<(i64, &'static str, &'static str)> {
             "014_import_batches_and_units",
             include_str!("../../migrations/sqlite/014_import_batches_and_units.sql"),
         ),
+        (
+            15,
+            "015_invoice_designs",
+            include_str!("../../migrations/sqlite/015_invoice_designs.sql"),
+        ),
     ]
 }
 
@@ -158,6 +163,7 @@ pub async fn run_sqlite_migrations(sqlite_url: &str) -> Result<(), Box<dyn std::
     }
 
     ensure_batch_number_column(&pool).await?;
+    ensure_invoice_design_columns(&pool).await?;
 
     let _ = applied;
 
@@ -178,6 +184,61 @@ async fn ensure_batch_number_column(pool: &SqlitePool) -> Result<(), Box<dyn std
     if !columns.iter().any(|c| c == "batch_number") {
         println!("Adding stock_batches.batch_number column (old database)");
         sqlx::raw_sql("ALTER TABLE stock_batches ADD COLUMN batch_number TEXT")
+            .execute(pool)
+            .await?;
+    }
+
+    Ok(())
+}
+
+/// Adds the invoice-design columns introduced by migration 015. SQLite has
+/// no `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`, and the migration runner
+/// re-executes files on startup, so the columns are added from Rust once.
+async fn ensure_invoice_design_columns(pool: &SqlitePool) -> Result<(), Box<dyn std::error::Error>> {
+    let columns: Vec<String> = sqlx::query("PRAGMA table_info(company_invoice_settings)")
+        .map(|row: sqlx::sqlite::SqliteRow| row.get::<String, _>(1))
+        .fetch_all(pool)
+        .await?;
+
+    if !columns.iter().any(|c| c == "invoice_design") {
+        println!("Adding company_invoice_settings.invoice_design column (old database)");
+        sqlx::raw_sql("ALTER TABLE company_invoice_settings ADD COLUMN invoice_design TEXT NOT NULL DEFAULT 'classic'")
+            .execute(pool)
+            .await?;
+    }
+    if !columns.iter().any(|c| c == "design_accent_color") {
+        println!("Adding company_invoice_settings.design_accent_color column (old database)");
+        sqlx::raw_sql("ALTER TABLE company_invoice_settings ADD COLUMN design_accent_color TEXT NOT NULL DEFAULT '#1d2b54'")
+            .execute(pool)
+            .await?;
+    }
+    if !columns.iter().any(|c| c == "show_qr") {
+        println!("Adding company_invoice_settings.show_qr column (old database)");
+        sqlx::raw_sql("ALTER TABLE company_invoice_settings ADD COLUMN show_qr INTEGER NOT NULL DEFAULT 1")
+            .execute(pool)
+            .await?;
+    }
+    if !columns.iter().any(|c| c == "excel_template_base64") {
+        println!("Adding company_invoice_settings.excel_template_base64 column (old database)");
+        sqlx::raw_sql("ALTER TABLE company_invoice_settings ADD COLUMN excel_template_base64 TEXT")
+            .execute(pool)
+            .await?;
+    }
+    if !columns.iter().any(|c| c == "disclaimer") {
+        println!("Adding company_invoice_settings.disclaimer column (old database)");
+        sqlx::raw_sql("ALTER TABLE company_invoice_settings ADD COLUMN disclaimer TEXT")
+            .execute(pool)
+            .await?;
+    }
+    if !columns.iter().any(|c| c == "copyright") {
+        println!("Adding company_invoice_settings.copyright column (old database)");
+        sqlx::raw_sql("ALTER TABLE company_invoice_settings ADD COLUMN copyright TEXT")
+            .execute(pool)
+            .await?;
+    }
+    if !columns.iter().any(|c| c == "bank_details") {
+        println!("Adding company_invoice_settings.bank_details column (old database)");
+        sqlx::raw_sql("ALTER TABLE company_invoice_settings ADD COLUMN bank_details TEXT")
             .execute(pool)
             .await?;
     }

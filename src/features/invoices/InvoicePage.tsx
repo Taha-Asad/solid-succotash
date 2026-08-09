@@ -32,6 +32,7 @@ import {
   Title,
   ScrollArea,
   Alert,
+  Menu,
 } from "@mantine/core";
 
 import { useForm } from "@mantine/form";
@@ -49,6 +50,9 @@ import {
   recordPayment,
   listProducts,
   generateInvoiceHtml,
+  generateInvoicePdf,
+  generateInvoiceExcel,
+  saveFileDialog,
   getErrorMessage,
 } from "../../api/backend";
 
@@ -747,6 +751,34 @@ function InvoiceDetailView({
     }
   }
 
+  async function handleExportPdf() {
+    try {
+      const path = await saveFileDialog({
+        title: "Save invoice as PDF",
+        defaultPath: `invoice-${invoiceId.slice(0, 8)}.pdf`,
+        filters: [{ name: "PDF", extensions: ["pdf"] }],
+      });
+      if (!path) return;
+      await generateInvoicePdf(invoiceId, path);
+    } catch (err) {
+      setError(getErrorMessage(err));
+    }
+  }
+
+  async function handleExportExcel() {
+    try {
+      const path = await saveFileDialog({
+        title: "Save invoice as Excel",
+        defaultPath: `invoice-${invoiceId.slice(0, 8)}.xlsx`,
+        filters: [{ name: "Excel Workbook", extensions: ["xlsx"] }],
+      });
+      if (!path) return;
+      await generateInvoiceExcel(invoiceId, path);
+    } catch (err) {
+      setError(getErrorMessage(err));
+    }
+  }
+
   if (loading) {
     return <Text c="dimmed">Loading invoice...</Text>;
   }
@@ -777,9 +809,18 @@ function InvoiceDetailView({
           </Badge>
         </Group>
         <Group>
-          <Button variant="outline" onClick={handlePrint}>
-            🖨️ Print / PDF
-          </Button>
+          <Menu position="bottom-end" withinPortal>
+            <Menu.Target>
+              <Button variant="outline">🖨️ Export</Button>
+            </Menu.Target>
+            <Menu.Dropdown>
+              <Menu.Item onClick={handlePrint}>
+                Print / Save as PDF (browser)
+              </Menu.Item>
+              <Menu.Item onClick={handleExportPdf}>Export PDF file</Menu.Item>
+              <Menu.Item onClick={handleExportExcel}>Export Excel file</Menu.Item>
+            </Menu.Dropdown>
+          </Menu>
           {isDraft && canManage && (
             <Button color="green" onClick={handleFinalize}>
               ✓ Finalize Invoice

@@ -440,6 +440,12 @@ export function updateInvoiceSettings(input: {
   defaultDueDays: number;
   invoiceFooter: string;
   termsConditions: string;
+  invoiceDesign: string;
+  designAccentColor: string;
+  showQr: boolean;
+  disclaimer: string;
+  copyright: string;
+  bankDetails: string;
 }): Promise<InvoiceSettings> {
   return invoke<InvoiceSettings>("update_invoice_settings", input);
 }
@@ -466,6 +472,22 @@ export function clearSavedSession(): Promise<void> {
 
 export function generateInvoiceHtml(invoiceId: string): Promise<string> {
   return invoke<string>("generate_invoice_html", { invoiceId });
+}
+
+export function generateInvoicePdf(invoiceId: string, savePath?: string): Promise<string> {
+  return invoke<string>("generate_invoice_pdf", { invoiceId, savePath });
+}
+
+export function generateInvoiceExcel(invoiceId: string, savePath?: string): Promise<string> {
+  return invoke<string>("generate_invoice_excel", { invoiceId, savePath });
+}
+
+export function saveInvoiceExcelTemplate(templateBase64: string): Promise<InvoiceSettings> {
+  return invoke<InvoiceSettings>("save_invoice_excel_template", { templateBase64 });
+}
+
+export function analyzeInvoiceExcelTemplate(): Promise<ExcelTemplateAnalysis> {
+  return invoke<ExcelTemplateAnalysis>("analyze_invoice_excel_template");
 }
 
 // ==========================================
@@ -833,6 +855,13 @@ export type UpdateResult = {
     date: string | null;
     body: string | null;
   } | null;
+};
+
+export type ExcelTemplateAnalysis = {
+  hasTemplate: boolean;
+  knownTokens: string[];
+  unknownTokens: string[];
+  missingCommonTokens: string[];
 };
 
 export function checkForUpdates(): Promise<UpdateResult> {

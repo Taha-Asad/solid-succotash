@@ -1,0 +1,14 @@
+-- 015_invoice_designs.sql
+-- Invoice design settings are added idempotently from Rust after the
+-- migration list runs (PRAGMA table_info guard in sqlite_migrate.rs),
+-- because SQLite does not support `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`.
+--
+-- Columns added (company_invoice_settings):
+--   invoice_design        TEXT  NOT NULL DEFAULT 'classic'   -- classic | modern | minimal | excel
+--   design_accent_color   TEXT  NOT NULL DEFAULT '#1d2b54'  -- hex accent used by built-in designs
+--   show_qr               INTEGER NOT NULL DEFAULT 1         -- show FBR QR block
+--   excel_template_base64 TEXT                               -- user-uploaded .xlsx invoice design
+--   disclaimer            TEXT                               -- free-text footer: disclaimer / copyright / tax notes
+--   copyright             TEXT
+--   bank_details          TEXT
+SELECT 1;
