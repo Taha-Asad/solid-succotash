@@ -29,6 +29,8 @@ import {
 import { loginUser, getErrorMessage } from "../../api/backend";
 import type { PublicUser } from "../../types/backend";
 import { INK } from "../../theme";
+import { useI18n } from "../../i18n/I18nProvider";
+import LanguageMenu from "../../components/LanguageMenu";
 
 // ---- Props ----
 
@@ -39,18 +41,18 @@ interface LoginPageProps {
 const FEATURES = [
   {
     icon: <Boxes size={18} />,
-    title: "Inventory Control",
-    text: "Track products, batches, stock levels and suppliers.",
+    titleKey: "login.feat1.title",
+    textKey: "login.feat1.text",
   },
   {
     icon: <ReceiptText size={18} />,
-    title: "Smart Invoicing",
-    text: "Draft → finalize → paid lifecycle with tax & discounts.",
+    titleKey: "login.feat2.title",
+    textKey: "login.feat2.text",
   },
   {
     icon: <ChartPie size={18} />,
-    title: "Business Analytics",
-    text: "Live revenue trends, top products and profit insights.",
+    titleKey: "login.feat3.title",
+    textKey: "login.feat3.text",
   },
 ];
 
@@ -59,6 +61,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { t } = useI18n();
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -171,9 +174,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
             margin: "0 0 12px",
           }}
         >
-          Your business,
-          <br />
-          in perfect order.
+          {t("login.heroTitle")}
         </motion.h1>
 
         <motion.p
@@ -182,14 +183,13 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
           transition={{ duration: 0.5, delay: 0.35 }}
           style={{ color: "#A9B6D6", fontSize: 16, margin: "0 0 40px", maxWidth: 460 }}
         >
-          Ijaz & Company ERP brings inventory, invoicing and analytics into one
-          clean workspace — designed for precision, built for growth.
+          {t("login.heroSubtitle")}
         </motion.p>
 
         <Stack gap="md" maw={400}>
           {FEATURES.map((f, i) => (
             <motion.div
-              key={f.title}
+              key={f.titleKey}
               initial={{ opacity: 0, x: -20 }}
               animate={{ opacity: 1, x: 0 }}
               transition={{ duration: 0.4, delay: 0.45 + i * 0.12 }}
@@ -212,8 +212,8 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
                   {f.icon}
                 </div>
                 <Stack gap={1}>
-                  <Text fw={700} size="sm">{f.title}</Text>
-                  <Text size="xs" style={{ color: "#A9B6D6" }}>{f.text}</Text>
+                  <Text fw={700} size="sm">{t(f.titleKey)}</Text>
+                  <Text size="xs" style={{ color: "#A9B6D6" }}>{t(f.textKey)}</Text>
                 </Stack>
               </Group>
             </motion.div>
@@ -233,7 +233,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
           }}
         >
           <ShieldCheck size={16} />
-          <Text size="xs">Your data stays local and private on your machine.</Text>
+          <Text size="xs">{t("login.privateData")}</Text>
         </motion.div>
       </motion.div>
 
@@ -248,30 +248,33 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
           background: INK.paper,
         }}
       >
+        <div style={{ position: "absolute", top: 20, insetInlineEnd: 20, zIndex: 10 }}>
+          <LanguageMenu />
+        </div>
         <motion.div
           initial={{ opacity: 0, y: 30 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.55, delay: 0.2, ease: [0.22, 1, 0.36, 1] }}
           style={{ width: "100%", maxWidth: 400 }}
         >
-          <Card withBorder shadow="lg" p="xl">
+          <Card withBorder shadow="lg" p="xl" data-tour="login-form">
             <Stack gap="xs" mb="lg">
               <Text size="xs" fw={700} style={{ color: INK.gold, letterSpacing: 1.5, textTransform: "uppercase" }}>
-                Welcome back
+                {t("login.welcome")}
               </Text>
               <Text fw={800} size="xl" style={{ color: INK.text, letterSpacing: -0.4 }}>
-                Sign in to your workspace
+                {t("login.signinTitle")}
               </Text>
               <Text size="sm" c="dimmed">
-                Enter your credentials to continue.
+                {t("login.signinSubtitle")}
               </Text>
             </Stack>
 
             <form onSubmit={handleSubmit}>
               <Stack gap="md">
                 <TextInput
-                  label="Email"
-                  placeholder="you@company.com"
+                  label={t("login.email")}
+                  placeholder={t("login.emailPlaceholder")}
                   type="email"
                   required
                   size="md"
@@ -281,8 +284,8 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
                 />
 
                 <PasswordInput
-                  label="Password"
-                  placeholder="Your password"
+                  label={t("login.password")}
+                  placeholder={t("login.passwordPlaceholder")}
                   required
                   size="md"
                   leftSection={<Lock size={16} />}
@@ -313,7 +316,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
                       },
                     }}
                   >
-                    Sign In
+                    {t("login.signIn")}
                   </Button>
                 </motion.div>
               </Stack>

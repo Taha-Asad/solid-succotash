@@ -16,13 +16,18 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   AccountStatementRow,
   CompanySetupInput,
+  CreatePackageInput,
   CreateUserInput,
   CustomerLedgerEntry,
+  ErpAdapterInfo,
   FileAnalysis,
+  ImportError,
   ImportJob,
+  ImportJobStatus,
   ImportRequest,
   ImportResult,
   ImportTarget,
+  ImportTemplate,
   InvoiceSettings,
   InvoiceWithDetails,
   JournalEntryWithLines,
@@ -35,18 +40,26 @@ import type {
   ProfitLossSummary,
   PublicCategory,
   PublicCompany,
+  PublicCompanyModule,
   PublicCustomer,
+  PublicFeatureFlag,
   PublicInvoice,
   PublicInvoiceItem,
+  PublicPackage,
   PublicPOItem,
   PublicProduct,
   PublicPurchaseOrder,
   PublicStockBatch,
   PublicStockMovement,
+  PublicSubscription,
   PublicSupplier,
+  PublicUnit,
   PublicUser,
+  PlatformAnalytics,
   PurchaseOrderWithItems,
   RegisterCompanyResult,
+  RegisterTenantInput,
+  RegisterTenantResult,
   RoleInfo,
   RollbackResult,
   SalesByPeriod,
@@ -54,11 +67,15 @@ import type {
   SetActiveInput,
   StockAdjustmentInput,
   StockSummary,
+  TenantCompanyDetail,
+  TenantCompanySummary,
   TopCustomer,
   TopProduct,
+  UpdatePackageInput,
   UpdatePermissionInput,
   UpdateProductInput,
   UpdateRoleInput,
+  UpdateTenantCompanyInput,
 } from "../types/backend";
 
 // ==========================================
@@ -164,6 +181,35 @@ export function createCategory(input: {
   description: string;
 }): Promise<PublicCategory> {
   return invoke<PublicCategory>("create_category", input);
+}
+
+// ==========================================
+// INVENTORY: UNITS OF MEASURE (spec §23.16)
+// ==========================================
+
+export function listUnits(): Promise<PublicUnit[]> {
+  return invoke<PublicUnit[]>("list_units");
+}
+
+export function createUnit(input: {
+  name: string;
+  symbol?: string | null;
+  isDefault: boolean;
+}): Promise<PublicUnit> {
+  return invoke<PublicUnit>("create_unit", input);
+}
+
+export function updateUnit(input: {
+  unitId: string;
+  name: string;
+  symbol?: string | null;
+  isDefault: boolean;
+}): Promise<PublicUnit> {
+  return invoke<PublicUnit>("update_unit", input);
+}
+
+export function deleteUnit(unitId: string): Promise<void> {
+  return invoke<void>("delete_unit", { unitId });
 }
 
 export function updateCategory(input: {
@@ -311,6 +357,7 @@ export function analyzeImportFile(input: {
   fileBytes: number[];
   fileType: string;
   target?: ImportTarget;
+  adapter?: string | null;
 }): Promise<FileAnalysis> {
   return invoke<FileAnalysis>("analyze_import_file", input);
 }
@@ -320,14 +367,61 @@ export function executeImport(input: ImportRequest): Promise<ImportResult> {
   return invoke<ImportResult>("execute_import", { request: input });
 }
 
+// Step 2b: Commit after the user confirms the preview (spec §23.3).
+// Unlike executeImport, this is the only command that starts the actual
+// background import — the confirm gate that stops a file being committed
+// by the first action.
+export function confirmImport(input: ImportRequest): Promise<ImportResult> {
+  return invoke<ImportResult>("confirm_import", { request: input });
+}
+
+// Push-progress events (spec §23.8, desktop-adapted): the Rust background
+// worker emits these; the wizard listens instead of only polling.
+export const IMPORT_PROGRESS_EVENT = "import:progress"; // live (status: processing)
+export const IMPORT_COMPLETE_EVENT = "import:complete"; // terminal (completed|failed)
+
+// Payload shape shared by both events (matches Rust ImportProgressEvent).
+export type ImportProgressEvent = {
+  jobId: string;
+  status: string;
+  progress: number;
+  attemptedRows: number;
+  processedRows: number;
+  errorRows: number;
+  totalRows: number;
+  errors: ImportError[];
+  result: ImportResult | null;
+};
+
 // Step 3: List recent import jobs for the current company (rollback UI)
 export function listImportJobs(): Promise<ImportJob[]> {
   return invoke<ImportJob[]>("list_import_jobs");
 }
 
+// Step 3b: Poll a single job for live progress + the final result.
+export function getImportJob(jobId: string): Promise<ImportJobStatus> {
+  return invoke<ImportJobStatus>("get_import_job", { jobId });
+}
+
 // Step 4: Roll back a completed import within its 24h window
 export function rollbackImport(jobId: string): Promise<RollbackResult> {
   return invoke<RollbackResult>("rollback_import", { jobId });
+}
+
+// ERP adapters available for mapping (spec §23.11)
+export function listErpAdapters(): Promise<ErpAdapterInfo[]> {
+  return invoke<ErpAdapterInfo[]>("list_erp_adapters");
+}
+
+// Saved per-target templates (spec §23.5) — powers the template picker
+export function listImportTemplates(
+  target?: ImportTarget,
+): Promise<ImportTemplate[]> {
+  return invoke<ImportTemplate[]>("list_import_templates", { target });
+}
+
+export function deleteImportTemplate(templateId: string): Promise<number> {
+  return invoke<number>("delete_import_template", { templateId });
 }
 
 // ==========================================
@@ -880,6 +974,112 @@ export function checkForUpdates(): Promise<UpdateResult> {
 
 export function installUpdate(): Promise<void> {
   return invoke<void>("install_update");
+}
+
+// ==========================================
+// SAAS / SUPER ADMIN COMMANDS (migration 017)
+// ==========================================
+
+export function listPackages(
+  includeInactive = true,
+): Promise<PublicPackage[]> {
+  return invoke<PublicPackage[]>("list_packages", { includeInactive });
+}
+
+export function createPackage(input: CreatePackageInput): Promise<PublicPackage> {
+  return invoke<PublicPackage>("create_package", input);
+}
+
+export function updatePackage(input: UpdatePackageInput): Promise<PublicPackage> {
+  return invoke<PublicPackage>("update_package", input);
+}
+
+export function deletePackage(packageId: string): Promise<void> {
+  return invoke<void>("delete_package", { packageId });
+}
+
+export function getCurrentSubscription(): Promise<PublicSubscription | null> {
+  return invoke<PublicSubscription | null>("get_current_subscription");
+}
+
+export function getCompanySubscription(
+  companyId: string,
+): Promise<PublicSubscription | null> {
+  return invoke<PublicSubscription | null>("get_company_subscription", {
+    companyId,
+  });
+}
+
+export function assignCompanySubscription(input: {
+  companyId: string;
+  packageId: string;
+  status?: string;
+  trialDays?: number;
+}): Promise<PublicSubscription> {
+  return invoke<PublicSubscription>("assign_company_subscription", input);
+}
+
+export function listCompanyModules(
+  companyId?: string,
+): Promise<PublicCompanyModule[]> {
+  return invoke<PublicCompanyModule[]>("list_company_modules", { companyId });
+}
+
+export function setCompanyModule(input: {
+  companyId: string;
+  moduleKey: string;
+  isEnabled: boolean;
+}): Promise<PublicCompanyModule> {
+  return invoke<PublicCompanyModule>("set_company_module", input);
+}
+
+export function listFeatureFlags(
+  companyId?: string,
+): Promise<PublicFeatureFlag[]> {
+  return invoke<PublicFeatureFlag[]>("list_feature_flags", { companyId });
+}
+
+export function setFeatureFlag(input: {
+  companyId: string;
+  featureKey: string;
+  isEnabled: boolean;
+  reason?: string;
+}): Promise<PublicFeatureFlag> {
+  return invoke<PublicFeatureFlag>("set_feature_flag", input);
+}
+
+export function listTenantCompanies(): Promise<TenantCompanySummary[]> {
+  return invoke<TenantCompanySummary[]>("list_tenant_companies");
+}
+
+export function getTenantCompanyDetail(
+  companyId: string,
+): Promise<TenantCompanyDetail> {
+  return invoke<TenantCompanyDetail>("get_tenant_company_detail", { companyId });
+}
+
+export function getPlatformAnalytics(): Promise<PlatformAnalytics> {
+  return invoke<PlatformAnalytics>("get_platform_analytics");
+}
+
+export function registerTenant(
+  input: RegisterTenantInput,
+): Promise<RegisterTenantResult> {
+  return invoke<RegisterTenantResult>("register_tenant", input);
+}
+
+export function updateTenantCompany(
+  input: UpdateTenantCompanyInput,
+): Promise<PublicCompany> {
+  return invoke<PublicCompany>("update_tenant_company", input);
+}
+
+export function archiveCompany(companyId: string): Promise<void> {
+  return invoke<void>("archive_company", { companyId });
+}
+
+export function activateCompany(companyId: string): Promise<void> {
+  return invoke<void>("activate_company", { companyId });
 }
 
 // ==========================================

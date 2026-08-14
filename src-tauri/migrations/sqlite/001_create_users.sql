@@ -30,6 +30,16 @@ CREATE TABLE IF NOT EXISTS users (
     -- This preserves invoice history linked to this user.
     is_active INTEGER NOT NULL DEFAULT 1,  -- 1 = true, 0 = false (SQLite has no boolean)
 
+    -- is_super_admin: cross-tenant admin flag (spec §3.11).
+    -- Super admins have company_id = NULL and are not scoped to a company.
+    -- Added for fresh databases by migration 017; existing databases get
+    -- the column from `ensure_saas_columns` (db/sqlite_migrate.rs).
+    is_super_admin INTEGER NOT NULL DEFAULT 0,  -- 1 = true, 0 = false
+
+    -- must_change_password: forces a password change on next login
+    -- (spec §7.3 first-login flow).
+    must_change_password INTEGER NOT NULL DEFAULT 0,  -- 1 = true, 0 = false
+
     -- token_version: if a user changes password, we increment this.
     -- All old login tokens become invalid. Forces re-login.
     token_version INTEGER NOT NULL DEFAULT 0,

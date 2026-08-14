@@ -25,14 +25,20 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import { theme } from "./theme";
 import { AppThemeProvider } from "./theme/AppThemeProvider";
+import { I18nProvider } from "./i18n/I18nProvider";
+import ErrorBoundary from "./components/ErrorBoundary";
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
-    <MantineProvider theme={theme}>
-      {/* AppThemeProvider syncs the scheme + hosts the Notifications layer */}
-      <AppThemeProvider>
-        <App />
-      </AppThemeProvider>
-    </MantineProvider>
+    <ErrorBoundary>
+      <I18nProvider>
+        <MantineProvider theme={theme}>
+          {/* AppThemeProvider syncs the scheme + hosts the Notifications layer */}
+          <AppThemeProvider>
+            <App />
+          </AppThemeProvider>
+        </MantineProvider>
+      </I18nProvider>
+    </ErrorBoundary>
   </React.StrictMode>,
 );

@@ -25,12 +25,14 @@ import { Package, Search, SearchX, UserRound } from "lucide-react";
 import { searchAll } from "../api/backend";
 import type { SearchResult } from "../api/backend";
 import { INK } from "../theme";
+import { useI18n } from "../i18n/I18nProvider";
 
 interface SearchBarProps {
   onSelect: (result: SearchResult) => void;
 }
 
 export default function SearchBar({ onSelect }: SearchBarProps) {
+  const { t } = useI18n();
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(false);
@@ -95,7 +97,7 @@ export default function SearchBar({ onSelect }: SearchBarProps) {
               <Kbd size="xs">esc</Kbd>
             ) : undefined
           }
-          placeholder="Search products, customers..."
+          placeholder={t("search.placeholder")}
           value={query}
           onChange={(e) => {
             setQuery(e.currentTarget.value);
@@ -144,10 +146,10 @@ export default function SearchBar({ onSelect }: SearchBarProps) {
               <SearchX size={22} style={{ color: INK.muted }} />
             </ThemeIcon>
             <Text size="sm" fw={600} c="dimmed">
-              No results for "{query.trim()}"
+              {t("search.noResults", { query: query.trim() })}
             </Text>
             <Text size="xs" c="dimmed">
-              Try a product name, SKU, or customer name.
+              {t("search.tryHint")}
             </Text>
           </Stack>
         ) : (
@@ -155,7 +157,7 @@ export default function SearchBar({ onSelect }: SearchBarProps) {
             <Stack gap={4} p={6}>
               {products.length > 0 && (
                 <ResultGroup
-                  label="Products"
+                  label={t("search.products")}
                   icon={<Package size={13} />}
                   items={products}
                   onSelect={handleSelect}
@@ -163,7 +165,7 @@ export default function SearchBar({ onSelect }: SearchBarProps) {
               )}
               {customers.length > 0 && (
                 <ResultGroup
-                  label="Customers"
+                  label={t("search.customers")}
                   icon={<UserRound size={13} />}
                   items={customers}
                   onSelect={handleSelect}

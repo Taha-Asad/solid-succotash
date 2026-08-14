@@ -34,6 +34,8 @@ import {
 import { registerCompany, getErrorMessage } from "../../api/backend";
 import type { PublicUser, RegisterCompanyResult } from "../../types/backend";
 import { INK } from "../../theme";
+import { useI18n } from "../../i18n/I18nProvider";
+import LanguageMenu from "../../components/LanguageMenu";
 
 // ---- Props ----
 
@@ -67,6 +69,7 @@ export default function SetupPage({ onSetupComplete }: SetupPageProps) {
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { t } = useI18n();
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -187,9 +190,7 @@ export default function SetupPage({ onSetupComplete }: SetupPageProps) {
             margin: "0 0 12px",
           }}
         >
-          Set up your company
-          <br />
-          in under a minute.
+          {t("setup.heroTitle")}
         </motion.h1>
 
         <motion.p
@@ -198,8 +199,7 @@ export default function SetupPage({ onSetupComplete }: SetupPageProps) {
           transition={{ duration: 0.5, delay: 0.3 }}
           style={{ color: "#A9B6D6", fontSize: 16, margin: "0 0 36px", maxWidth: 460 }}
         >
-          Register your business details and an owner account. You’ll be signed
-          in immediately and ready to start running your operations.
+          {t("setup.heroSubtitle")}
         </motion.p>
 
         <motion.div
@@ -208,9 +208,9 @@ export default function SetupPage({ onSetupComplete }: SetupPageProps) {
           transition={{ duration: 0.4, delay: 0.45 }}
         >
           <Stack gap="md" maw={400}>
-            <Step n={1} title="Company information" text="Name, currency and tax identifiers." />
-            <Step n={2} title="Owner account" text="Your personal login with secure password." />
-            <Step n={3} title="Start working" text="Auto sign-in straight to your dashboard." />
+            <Step n={1} title={t("setup.step1.title")} text={t("setup.step1.text")} />
+            <Step n={2} title={t("setup.step2.title")} text={t("setup.step2.text")} />
+            <Step n={3} title={t("setup.step3.title")} text={t("setup.step3.text")} />
           </Stack>
         </motion.div>
 
@@ -227,7 +227,7 @@ export default function SetupPage({ onSetupComplete }: SetupPageProps) {
           }}
         >
           <ShieldCheck size={16} />
-          <Text size="xs">Only one company per installation — single-tenant by design.</Text>
+          <Text size="xs">{t("setup.singleTenant")}</Text>
         </motion.div>
       </motion.div>
 
@@ -243,6 +243,9 @@ export default function SetupPage({ onSetupComplete }: SetupPageProps) {
           overflowY: "auto",
         }}
       >
+        <div style={{ position: "absolute", top: 20, insetInlineEnd: 20, zIndex: 10 }}>
+          <LanguageMenu />
+        </div>
         <motion.div
           initial={{ opacity: 0, y: 30 }}
           animate={{ opacity: 1, y: 0 }}
@@ -252,13 +255,13 @@ export default function SetupPage({ onSetupComplete }: SetupPageProps) {
           <Card withBorder shadow="lg" p="xl">
             <Stack gap="xs" mb="md">
               <Text size="xs" fw={700} style={{ color: INK.gold, letterSpacing: 1.5, textTransform: "uppercase" }}>
-                First launch
+                {t("setup.firstLaunch")}
               </Text>
               <Text fw={800} size="xl" style={{ color: INK.text, letterSpacing: -0.4 }}>
-                Create your workspace
+                {t("setup.createWorkspace")}
               </Text>
               <Text size="sm" c="dimmed">
-                You’ll become the owner of this company.
+                {t("setup.ownerNote")}
               </Text>
             </Stack>
 
@@ -266,11 +269,11 @@ export default function SetupPage({ onSetupComplete }: SetupPageProps) {
               <Stack gap="md">
                 {/* COMPANY */}
                 <Text size="xs" fw={700} style={{ color: INK.text, letterSpacing: 1, textTransform: "uppercase" }}>
-                  Company Information
+                  {t("setup.companyInfo")}
                 </Text>
                 <TextInput
-                  label="Company Name"
-                  placeholder="Ijaz & Company"
+                  label={t("setup.companyName")}
+                  placeholder={t("setup.companyNamePlaceholder")}
                   required
                   leftSection={<Building2 size={16} />}
                   value={companyName}
@@ -279,15 +282,15 @@ export default function SetupPage({ onSetupComplete }: SetupPageProps) {
 
                 <SimpleGrid cols={2}>
                   <TextInput
-                    label="Phone"
-                    placeholder="+92 300 1234567"
+                    label={t("setup.phone")}
+                    placeholder={t("setup.phonePlaceholder")}
                     leftSection={<Phone size={15} />}
                     value={phone}
                     onChange={(e) => setPhone(e.currentTarget.value)}
                   />
                   <TextInput
-                    label="Tax Number"
-                    placeholder="NTN or STRN"
+                    label={t("setup.taxNumber")}
+                    placeholder={t("setup.taxNumberPlaceholder")}
                     leftSection={<FileBadge size={15} />}
                     value={taxNumber}
                     onChange={(e) => setTaxNumber(e.currentTarget.value)}
@@ -295,15 +298,15 @@ export default function SetupPage({ onSetupComplete }: SetupPageProps) {
                 </SimpleGrid>
 
                 <TextInput
-                  label="Address"
-                  placeholder="Lahore, Punjab, Pakistan"
+                  label={t("setup.address")}
+                  placeholder={t("setup.addressPlaceholder")}
                   leftSection={<MapPin size={16} />}
                   value={address}
                   onChange={(e) => setAddress(e.currentTarget.value)}
                 />
 
                 <Select
-                  label="Currency"
+                  label={t("setup.currency")}
                   data={CURRENCIES}
                   value={currencyCode}
                   onChange={(value) => setCurrencyCode(value ?? "PKR")}
@@ -312,19 +315,19 @@ export default function SetupPage({ onSetupComplete }: SetupPageProps) {
 
                 {/* OWNER */}
                 <Text size="xs" fw={700} style={{ color: INK.text, letterSpacing: 1, textTransform: "uppercase", marginTop: 4 }}>
-                  Owner Account
+                  {t("setup.ownerAccount")}
                 </Text>
                 <TextInput
-                  label="Your Full Name"
-                  placeholder="Ijaz Ahmad"
+                  label={t("setup.fullName")}
+                  placeholder={t("setup.fullNamePlaceholder")}
                   required
                   leftSection={<User size={16} />}
                   value={ownerFullName}
                   onChange={(e) => setOwnerFullName(e.currentTarget.value)}
                 />
                 <TextInput
-                  label="Email"
-                  placeholder="owner@ijaz.com"
+                  label={t("setup.email")}
+                  placeholder={t("setup.emailPlaceholder")}
                   type="email"
                   required
                   leftSection={<Mail size={16} />}
@@ -332,8 +335,8 @@ export default function SetupPage({ onSetupComplete }: SetupPageProps) {
                   onChange={(e) => setEmail(e.currentTarget.value)}
                 />
                 <PasswordInput
-                  label="Password"
-                  placeholder="Choose a strong password"
+                  label={t("setup.password")}
+                  placeholder={t("setup.passwordPlaceholder")}
                   required
                   leftSection={<Lock size={16} />}
                   value={password}
@@ -363,7 +366,7 @@ export default function SetupPage({ onSetupComplete }: SetupPageProps) {
                       },
                     }}
                   >
-                    Create Company & Continue
+                    {t("setup.createCompany")}
                   </Button>
                 </motion.div>
               </Stack>

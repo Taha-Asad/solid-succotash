@@ -25,6 +25,8 @@
 
 import { useEffect, useMemo, useState, useCallback } from "react";
 
+import { usePermissions } from "../permissions/PermissionsProvider";
+
 import {
   ActionIcon,
   Badge,
@@ -92,6 +94,10 @@ import {
   listProductBatches,
   listExpiringBatches,
   writeOffBatch,
+  listUnits,
+  createUnit,
+  updateUnit,
+  deleteUnit,
   getErrorMessage,
 } from "../../api/backend";
 
@@ -101,16 +107,16 @@ import type {
   PublicStockBatch,
   PublicStockMovement,
   PublicSupplier,
+  PublicUnit,
   PublicUser,
 } from "../../types/backend";
-
-import ImportWizard from "./ImportWizard";
 
 import {
   AppDateInput,
   parseDateOnly,
 } from "../../components/AppDateInput";
 import { INK } from "../../theme";
+import { reportOnboardingEvent } from "../../onboarding/bus";
 
 // ==========================================
 // DESIGN TOKENS — shared, defined in src/theme.ts
@@ -130,6 +136,8 @@ const LEDGER_NUM: React.CSSProperties = {
 
 interface InventoryPageProps {
   user: PublicUser;
+  /** Navigate to the standalone Import Wizard module instead of mounting it inline. */
+  onOpenImport?: () => void;
 }
 
 // ==========================================
@@ -225,25 +233,9 @@ function EmptyState({
 // MAIN COMPONENT
 // ==========================================
 
-export default function InventoryPage({ user }: InventoryPageProps) {
-  const canManage = user.role === "owner" || user.role === "admin";
-  const [showWizard, setShowWizard] = useState(false);
-  const [wizardKey, setWizardKey] = useState(0); // force re-mount on new import
+export default function InventoryPage({ onOpenImport }: InventoryPageProps) {
+  const perms = usePermissions();
   const isMobileHeader = useMediaQuery("(max-width: 36em)");
-
-  // If wizard is open, show it instead of the tabs
-  if (showWizard) {
-    return (
-      <ImportWizard
-        key={wizardKey}
-        user={user}
-        onComplete={() => {
-          setShowWizard(false);
-          setWizardKey((k) => k + 1); // force fresh state next time
-        }}
-      />
-    );
-  }
 
   return (
     <Stack gap="lg">
@@ -257,7 +249,7 @@ export default function InventoryPage({ user }: InventoryPageProps) {
             Track products, stock levels, categories and suppliers in one place.
           </Text>
         </Stack>
-        {canManage && (
+        {perms.canManage && (
           <Button
             leftSection={<FileSpreadsheet size={16} />}
             variant="filled"
@@ -269,7 +261,11 @@ export default function InventoryPage({ user }: InventoryPageProps) {
                 "&:hover": { backgroundColor: INK.navySoft },
               },
             }}
-            onClick={() => setShowWizard(true)}
+            onClick={() => {
+              onOpenImport?.();
+              reportOnboardingEvent({ type: "wizard-opened" });
+            }}
+            data-tour="import-button"
           >
             Import from Excel / CSV
           </Button>
@@ -306,15 +302,15 @@ export default function InventoryPage({ user }: InventoryPageProps) {
         </Tabs.List>
 
         <Tabs.Panel value="products" pt="md">
-          <ProductsTab canManage={canManage} />
+          <ProductsTab />
         </Tabs.Panel>
 
         <Tabs.Panel value="categories" pt="md">
-          <CategoriesTab canManage={canManage} />
+          <CategoriesTab />
         </Tabs.Panel>
 
         <Tabs.Panel value="suppliers" pt="md">
-          <SuppliersTab canManage={canManage} />
+          <SuppliersTab />
         </Tabs.Panel>
       </Tabs>
     </Stack>
@@ -325,7 +321,11 @@ export default function InventoryPage({ user }: InventoryPageProps) {
 // CATEGORIES TAB
 // ==========================================
 
-function CategoriesTab({ canManage }: { canManage: boolean }) {
+function CategoriesTab() {
+  const perms = usePermissions();
+  const canCreate = perms.can("inventory", "create");
+  const canEdit = perms.can("inventory", "edit");
+  const canDelete = perms.can("inventory", "delete");
   const [categories, setCategories] = useState<PublicCategory[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -437,7 +437,7 @@ function CategoriesTab({ canManage }: { canManage: boolean }) {
             <Text size="sm" c="dimmed">
               {filtered.length} of {categories.length} categories
             </Text>
-            {canManage && (
+            {canCreate && (
               <Button
                 size="sm"
                 leftSection={<Plus size={16} />}
@@ -486,7 +486,7 @@ function CategoriesTab({ canManage }: { canManage: boolean }) {
                   <Table.Th>Description</Table.Th>
                   <Table.Th>Status</Table.Th>
                   <Table.Th>Created</Table.Th>
-                  {canManage && <Table.Th>Actions</Table.Th>}
+                  {(canEdit || canDelete) && <Table.Th>Actions</Table.Th>}
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
@@ -527,33 +527,39 @@ function CategoriesTab({ canManage }: { canManage: boolean }) {
                         {formatDate(cat.createdAt)}
                       </Text>
                     </Table.Td>
-                    {canManage && (
+                    {(canEdit || canDelete) && (
                       <Table.Td>
                         <Group gap="xs">
-                          <Tooltip label="Edit">
-                            <ActionIcon
-                              variant="subtle"
-                              color="dark"
-                              onClick={() => openEdit(cat)}
-                            >
-                              <Pencil size={15} />
-                            </ActionIcon>
-                          </Tooltip>
-                          <Tooltip label="Delete">
-                            <ActionIcon
-                              variant="subtle"
-                              color="red"
-                              onClick={() => handleDelete(cat)}
-                            >
-                              <Trash2 size={15} />
-                            </ActionIcon>
-                          </Tooltip>
-                          <Switch
-                            checked={cat.isActive}
-                            onChange={() => handleToggle(cat)}
-                            size="sm"
-                            color="green"
-                          />
+                          {canEdit && (
+                            <Tooltip label="Edit">
+                              <ActionIcon
+                                variant="subtle"
+                                color="dark"
+                                onClick={() => openEdit(cat)}
+                              >
+                                <Pencil size={15} />
+                              </ActionIcon>
+                            </Tooltip>
+                          )}
+                          {canDelete && (
+                            <Tooltip label="Delete">
+                              <ActionIcon
+                                variant="subtle"
+                                color="red"
+                                onClick={() => handleDelete(cat)}
+                              >
+                                <Trash2 size={15} />
+                              </ActionIcon>
+                            </Tooltip>
+                          )}
+                          {canEdit && (
+                            <Switch
+                              checked={cat.isActive}
+                              onChange={() => handleToggle(cat)}
+                              size="sm"
+                              color="green"
+                            />
+                          )}
                         </Group>
                       </Table.Td>
                     )}
@@ -718,7 +724,11 @@ function CategoryModal({
 // SUPPLIERS TAB
 // ==========================================
 
-function SuppliersTab({ canManage }: { canManage: boolean }) {
+function SuppliersTab() {
+  const perms = usePermissions();
+  const canCreate = perms.can("inventory", "create");
+  const canEdit = perms.can("inventory", "edit");
+  const canDelete = perms.can("inventory", "delete");
   const [suppliers, setSuppliers] = useState<PublicSupplier[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -833,7 +843,7 @@ function SuppliersTab({ canManage }: { canManage: boolean }) {
             <Text size="sm" c="dimmed">
               {filtered.length} of {suppliers.length} suppliers
             </Text>
-            {canManage && (
+            {canCreate && (
               <Button
                 size="sm"
                 leftSection={<Plus size={16} />}
@@ -882,7 +892,7 @@ function SuppliersTab({ canManage }: { canManage: boolean }) {
                   <Table.Th>Email</Table.Th>
                   <Table.Th>Phone</Table.Th>
                   <Table.Th>Status</Table.Th>
-                  {canManage && <Table.Th>Actions</Table.Th>}
+                  {(canEdit || canDelete) && <Table.Th>Actions</Table.Th>}
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
@@ -913,33 +923,39 @@ function SuppliersTab({ canManage }: { canManage: boolean }) {
                         {sup.isActive ? "Active" : "Inactive"}
                       </Badge>
                     </Table.Td>
-                    {canManage && (
+                    {(canEdit || canDelete) && (
                       <Table.Td>
                         <Group gap="xs">
-                          <Tooltip label="Edit">
-                            <ActionIcon
-                              variant="subtle"
-                              color="dark"
-                              onClick={() => openEdit(sup)}
-                            >
-                              <Pencil size={15} />
-                            </ActionIcon>
-                          </Tooltip>
-                          <Tooltip label="Delete">
-                            <ActionIcon
-                              variant="subtle"
-                              color="red"
-                              onClick={() => handleDelete(sup)}
-                            >
-                              <Trash2 size={15} />
-                            </ActionIcon>
-                          </Tooltip>
-                          <Switch
-                            checked={sup.isActive}
-                            onChange={() => handleToggle(sup)}
-                            size="sm"
-                            color="green"
-                          />
+                          {canEdit && (
+                            <Tooltip label="Edit">
+                              <ActionIcon
+                                variant="subtle"
+                                color="dark"
+                                onClick={() => openEdit(sup)}
+                              >
+                                <Pencil size={15} />
+                              </ActionIcon>
+                            </Tooltip>
+                          )}
+                          {canDelete && (
+                            <Tooltip label="Delete">
+                              <ActionIcon
+                                variant="subtle"
+                                color="red"
+                                onClick={() => handleDelete(sup)}
+                              >
+                                <Trash2 size={15} />
+                              </ActionIcon>
+                            </Tooltip>
+                          )}
+                          {canEdit && (
+                            <Switch
+                              checked={sup.isActive}
+                              onChange={() => handleToggle(sup)}
+                              size="sm"
+                              color="green"
+                            />
+                          )}
                         </Group>
                       </Table.Td>
                     )}
@@ -1129,7 +1145,11 @@ function ExpiryBadge({ date }: { date: string }) {
   );
 }
 
-function ProductsTab({ canManage }: { canManage: boolean }) {
+function ProductsTab() {
+  const perms = usePermissions();
+  const canCreate = perms.can("inventory", "create");
+  const canEdit = perms.can("inventory", "edit");
+  const canDelete = perms.can("inventory", "delete");
   const [products, setProducts] = useState<PublicProduct[]>([]);
   const [categories, setCategories] = useState<PublicCategory[]>([]);
   const [suppliers, setSuppliers] = useState<PublicSupplier[]>([]);
@@ -1274,6 +1294,7 @@ function ProductsTab({ canManage }: { canManage: boolean }) {
           quantityInStock: values.quantityInStock,
           unit: values.unit,
         });
+        reportOnboardingEvent({ type: "product-created" });
       }
       setProductModalOpen(false);
       await load();
@@ -1433,6 +1454,11 @@ function ProductsTab({ canManage }: { canManage: boolean }) {
                           {b.batchNumber || "—"}
                         </Text>
                       </Table.Td>
+                      <Table.Td>
+                        <Text size="sm" style={LEDGER_NUM}>
+                          {formatDate(b.expiryDate)}
+                        </Text>
+                      </Table.Td>
                       <Table.Td ta="right">
                         <Text size="sm" fw={700} style={LEDGER_NUM}>
                           {b.quantity}
@@ -1453,15 +1479,17 @@ function ProductsTab({ canManage }: { canManage: boolean }) {
                         </Text>
                       </Table.Td>
                       <Table.Td ta="right">
-                        <Button
-                          size="xs"
-                          color="red"
-                          variant="light"
-                          leftSection={<Trash2 size={13} />}
-                          onClick={() => setWriteOffTarget(b)}
-                        >
-                          Write off
-                        </Button>
+                        {b.quantity > 0 && (
+                          <Button
+                            size="xs"
+                            color="red"
+                            variant="light"
+                            leftSection={<Trash2 size={13} />}
+                            onClick={() => setWriteOffTarget(b)}
+                          >
+                            Write off
+                          </Button>
+                        )}
                       </Table.Td>
                     </Table.Tr>
                   ))}
@@ -1492,12 +1520,13 @@ function ProductsTab({ canManage }: { canManage: boolean }) {
               <Text size="sm" c="dimmed">
                 {filtered.length} of {totalProducts} products
               </Text>
-              {canManage && (
+              {canCreate && (
                 <Button
                   size="sm"
                   leftSection={<Plus size={16} />}
                   style={{ backgroundColor: INK.navy }}
                   onClick={openCreate}
+                  data-tour="add-product"
                 >
                   Add Product
                 </Button>
@@ -1550,7 +1579,7 @@ function ProductsTab({ canManage }: { canManage: boolean }) {
                     <Table.Th ta="right">Stock</Table.Th>
                     <Table.Th>Unit</Table.Th>
                     <Table.Th>Expiry</Table.Th>
-                    {canManage && <Table.Th>Actions</Table.Th>}
+                    {(canEdit || canDelete) && <Table.Th>Actions</Table.Th>}
                   </Table.Tr>
                 </Table.Thead>
                 <Table.Tbody>
@@ -1629,28 +1658,32 @@ function ProductsTab({ canManage }: { canManage: boolean }) {
                             </Text>
                           )}
                         </Table.Td>
-                        {canManage && (
+                        {(canEdit || canDelete) && (
                           <Table.Td>
                             <Group gap="xs">
-                              <Tooltip label="Edit product">
-                                <ActionIcon
-                                  variant="subtle"
-                                  color="dark"
-                                  onClick={() => openEdit(prod)}
-                                >
-                                  <Pencil size={15} />
-                                </ActionIcon>
-                              </Tooltip>
-                              <Tooltip label="Adjust stock">
-                                <ActionIcon
-                                  variant="subtle"
-                                  color="blue"
-                                  onClick={() => openStock(prod)}
-                                >
-                                  <PackagePlus size={15} />
-                                </ActionIcon>
-                              </Tooltip>
-                              {prod.nextExpiryDate && (
+                              {canEdit && (
+                                <Tooltip label="Edit product">
+                                  <ActionIcon
+                                    variant="subtle"
+                                    color="dark"
+                                    onClick={() => openEdit(prod)}
+                                  >
+                                    <Pencil size={15} />
+                                  </ActionIcon>
+                                </Tooltip>
+                              )}
+                              {canEdit && (
+                                <Tooltip label="Adjust stock">
+                                  <ActionIcon
+                                    variant="subtle"
+                                    color="blue"
+                                    onClick={() => openStock(prod)}
+                                  >
+                                    <PackagePlus size={15} />
+                                  </ActionIcon>
+                                </Tooltip>
+                              )}
+                              {canEdit && prod.nextExpiryDate && (
                                 <Tooltip label="Batches / expiry">
                                   <ActionIcon
                                     variant="subtle"
@@ -1661,24 +1694,28 @@ function ProductsTab({ canManage }: { canManage: boolean }) {
                                   </ActionIcon>
                                 </Tooltip>
                               )}
-                              <Tooltip label="Stock history">
-                                <ActionIcon
-                                  variant="subtle"
-                                  color="gray"
-                                  onClick={() => openMovements(prod)}
-                                >
-                                  <History size={15} />
-                                </ActionIcon>
-                              </Tooltip>
-                              <Tooltip label="Delete product">
-                                <ActionIcon
-                                  variant="subtle"
-                                  color="red"
-                                  onClick={() => handleDeleteProduct(prod)}
-                                >
-                                  <Trash2 size={15} />
-                                </ActionIcon>
-                              </Tooltip>
+                              {canEdit && (
+                                <Tooltip label="Stock history">
+                                  <ActionIcon
+                                    variant="subtle"
+                                    color="gray"
+                                    onClick={() => openMovements(prod)}
+                                  >
+                                    <History size={15} />
+                                  </ActionIcon>
+                                </Tooltip>
+                              )}
+                              {canDelete && (
+                                <Tooltip label="Delete product">
+                                  <ActionIcon
+                                    variant="subtle"
+                                    color="red"
+                                    onClick={() => handleDeleteProduct(prod)}
+                                  >
+                                    <Trash2 size={15} />
+                                  </ActionIcon>
+                                </Tooltip>
+                              )}
                             </Group>
                           </Table.Td>
                         )}
@@ -1857,6 +1894,17 @@ function ProductModal({
 
   const isEdit = initial !== null;
 
+  // Units of measure come from the company master list (spec §23.16); the
+  // hardcoded list below is only the fallback when the table is empty.
+  const [units, setUnits] = useState<PublicUnit[]>([]);
+  const [unitsManagerOpen, setUnitsManagerOpen] = useState(false);
+
+  useEffect(() => {
+    listUnits()
+      .then(setUnits)
+      .catch(() => setUnits([]));
+  }, []);
+
   const form = useForm({
     initialValues: {
       sku: initial?.sku ?? "",
@@ -1906,29 +1954,50 @@ function ProductModal({
     { value: "", label: "None" },
     ...categories
       .filter((c) => c.isActive)
-      .map((c) => ({ value: c.id, label: c.name })),
+      .map((c) => ({ value: c.id, label: c.name ?? "" })),
   ];
 
   const supplierOptions = [
     { value: "", label: "None" },
     ...suppliers
       .filter((s) => s.isActive)
-      .map((s) => ({ value: s.id, label: s.name })),
+      .map((s) => ({ value: s.id, label: s.name ?? "" })),
   ];
 
+  // Prefer the company's saved units; fall back to a sensible default list.
   const unitOptions = [
-    "pcs",
-    "kg",
-    "g",
-    "liters",
-    "ml",
-    "meters",
-    "cm",
-    "box",
-    "pack",
-    "dozen",
-    "set",
+    ...units.map((u) => ({
+      value: u.name,
+      label: u.name
+        ? u.symbol
+          ? `${u.name} (${u.symbol})`
+          : u.name
+        : (u.symbol ?? "Unit"),
+    })),
+    ...(units.length === 0
+      ? [
+          "pcs",
+          "kg",
+          "g",
+          "liters",
+          "ml",
+          "meters",
+          "cm",
+          "box",
+          "pack",
+          "dozen",
+          "set",
+        ].map((u) => ({ value: u, label: u }))
+      : []),
   ];
+  // Keep an existing free-text unit selectable even if it isn't in the list
+  // (and avoid duplicating it when the fallback default list already has it).
+  if (
+    form.values.unit &&
+    !unitOptions.some((o) => o.value === form.values.unit)
+  ) {
+    unitOptions.push({ value: form.values.unit, label: form.values.unit });
+  }
 
   // Preview the SKU that will be auto-generated for the selected category.
   const selectedCategory = categories.find(
@@ -2056,11 +2125,24 @@ function ProductModal({
               disabled={isEdit}
               {...form.getInputProps("quantityInStock")}
             />
-            <Select
-              label="Unit"
-              data={unitOptions}
-              {...form.getInputProps("unit")}
-            />
+            <Group align="flex-end" gap={6} wrap="wrap">
+              <Select
+                label="Unit"
+                data={unitOptions}
+                searchable
+                style={{ flex: 1, minWidth: 160 }}
+                {...form.getInputProps("unit")}
+              />
+              <Button
+                variant="light"
+                size="sm"
+                color="gray"
+                onClick={() => setUnitsManagerOpen(true)}
+                leftSection={<Package size={14} />}
+              >
+                Manage
+              </Button>
+            </Group>
           </SimpleGrid>
 
           {isEdit && (
@@ -2096,6 +2178,221 @@ function ProductModal({
           </Group>
         </Stack>
       </form>
+
+      <UnitsManagerModal
+        opened={unitsManagerOpen}
+        onClose={() => setUnitsManagerOpen(false)}
+        units={units}
+        onChanged={setUnits}
+      />
+    </Modal>
+  );
+}
+
+// ---- Units of Measure Manager (spec §23.16) ----
+
+function UnitsManagerModal({
+  opened,
+  onClose,
+  units,
+  onChanged,
+}: {
+  opened: boolean;
+  onClose: () => void;
+  units: PublicUnit[];
+  onChanged: (units: PublicUnit[]) => void;
+}) {
+  const [name, setName] = useState("");
+  const [symbol, setSymbol] = useState("");
+  const [isDefault, setIsDefault] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const isMobile = useMediaQuery("(max-width: 48em)");
+
+  async function refresh() {
+    try {
+      onChanged(await listUnits());
+    } catch {
+      /* keep last known list */
+    }
+  }
+
+  async function handleAdd() {
+    setBusy(true);
+    setError(null);
+    try {
+      await createUnit({
+        name,
+        symbol: symbol.trim() || null,
+        isDefault,
+      });
+      setName("");
+      setSymbol("");
+      setIsDefault(false);
+      await refresh();
+    } catch (err) {
+      setError(getErrorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleSetDefault(unit: PublicUnit) {
+    setBusy(true);
+    setError(null);
+    try {
+      await updateUnit({
+        unitId: unit.id,
+        name: unit.name,
+        symbol: unit.symbol,
+        isDefault: true,
+      });
+      await refresh();
+    } catch (err) {
+      setError(getErrorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleDelete(unit: PublicUnit) {
+    setBusy(true);
+    setError(null);
+    try {
+      await deleteUnit(unit.id);
+      await refresh();
+    } catch (err) {
+      setError(getErrorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal
+      opened={opened}
+      onClose={onClose}
+      title={
+        <Group gap={8}>
+          <Package size={16} color={INK.gold} />
+          <Text fw={700} style={{ color: INK.text }}>
+            Units of Measure
+          </Text>
+        </Group>
+      }
+      size="md"
+      centered
+      radius="md"
+      fullScreen={isMobile}
+    >
+      <Stack>
+        <Alert color="blue" variant="light" icon={<Info size={16} />}>
+          <Text size="xs">
+            These units feed the product form's Unit picker. Products keep their
+            stored unit text even if you delete it here.
+          </Text>
+        </Alert>
+
+        <Group align="flex-end" gap="sm" wrap="wrap">
+          <TextInput
+            label="Name"
+            placeholder="e.g. carton"
+            value={name}
+            onChange={(e) => setName(e.currentTarget.value)}
+            style={{ flex: 1, minWidth: 140 }}
+          />
+          <TextInput
+            label="Symbol"
+            placeholder="e.g. ct"
+            value={symbol}
+            onChange={(e) => setSymbol(e.currentTarget.value)}
+            style={{ width: 100 }}
+          />
+          <Switch
+            label="Default"
+            checked={isDefault}
+            onChange={(e) => setIsDefault(e.currentTarget.checked)}
+          />
+          <Button
+            onClick={handleAdd}
+            loading={busy}
+            disabled={!name.trim()}
+            leftSection={<Plus size={15} />}
+            style={{ backgroundColor: INK.navy }}
+          >
+            Add
+          </Button>
+        </Group>
+
+        {error && (
+          <Alert color="red" variant="light" icon={<AlertTriangle size={16} />}>
+            {error}
+          </Alert>
+        )}
+
+        <ScrollArea style={{ maxHeight: 320 }}>
+          <Table striped highlightOnHover withTableBorder verticalSpacing="sm">
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>Name</Table.Th>
+                <Table.Th>Symbol</Table.Th>
+                <Table.Th>Default</Table.Th>
+                <Table.Th style={{ width: 40 }} />
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {units.map((u) => (
+                <Table.Tr key={u.id}>
+                  <Table.Td>
+                    <Text fw={600} size="sm" style={{ color: INK.text }}>
+                      {u.name}
+                    </Text>
+                  </Table.Td>
+                  <Table.Td>{u.symbol ?? "—"}</Table.Td>
+                  <Table.Td>
+                    {u.isDefault ? (
+                      <Badge color="green" variant="light" radius="sm">
+                        Default
+                      </Badge>
+                    ) : (
+                      <Button
+                        size="xs"
+                        variant="subtle"
+                        color="gray"
+                        onClick={() => handleSetDefault(u)}
+                        disabled={busy}
+                      >
+                        Set default
+                      </Button>
+                    )}
+                  </Table.Td>
+                  <Table.Td>
+                    <ActionIcon
+                      color="red"
+                      variant="subtle"
+                      onClick={() => handleDelete(u)}
+                      disabled={busy}
+                      title={`Delete ${u.name}`}
+                    >
+                      <Trash2 size={15} />
+                    </ActionIcon>
+                  </Table.Td>
+                </Table.Tr>
+              ))}
+              {units.length === 0 && (
+                <Table.Tr>
+                  <Table.Td colSpan={4}>
+                    <Text size="sm" c="dimmed">
+                      No units yet — add one above. Until then, the default
+                      list (pcs, kg, box…) is used.
+                    </Text>
+                  </Table.Td>
+                </Table.Tr>
+              )}
+            </Table.Tbody>
+          </Table>
+        </ScrollArea>
+      </Stack>
     </Modal>
   );
 }
@@ -2526,14 +2823,22 @@ function BatchesModal({
   );
   const isMobile = useMediaQuery("(max-width: 48em)");
 
+  async function loadBatches() {
+    if (!product) return;
+    setLoading(true);
+    setError(null);
+    try {
+      setBatches(await listProductBatches(product.id));
+    } catch (err) {
+      setError(getErrorMessage(err));
+    } finally {
+      setLoading(false);
+    }
+  }
+
   useEffect(() => {
     if (opened && product) {
-      setLoading(true);
-      setError(null);
-      listProductBatches(product.id)
-        .then(setBatches)
-        .catch((err) => setError(getErrorMessage(err)))
-        .finally(() => setLoading(false));
+      loadBatches();
     }
   }, [opened, product]);
 
@@ -2662,6 +2967,7 @@ function BatchesModal({
         onWrittenOff={async () => {
           setWriteOffTarget(null);
           await onChanged();
+          await loadBatches();
         }}
       />
     </>
@@ -2681,25 +2987,27 @@ function WriteOffModal({
 }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [quantity, setQuantity] = useState<number>(1);
   const [reason, setReason] = useState("expiry write-off");
   const isMobile = useMediaQuery("(max-width: 48em)");
 
   useEffect(() => {
     if (batch) {
-      setQuantity(batch.quantity);
       setError(null);
     }
   }, [batch]);
 
   async function handleWriteOff() {
     if (!batch) return;
+    if (batch.quantity <= 0) {
+      setError("This batch is already depleted (0 units left).");
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
       await writeOffBatch({
         batchId: batch.id,
-        quantity,
+        quantity: batch.quantity,
         reason: reason.trim() || "expiry write-off",
       });
       await onWrittenOff();
@@ -2742,20 +3050,11 @@ function WriteOffModal({
                 Batch {batch.batchNumber || "—"}
               </Text>
               <Text fw={700} style={{ ...LEDGER_NUM, color: INK.text }}>
-                {batch.quantity} available
+                {batch.quantity} units will be written off
               </Text>
             </Group>
           </Card>
         )}
-
-        <NumberInput
-          label="Quantity to write off"
-          min={1}
-          max={batch?.quantity ?? 1}
-          value={quantity}
-          onChange={(v) => setQuantity(Number(v) || 1)}
-          required
-        />
 
         <TextInput
           label="Reason"
@@ -2765,9 +3064,9 @@ function WriteOffModal({
         />
 
         <Text size="xs" c="dimmed">
-          Writing off removes this quantity from both the batch and the
-          product's stock on hand. It is recorded as an adjustment in stock
-          history.
+          The entire remaining quantity of this batch is written off: both the
+          batch and the product's stock on hand drop to 0. It is recorded as an
+          adjustment in stock history.
         </Text>
 
         {error && (

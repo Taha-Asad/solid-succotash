@@ -553,6 +553,8 @@ pub async fn receive_po_items(
     )
     .await;
 
+    crate::commands::notifications::emit_notifications_changed();
+
     get_purchase_order(pool, session, po_id)
         .await
         .map(|d| d.order)
@@ -635,6 +637,8 @@ pub async fn record_po_payment(
         ),
     )
     .await;
+
+    crate::commands::notifications::emit_notifications_changed();
 
     get_purchase_order(pool, session, po_id)
         .await

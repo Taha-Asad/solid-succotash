@@ -104,6 +104,11 @@ fn get_embedded_migrations() -> Vec<(i64, &'static str, &'static str)> {
             "016_import_jobs_target",
             include_str!("../../migrations/sqlite/016_import_jobs_target.sql"),
         ),
+        (
+            17,
+            "017_saas_infrastructure",
+            include_str!("../../migrations/sqlite/017_saas_infrastructure.sql"),
+        ),
     ]
 }
 
@@ -170,6 +175,8 @@ pub async fn run_sqlite_migrations(sqlite_url: &str) -> Result<(), Box<dyn std::
     ensure_batch_number_column(&pool).await?;
     ensure_invoice_design_columns(&pool).await?;
     ensure_import_job_columns(&pool).await?;
+    ensure_import_template_columns(&pool).await?;
+    ensure_saas_columns(&pool).await?;
 
     let _ = applied;
 
@@ -190,6 +197,84 @@ async fn ensure_batch_number_column(pool: &SqlitePool) -> Result<(), Box<dyn std
     if !columns.iter().any(|c| c == "batch_number") {
         println!("Adding stock_batches.batch_number column (old database)");
         sqlx::raw_sql("ALTER TABLE stock_batches ADD COLUMN batch_number TEXT")
+            .execute(pool)
+            .await?;
+    }
+
+    Ok(())
+}
+
+/// Adds the multi-tenant / SaaS columns introduced by migration 017
+/// (spec §3.10, §3.11). SQLite has no `ALTER TABLE ... ADD COLUMN IF NOT
+/// EXISTS`, and the migration runner re-executes files on startup, so each
+/// column is added from Rust once. Idempotent — same PRAGMA check as the
+/// other ensure_* helpers.
+async fn ensure_saas_columns(pool: &SqlitePool) -> Result<(), Box<dyn std::error::Error>> {
+    // users: super-admin flag + forced-password-change flag
+    // (token_version and deleted_at already exist on users).
+    let user_columns: Vec<String> = sqlx::query("PRAGMA table_info(users)")
+        .map(|row: sqlx::sqlite::SqliteRow| row.get::<String, _>(1))
+        .fetch_all(pool)
+        .await?;
+
+    if !user_columns.iter().any(|c| c == "is_super_admin") {
+        println!("Adding users.is_super_admin column (old database)");
+        sqlx::raw_sql("ALTER TABLE users ADD COLUMN is_super_admin INTEGER NOT NULL DEFAULT 0")
+            .execute(pool)
+            .await?;
+    }
+    if !user_columns.iter().any(|c| c == "must_change_password") {
+        println!("Adding users.must_change_password column (old database)");
+        sqlx::raw_sql("ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0")
+            .execute(pool)
+            .await?;
+    }
+
+    // companies: soft-delete/version + FBR fields (is_active already exists).
+    let company_columns: Vec<String> = sqlx::query("PRAGMA table_info(companies)")
+        .map(|row: sqlx::sqlite::SqliteRow| row.get::<String, _>(1))
+        .fetch_all(pool)
+        .await?;
+
+    if !company_columns.iter().any(|c| c == "deleted_at") {
+        println!("Adding companies.deleted_at column (old database)");
+        sqlx::raw_sql("ALTER TABLE companies ADD COLUMN deleted_at TEXT")
+            .execute(pool)
+            .await?;
+    }
+    if !company_columns.iter().any(|c| c == "version") {
+        println!("Adding companies.version column (old database)");
+        sqlx::raw_sql("ALTER TABLE companies ADD COLUMN version INTEGER NOT NULL DEFAULT 1")
+            .execute(pool)
+            .await?;
+    }
+    if !company_columns.iter().any(|c| c == "ntn") {
+        println!("Adding companies.ntn column (old database)");
+        sqlx::raw_sql("ALTER TABLE companies ADD COLUMN ntn TEXT")
+            .execute(pool)
+            .await?;
+    }
+    if !company_columns.iter().any(|c| c == "strn") {
+        println!("Adding companies.strn column (old database)");
+        sqlx::raw_sql("ALTER TABLE companies ADD COLUMN strn TEXT")
+            .execute(pool)
+            .await?;
+    }
+    if !company_columns.iter().any(|c| c == "fbr_registered") {
+        println!("Adding companies.fbr_registered column (old database)");
+        sqlx::raw_sql("ALTER TABLE companies ADD COLUMN fbr_registered INTEGER NOT NULL DEFAULT 0")
+            .execute(pool)
+            .await?;
+    }
+    if !company_columns.iter().any(|c| c == "fbr_registration_date") {
+        println!("Adding companies.fbr_registration_date column (old database)");
+        sqlx::raw_sql("ALTER TABLE companies ADD COLUMN fbr_registration_date TEXT")
+            .execute(pool)
+            .await?;
+    }
+    if !company_columns.iter().any(|c| c == "province") {
+        println!("Adding companies.province column (old database)");
+        sqlx::raw_sql("ALTER TABLE companies ADD COLUMN province TEXT")
             .execute(pool)
             .await?;
     }
@@ -337,8 +422,20 @@ async fn ensure_soft_delete_columns(pool: &SqlitePool) -> Result<(), Box<dyn std
 /// Adds the `import_batch_id` columns that back import rollback
 /// (migration 014). Idempotent — same PRAGMA check as the other
 /// ensure_* helpers.
+///
+/// The invoice / purchase-bill tables were added here when the sales-invoice
+/// and purchase-bill import targets (§23.2) shipped, so imported records can
+/// be removed by `rollback_import`.
 async fn ensure_import_columns(pool: &SqlitePool) -> Result<(), Box<dyn std::error::Error>> {
-    for table in ["products", "customers", "suppliers"] {
+    for table in [
+        "products",
+        "customers",
+        "suppliers",
+        "invoices",
+        "invoice_items",
+        "purchase_orders",
+        "purchase_order_items",
+    ] {
         let info_sql = format!("PRAGMA table_info({table})");
         let columns: Vec<String> = sqlx::query(sqlx::AssertSqlSafe(&*info_sql))
             .map(|row: sqlx::sqlite::SqliteRow| row.get::<String, _>(1))
@@ -373,9 +470,17 @@ async fn ensure_import_columns(pool: &SqlitePool) -> Result<(), Box<dyn std::err
     Ok(())
 }
 
-/// Adds the `import_jobs.target` column introduced by migration 016 so every
-/// job records what kind of data it imported. Idempotent — same PRAGMA check
-/// as the other ensure_* helpers.
+/// Adds the `import_jobs` columns that were introduced after the original
+/// CREATE TABLE. SQLite has no `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`, so
+/// each column is added from Rust once. Idempotent — same PRAGMA check as the
+/// other ensure_* helpers.
+///
+/// - `target`        (migration 016): what kind of data the job imported.
+/// - `attempted_rows`: rows processed so far — drives the live progress bar
+///                     reported by `get_import_job`.
+/// - `result_json`   : the full `ImportResult` of a finished job, so a polled
+///                     client can render the same result screen as the old
+///                     synchronous flow.
 async fn ensure_import_job_columns(pool: &SqlitePool) -> Result<(), Box<dyn std::error::Error>> {
     let columns: Vec<String> = sqlx::query("PRAGMA table_info(import_jobs)")
         .map(|row: sqlx::sqlite::SqliteRow| row.get::<String, _>(1))
@@ -388,6 +493,163 @@ async fn ensure_import_job_columns(pool: &SqlitePool) -> Result<(), Box<dyn std:
             .execute(pool)
             .await?;
     }
+    if !columns.iter().any(|c| c == "attempted_rows") {
+        println!("Adding import_jobs.attempted_rows column (old database)");
+        sqlx::raw_sql("ALTER TABLE import_jobs ADD COLUMN attempted_rows INTEGER NOT NULL DEFAULT 0")
+            .execute(pool)
+            .await?;
+    }
+    if !columns.iter().any(|c| c == "result_json") {
+        println!("Adding import_jobs.result_json column (old database)");
+        sqlx::raw_sql("ALTER TABLE import_jobs ADD COLUMN result_json TEXT")
+            .execute(pool)
+            .await?;
+    }
 
     Ok(())
+}
+
+/// Adds the `import_templates` columns required for per-target reusable
+/// templates (spec §23.5). Introduced after the original CREATE TABLE, so each
+/// column is added from Rust once. Idempotent — same PRAGMA check as the other
+/// ensure_* helpers.
+///
+/// - `target`       : what the template maps ("products", "customers",
+///                    "suppliers", "invoices", "purchase_bills", ...). Templates
+///                    are matched against the current import target only.
+/// - `use_count`    : how many times the template has been auto-reused.
+/// - `last_used_at`: ISO timestamp of the most recent reuse (NULL until used).
+async fn ensure_import_template_columns(pool: &SqlitePool) -> Result<(), Box<dyn std::error::Error>> {
+    let columns: Vec<String> = sqlx::query("PRAGMA table_info(import_templates)")
+        .map(|row: sqlx::sqlite::SqliteRow| row.get::<String, _>(1))
+        .fetch_all(pool)
+        .await?;
+
+    if !columns.iter().any(|c| c == "target") {
+        println!("Adding import_templates.target column (old database)");
+        sqlx::raw_sql("ALTER TABLE import_templates ADD COLUMN target TEXT NOT NULL DEFAULT 'products'")
+            .execute(pool)
+            .await?;
+    }
+    if !columns.iter().any(|c| c == "use_count") {
+        println!("Adding import_templates.use_count column (old database)");
+        sqlx::raw_sql("ALTER TABLE import_templates ADD COLUMN use_count INTEGER NOT NULL DEFAULT 0")
+            .execute(pool)
+            .await?;
+    }
+    if !columns.iter().any(|c| c == "last_used_at") {
+        println!("Adding import_templates.last_used_at column (old database)");
+        sqlx::raw_sql("ALTER TABLE import_templates ADD COLUMN last_used_at TEXT")
+            .execute(pool)
+            .await?;
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    /// Applies all migrations to a fresh temp-file DB and returns a pool.
+    async fn fresh_pool() -> SqlitePool {
+        let path = std::env::temp_dir().join(format!("ijaz-migrate-test-{}.db", uuid::Uuid::new_v4()));
+        let url = format!("sqlite:{}", path.display());
+
+        run_sqlite_migrations(&url)
+            .await
+            .expect("migrations should apply cleanly");
+
+        SqlitePoolOptions::new()
+            .connect(&url)
+            .await
+            .expect("pool should connect")
+    }
+
+    async fn table_columns(pool: &SqlitePool, table: &str) -> Vec<String> {
+        let info_sql = format!("PRAGMA table_info({table})");
+        sqlx::query(sqlx::AssertSqlSafe(&*info_sql))
+            .map(|row: sqlx::sqlite::SqliteRow| row.get::<String, _>(1))
+            .fetch_all(pool)
+            .await
+            .expect("PRAGMA table_info should work")
+    }
+
+    #[tokio::test]
+    async fn migration_017_seeds_default_packages() {
+        // Input: fresh database with all migrations applied.
+        // Expected: the three default packages exist (spec §14.1.6).
+        let pool = fresh_pool().await;
+
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM packages WHERE is_active = 1")
+            .fetch_one(&pool)
+            .await
+            .expect("packages table should exist");
+
+        assert_eq!(count, 3, "Basic/Standard/Premium packages should be seeded");
+    }
+
+    #[tokio::test]
+    async fn migration_017_creates_saas_tables() {
+        // Input: fresh database with all migrations applied.
+        // Expected: every SaaS table from migration 017 exists.
+        let pool = fresh_pool().await;
+
+        for table in [
+            "packages",
+            "company_subscriptions",
+            "company_modules",
+            "tenant_feature_flags",
+            "user_activity_logs",
+            "company_storage_usage",
+        ] {
+            let found = table_columns(&pool, table)
+                .await
+                .into_iter()
+                .any(|c| c == "id");
+            assert!(found, "table {table} should exist");
+        }
+    }
+
+    #[tokio::test]
+    async fn migration_017_adds_super_admin_columns() {
+        // Input: fresh database with all migrations applied.
+        // Expected: users has is_super_admin + must_change_password, and
+        // companies has the soft-delete/FBR columns.
+        let pool = fresh_pool().await;
+
+        let user_cols = table_columns(&pool, "users").await;
+        for column in ["is_super_admin", "must_change_password"] {
+            assert!(
+                user_cols.iter().any(|c| c == column),
+                "users.{column} should exist"
+            );
+        }
+
+        let company_cols = table_columns(&pool, "companies").await;
+        for column in ["deleted_at", "version", "ntn", "strn", "fbr_registered", "province"] {
+            assert!(
+                company_cols.iter().any(|c| c == column),
+                "companies.{column} should exist"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn migration_017_allows_super_admin_role() {
+        // Input: fresh database; insert a role='super_admin' user.
+        // Expected: the trigger allows it (migration 002's trigger is replaced).
+        let pool = fresh_pool().await;
+
+        sqlx::query(
+            r#"
+            INSERT INTO users (id, email, password_hash, full_name, role, company_id, is_super_admin)
+            VALUES ('sa-1', 'root@admin.test', 'x', 'Super Admin', 'super_admin', NULL, 1)
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .expect("super_admin role should be accepted by the trigger");
+    }
 }

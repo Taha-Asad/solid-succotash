@@ -40,6 +40,8 @@ import {
 
 import { useForm } from "@mantine/form";
 
+import { usePermissions } from "../permissions/PermissionsProvider";
+
 import {
   listPurchaseOrders,
   getPurchaseOrder,
@@ -60,7 +62,6 @@ import type {
   PublicPurchaseOrder,
   PublicProduct,
   PublicSupplier,
-  PublicUser,
   PurchaseOrderWithItems,
 } from "../../types/backend";
 
@@ -120,18 +121,13 @@ const fadeUp = {
 // MAIN COMPONENT
 // ==========================================
 
-interface POPageProps {
-  user: PublicUser;
-}
-
-export default function PurchaseOrderPage({ user }: POPageProps) {
+export default function PurchaseOrderPage() {
   const [view, setView] = useState<"list" | "detail">("list");
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   if (view === "detail" && selectedId) {
     return (
       <PODetailView
-        user={user}
         poId={selectedId}
         onBack={() => {
           setSelectedId(null);
@@ -142,7 +138,6 @@ export default function PurchaseOrderPage({ user }: POPageProps) {
   }
   return (
     <POListView
-      user={user}
       onOpen={(id) => {
         setSelectedId(id);
         setView("detail");
@@ -218,20 +213,14 @@ function StatCard({
 // PO LIST VIEW
 // ==========================================
 
-function POListView({
-  user,
-  onOpen,
-}: {
-  user: PublicUser;
-  onOpen: (id: string) => void;
-}) {
+function POListView({ onOpen }: { onOpen: (id: string) => void }) {
+  const perms = usePermissions();
+  const canCreate = perms.can("purchase_orders", "create");
   const [orders, setOrders] = useState<PublicPurchaseOrder[]>([]);
   const [suppliers, setSuppliers] = useState<PublicSupplier[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
-
-  const canManage = user.role === "owner" || user.role === "admin";
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -296,7 +285,7 @@ function POListView({
             Order stock from suppliers, receive goods and track supplier payments.
           </Text>
         </Stack>
-        {canManage && (
+        {canCreate && (
           <Button
             leftSection={<Plus size={16} />}
             onClick={() => setCreateOpen(true)}
@@ -548,7 +537,7 @@ function CreatePOModal({
                 placeholder="Select supplier"
                 data={suppliers
                   .filter((s) => s.isActive)
-                  .map((s) => ({ value: s.id, label: s.name }))}
+                  .map((s) => ({ value: s.id, label: s.name ?? "" }))}
                 required
                 searchable
                 style={{ flex: 1 }}
@@ -657,14 +646,15 @@ function CreatePOModal({
 // ==========================================
 
 function PODetailView({
-  user,
   poId,
   onBack,
 }: {
-  user: PublicUser;
   poId: string;
   onBack: () => void;
 }) {
+  const perms = usePermissions();
+  const canFinalize = perms.can("purchase_orders", "finalize");
+  const canEdit = perms.can("purchase_orders", "edit");
   const [details, setDetails] = useState<PurchaseOrderWithItems | null>(null);
   const [products, setProducts] = useState<PublicProduct[]>([]);
   const [loading, setLoading] = useState(true);
@@ -672,8 +662,6 @@ function PODetailView({
   const [addItemOpen, setAddItemOpen] = useState(false);
   const [receiveOpen, setReceiveOpen] = useState(false);
   const [payOpen, setPayOpen] = useState(false);
-
-  const canManage = user.role === "owner" || user.role === "admin";
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -759,7 +747,7 @@ function PODetailView({
   const isOrdered = order.status === "ordered";
   const isReceived = order.status === "received";
   const canPay =
-    canManage && (isReceived || order.status === "paid") && order.balanceDue > 0;
+    canEdit && (isReceived || order.status === "paid") && order.balanceDue > 0;
 
   return (
     <Stack gap="lg">
@@ -782,12 +770,12 @@ function PODetailView({
           </Badge>
         </Group>
         <Group>
-          {isDraft && canManage && (
+          {isDraft && canFinalize && (
             <Button color="blue" leftSection={<Send size={15} />} onClick={handleSubmit}>
               Submit to Supplier
             </Button>
           )}
-          {isOrdered && canManage && (
+          {isOrdered && canEdit && (
             <Button
               color="green"
               leftSection={<PackageCheck size={15} />}
@@ -867,7 +855,7 @@ function PODetailView({
               Products on this purchase order
             </Text>
           </Stack>
-          {isDraft && canManage && (
+          {isDraft && canEdit && (
             <Button size="sm" leftSection={<Plus size={15} />} onClick={() => setAddItemOpen(true)} styles={gradientButton}>
               Add Item
             </Button>
@@ -928,7 +916,7 @@ function PODetailView({
                           {paisaToDisplay(item.lineTotal)}
                         </Text>
                       </Table.Td>
-                      {isDraft && (
+                      {isDraft && canEdit && (
                         <Table.Td>
                           <ActionIcon
                             color="red"

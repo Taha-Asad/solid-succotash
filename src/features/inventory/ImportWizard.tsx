@@ -24,6 +24,10 @@
 
 import { useEffect, useState } from "react";
 
+import { listen, type Event, type UnlistenFn } from "@tauri-apps/api/event";
+
+import { reportOnboardingEvent } from "../../onboarding/bus";
+
 import {
   Alert,
   Badge,
@@ -34,6 +38,7 @@ import {
   FileInput,
   Group,
   List,
+  Loader,
   Progress,
   Select,
   SimpleGrid,
@@ -69,21 +74,31 @@ import {
 
 import {
   analyzeImportFile,
+  confirmImport,
+  deleteImportTemplate,
   executeImport,
   getErrorMessage,
+  getImportJob,
+  IMPORT_COMPLETE_EVENT,
+  IMPORT_PROGRESS_EVENT,
+  listErpAdapters,
   listImportJobs,
+  listImportTemplates,
   rollbackImport,
+  type ImportProgressEvent,
 } from "../../api/backend";
 
 import { notifications } from "@mantine/notifications";
 
 import type {
   ConflictStrategy,
+  ErpAdapterInfo,
   FieldMapping,
   FileAnalysis,
   ImportJob,
   ImportResult,
   ImportTarget,
+  ImportTemplate,
   PublicUser,
   RollbackResult,
 } from "../../types/backend";
@@ -119,7 +134,29 @@ const IMPORT_TARGETS: {
     label: "Opening Stock",
     description: "Match products by SKU and add starting quantities",
   },
+  {
+    value: "invoices",
+    label: "Sales Invoices",
+    description: "Historical invoices: number, date, customer, items and totals",
+  },
+  {
+    value: "purchase_bills",
+    label: "Purchase Bills",
+    description: "Historical purchases: PO number, supplier, items and totals",
+  },
 ];
+
+// Fallback payload if a terminal event ever arrives without a result.
+const emptyResult: ImportResult = {
+  fieldsCreated: 0,
+  productsImported: 0,
+  customersImported: 0,
+  itemsImported: 0,
+  rowsWithErrors: 0,
+  rowsSkipped: 0,
+  jobId: null,
+  errors: [],
+};
 
 // Per-target mapping vocabulary for the "Maps To" dropdown.
 const TARGET_FIELD_OPTIONS: Record<ImportTarget, { value: string; label: string }[]> = {
@@ -165,6 +202,39 @@ const TARGET_FIELD_OPTIONS: Record<ImportTarget, { value: string; label: string 
     { value: "expiry_date", label: "Expiry Date (core)" },
     { value: "skip", label: "Skip this column" },
   ],
+  invoices: [
+    { value: "invoice_number", label: "Invoice Number (core)" },
+    { value: "invoice_date", label: "Invoice Date (core)" },
+    { value: "customer_name", label: "Customer Name (core)" },
+    { value: "product_sku", label: "Product / Item (line)" },
+    { value: "quantity", label: "Quantity (line)" },
+    { value: "unit_price", label: "Unit Price (line)" },
+    { value: "tax_rate", label: "Tax Rate % (line)" },
+    { value: "discount", label: "Discount % (line)" },
+    { value: "total_amount", label: "Total Amount (summary)" },
+    { value: "amount_paid", label: "Amount Paid" },
+    { value: "status", label: "Status" },
+    { value: "due_date", label: "Due Date" },
+    { value: "po_number", label: "Customer PO / Order No" },
+    { value: "reference_note", label: "Reference / Notes" },
+    { value: "skip", label: "Skip this column" },
+  ],
+  purchase_bills: [
+    { value: "po_number", label: "PO / Bill Number (core)" },
+    { value: "po_date", label: "PO / Bill Date (core)" },
+    { value: "supplier_name", label: "Supplier Name (core)" },
+    { value: "product_sku", label: "Product / Item (line)" },
+    { value: "quantity", label: "Quantity (line)" },
+    { value: "unit_cost", label: "Unit Cost (line)" },
+    { value: "tax_rate", label: "Tax Rate % (line)" },
+    { value: "total_amount", label: "Total Amount (summary)" },
+    { value: "amount_paid", label: "Amount Paid" },
+    { value: "status", label: "Status" },
+    { value: "expected_date", label: "Expected Date" },
+    { value: "expiry_date", label: "Expiry Date (line)" },
+    { value: "reference_note", label: "Reference / Notes" },
+    { value: "skip", label: "Skip this column" },
+  ],
 };
 
 // Fields that must be supplied by the file, per target.
@@ -173,6 +243,8 @@ const REQUIRED_FIELDS: Record<ImportTarget, string[]> = {
   customers: ["customer_name"],
   suppliers: ["supplier_name"],
   opening_stock: ["sku"],
+  invoices: ["invoice_number", "customer_name"],
+  purchase_bills: ["po_number", "supplier_name"],
 };
 
 // Labels used in the confirm/result steps.
@@ -181,6 +253,8 @@ const TARGET_LABELS: Record<ImportTarget, { noun: string; stat: string }> = {
   customers: { noun: "customers", stat: "Customers Imported" },
   suppliers: { noun: "suppliers", stat: "Suppliers Imported" },
   opening_stock: { noun: "opening stock rows", stat: "Stock Lines Applied" },
+  invoices: { noun: "invoices", stat: "Invoices Imported" },
+  purchase_bills: { noun: "purchase bills", stat: "Purchase Bills Imported" },
 };
 
 const CONFLICT_OPTIONS = [
@@ -283,6 +357,8 @@ function WizardStyles() {
 interface ImportWizardProps {
   user: PublicUser;
   onComplete: () => void; // called when wizard finishes (refresh product list)
+  /** Label for the back action in the header (defaults to "Back to Inventory"). */
+  backLabel?: string;
 }
 
 // ==========================================
@@ -313,11 +389,21 @@ const ANALYZE_MESSAGES = [
 export default function ImportWizard({
   user: _user,
   onComplete,
+  backLabel = "Back to Inventory",
 }: ImportWizardProps) {
   const [activeStep, setActiveStep] = useState(0);
 
   // Import target (products / customers / suppliers / opening stock)
   const [target, setTarget] = useState<ImportTarget>("products");
+
+  // ERP adapter used for header mapping (spec §23.11). When empty, generic
+  // header detection runs; the saved-template auto-map (§23.5) is skipped
+  // whenever an adapter is pinned.
+  const [adapters, setAdapters] = useState<ErpAdapterInfo[]>([]);
+  const [adapter, setAdapter] = useState<string>("");
+
+  // Saved per-target templates (§23.5) powering the template picker.
+  const [templates, setTemplates] = useState<ImportTemplate[]>([]);
 
   // Step 1: File upload
   const [file, setFile] = useState<File | null>(null);
@@ -341,6 +427,12 @@ export default function ImportWizard({
   const [previewing, setPreviewing] = useState(false);
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
+  // Live tracking of the background import job started by confirm_import.
+  // The Rust worker PUSHES progress via Tauri events (`import:progress` /
+  // `import:complete`, spec §23.8); a light `get_import_job` re-sync is kept
+  // as a safety net for events that arrive before the listeners register.
+  const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  const [jobProgress, setJobProgress] = useState(0);
   const [rollbackResult, setRollbackResult] = useState<RollbackResult | null>(
     null,
   );
@@ -371,6 +463,27 @@ export default function ImportWizard({
     loadJobs();
   }, []);
 
+  // Load ERP adapters once on mount (spec §23.11).
+  useEffect(() => {
+    listErpAdapters()
+      .then(setAdapters)
+      .catch(() => setAdapters([]));
+  }, []);
+
+  // Load the saved templates for the current target so the mapping step can
+  // offer them in the picker (§23.5).
+  async function loadTemplates() {
+    try {
+      setTemplates(await listImportTemplates(target));
+    } catch {
+      setTemplates([]);
+    }
+  }
+
+  useEffect(() => {
+    loadTemplates();
+  }, [target]);
+
   // Rotate the analyzing status message while that step is showing
   useEffect(() => {
     if (activeStep !== 1) return;
@@ -380,6 +493,66 @@ export default function ImportWizard({
     }, 900);
     return () => clearInterval(id);
   }, [activeStep]);
+
+  // Follow the background import job while one is running (confirm gate flow).
+  // Primary channel: Tauri push events emitted by the Rust worker. Fallback:
+  // a low-frequency `get_import_job` re-sync so a terminal event that fired
+  // before the listeners registered still resolves to the result screen.
+  useEffect(() => {
+    if (!activeJobId) return;
+    let cancelled = false;
+    const jobId = activeJobId;
+    const unlisteners: UnlistenFn[] = [];
+
+    const finish = (result: ImportResult) => {
+      if (cancelled) return;
+      setImportResult(result);
+      setActiveJobId(null);
+      loadJobs();
+    };
+
+    const onProgress = (event: Event<ImportProgressEvent>) => {
+      if (cancelled || event.payload.jobId !== jobId) return;
+      setJobProgress(event.payload.progress);
+    };
+
+    const onComplete = (event: Event<ImportProgressEvent>) => {
+      if (cancelled || event.payload.jobId !== jobId) return;
+      setJobProgress(100);
+      finish(event.payload.result ?? { ...emptyResult, jobId });
+    };
+
+    listen<ImportProgressEvent>(IMPORT_PROGRESS_EVENT, onProgress).then((un) => {
+      if (cancelled) un();
+      else unlisteners.push(un);
+    });
+    listen<ImportProgressEvent>(IMPORT_COMPLETE_EVENT, onComplete).then((un) => {
+      if (cancelled) un();
+      else unlisteners.push(un);
+    });
+
+    // Safety re-sync: cover the gap between confirm_import returning and the
+    // listeners above being ready, plus any event that got dropped.
+    const sync = async () => {
+      try {
+        const status = await getImportJob(jobId);
+        if (cancelled) return;
+        setJobProgress(status.job.progress);
+        if (status.result) finish(status.result);
+      } catch {
+        if (cancelled) return;
+        setActiveJobId(null);
+        setError("Import tracking failed — check Recent Imports below.");
+      }
+    };
+    sync();
+    const id = setInterval(sync, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+      unlisteners.forEach((un) => un());
+    };
+  }, [activeJobId]);
 
   // ---- Step 1: Read file as bytes ----
 
@@ -396,8 +569,14 @@ export default function ImportWizard({
       setFileType("csv");
     } else if (ext === "docx") {
       setFileType("docx");
+    } else if (ext === "pdf") {
+      setFileType("pdf");
+    } else if (ext === "png" || ext === "jpg" || ext === "jpeg") {
+      setFileType("png");
     } else {
-      setError("Please upload an .xlsx, .csv, or .docx file");
+      setError(
+        "Please upload an .xlsx, .csv, .docx, .pdf, or image (.png / .jpg) file",
+      );
       return;
     }
 
@@ -416,6 +595,7 @@ export default function ImportWizard({
   function handleTargetChange(next: ImportTarget | null) {
     if (!next) return;
     setTarget(next);
+    setAdapter("");
     setAnalysis(null);
     setMappings([]);
     setPreview(null);
@@ -438,6 +618,7 @@ export default function ImportWizard({
         fileBytes,
         fileType,
         target,
+        adapter: adapter || null,
       });
 
       setAnalysis(result);
@@ -462,6 +643,57 @@ export default function ImportWizard({
   }
 
   // ---- Step 3: Update a mapping ----
+
+  // Applies a saved template's mappings to the current file by matching
+  // source columns against the analyzed headers (spec §23.5).
+  function applyTemplate(template: ImportTemplate) {
+    if (!analysis) return;
+    const norm = (s: string) =>
+      s.trim().toLowerCase().replace(/[\s\-_.]/g, "");
+    const headerAt = new Map<string, number>();
+    analysis.headers.forEach((h, i) => {
+      const key = norm(h);
+      if (!headerAt.has(key)) headerAt.set(key, i);
+    });
+
+    const next = [...mappings];
+    template.columnMappings.forEach((tm) => {
+      const idx = headerAt.get(norm(tm.sourceColumn));
+      if (idx !== undefined && next[idx]) {
+        next[idx] = {
+          ...next[idx],
+          targetField: tm.targetField,
+          fieldCategory: tm.fieldCategory,
+          manualValue: tm.manualValue,
+          confidence: "high",
+        };
+      }
+    });
+    setMappings(next);
+    setCustomNames({});
+    next.forEach((m, i) => {
+      if (m.targetField.startsWith("custom:")) {
+        setCustomNames((prev) => ({
+          ...prev,
+          [i]: m.targetField.replace("custom:", ""),
+        }));
+      }
+    });
+  }
+
+  async function handleDeleteTemplate(template: ImportTemplate) {
+    try {
+      await deleteImportTemplate(template.id);
+      setTemplates((prev) => prev.filter((t) => t.id !== template.id));
+      notifications.show({
+        title: "Template deleted",
+        message: `"${template.templateName}" was removed.`,
+        color: "green",
+      });
+    } catch (err) {
+      setError(getErrorMessage(err));
+    }
+  }
 
   function updateMapping(index: number, targetField: string) {
     setMappings((prev) => {
@@ -558,6 +790,7 @@ export default function ImportWizard({
       fileBytes,
       fileType,
       templateName,
+      hasHeaderRow: true,
       importData: true,
       conflictStrategy,
       dryRun,
@@ -591,20 +824,23 @@ export default function ImportWizard({
     setError(null);
 
     try {
-      const result = await executeImport(buildRequest(false));
+      // Confirm gate (§23.3): only commit once the user has previewed and
+      // explicitly confirmed — never on the first action. The result is
+      // returned immediately with just a job id; Step 5 polls for progress.
+      const result = await confirmImport(buildRequest(false));
 
+      setJobProgress(0);
       setImportResult(result);
-      setPreview(null);
+      setActiveJobId(result.jobId ?? null);
       setActiveStep(4);
-      loadJobs();
       notifications.show({
-        title: "Import complete",
-        message: `${result.productsImported + result.customersImported + result.itemsImported} ${TARGET_LABELS[target].noun} imported`,
+        title: "Import started",
+        message: "Import scheduled — you'll see live progress on the next screen",
         color: "green",
       });
     } catch (err) {
       const message = getErrorMessage(err);
-      console.error("execute_import failed:", message);
+      console.error("confirm_import failed:", message);
       setError(message);
       notifications.show({
         title: "Import failed",
@@ -692,7 +928,7 @@ export default function ImportWizard({
     (preview?.itemsImported ?? 0);
 
   return (
-    <Stack>
+    <Stack data-tour="import-wizard">
       <WizardStyles />
 
       <Box className="wiz-glow-bar" />
@@ -713,9 +949,12 @@ export default function ImportWizard({
           variant="subtle"
           color="gray"
           leftSection={<ArrowLeft size={15} />}
-          onClick={onComplete}
+          onClick={() => {
+            reportOnboardingEvent({ type: "wizard-closed" });
+            onComplete();
+          }}
         >
-          Back to Inventory
+          {backLabel}
         </Button>
       </Group>
 
@@ -799,8 +1038,29 @@ export default function ImportWizard({
                   </Text>
                 </Group>
                 <Text size="sm" c="dimmed">
-                  Supported formats: .xlsx, .xls, .csv, .docx (Word table)
+                  Supported formats: .xlsx, .xls, .csv, .docx (Word table), .pdf
+                  (text layer), and .png / .jpg images (OCR)
                 </Text>
+
+                {adapters.length > 0 && (
+                  <Select
+                    label="ERP adapter (optional)"
+                    description="Choose the source system to match its column naming"
+                    placeholder="Auto-detect headers"
+                    data={adapters.map((a) => ({
+                      value: a.key,
+                      label: a.label ?? a.key,
+                    }))}
+                    value={adapter || null}
+                    onChange={(value) => {
+                      setAdapter(value ?? "");
+                      setAnalysis(null);
+                      setMappings([]);
+                    }}
+                    clearable
+                    size="sm"
+                  />
+                )}
 
                 <Alert color="blue" variant="light" icon={<Info size={16} />}>
                   <Text size="xs">
@@ -809,6 +1069,16 @@ export default function ImportWizard({
                     text or bullet lists won't work. If your client sent plain
                     text, copy it into Excel or Google Sheets first, then save
                     as .xlsx.
+                  </Text>
+                </Alert>
+
+                <Alert color="cyan" variant="light" icon={<Info size={16} />}>
+                  <Text size="xs">
+                    <strong>PDF / image note:</strong> text-based PDFs (most
+                    accounting exports) are read directly. Scanned documents
+                    and images are read with OCR, which requires{" "}
+                    <strong>Tesseract</strong> to be installed and on your
+                    PATH.
                   </Text>
                 </Alert>
 
@@ -825,7 +1095,7 @@ export default function ImportWizard({
                     <Upload size={22} color={INK.text} />
                     <FileInput
                       placeholder="Click to browse or drag a file here"
-                      accept=".xlsx,.xls,.csv,.docx"
+                      accept=".xlsx,.xls,.csv,.docx,.pdf,.png,.jpg,.jpeg"
                       value={file}
                       onChange={handleFileSelect}
                       size="md"
@@ -940,6 +1210,80 @@ export default function ImportWizard({
                     rows
                   </Text>
                 </Alert>
+
+                {analysis.autoTemplateName && (
+                  <Alert
+                    color="green"
+                    variant="light"
+                    icon={<FileCheck2 size={16} />}
+                  >
+                    <Group justify="space-between" wrap="wrap">
+                      <Text size="sm">
+                        Auto-detected template:{" "}
+                        <strong>{analysis.autoTemplateName}</strong> — its
+                        mappings were applied. Review below or pick another.
+                      </Text>
+                      <Button
+                        size="xs"
+                        variant="subtle"
+                        color="red"
+                        leftSection={<Undo2 size={13} />}
+                        onClick={() =>
+                          analysis &&
+                          setMappings(
+                            analysis.genericMappings.filter(
+                              (m) => m.targetField !== "skip",
+                            ),
+                          )
+                        }
+                      >
+                        Clear template
+                      </Button>
+                    </Group>
+                  </Alert>
+                )}
+
+                {templates.length > 0 && (
+                  <Group align="flex-end" gap="sm" wrap="wrap">
+                    <Select
+                      label="Apply a saved template"
+                      placeholder="Choose a saved mapping template"
+                      size="sm"
+                      w={320}
+                      data={templates.map((t) => ({
+                        value: t.id,
+                        label: `${t.templateName} (used ${t.useCount}x)`,
+                      }))}
+                      onChange={(id) => {
+                        const t = templates.find((x) => x.id === id);
+                        if (t) applyTemplate(t);
+                      }}
+                    />
+                    {templates.length > 0 && (
+                      <Group gap={6}>
+                        {templates.slice(0, 3).map((t) => (
+                          <Badge
+                            key={t.id}
+                            color="gray"
+                            variant="light"
+                            radius="sm"
+                            size="lg"
+                          >
+                            {t.templateName}
+                            <span
+                              style={{ cursor: "pointer", marginLeft: 6 }}
+                              onClick={() => handleDeleteTemplate(t)}
+                              role="button"
+                              title={`Delete ${t.templateName}`}
+                            >
+                              ×
+                            </span>
+                          </Badge>
+                        ))}
+                      </Group>
+                    )}
+                  </Group>
+                )}
 
                 <Alert color="yellow" variant="light" icon={<Info size={16} />}>
                   <Text size="xs">
@@ -1394,6 +1738,7 @@ export default function ImportWizard({
                   onClick={handleImport}
                   loading={importing}
                   size="lg"
+                  disabled={!preview}
                   leftSection={<Rocket size={18} />}
                   style={{
                     backgroundColor: INK.gold,
@@ -1401,7 +1746,9 @@ export default function ImportWizard({
                     fontWeight: 700,
                   }}
                 >
-                  Import {analysis?.totalRows ?? 0} {TARGET_LABELS[target].noun}
+                  {preview
+                    ? `Confirm & Import ${previewCount} ${TARGET_LABELS[target].noun}`
+                    : "Preview first"}
                 </Button>
               </Group>
             </Group>
@@ -1411,7 +1758,24 @@ export default function ImportWizard({
         {/* ---- STEP 5: RESULT ---- */}
         <Stepper.Completed>
           <Stack mt="md" className="wiz-step-enter">
-            {importResult ? (
+            {activeJobId ? (
+              <Stack align="center" gap="md" py="xl">
+                <Loader size={36} color={INK.gold} />
+                <Title order={3} ta="center" style={{ color: INK.text }}>
+                  Importing {TARGET_LABELS[target].noun}…
+                </Title>
+                <Text size="sm" c="dimmed" ta="center">
+                  Keep this window open — {jobProgress}% complete
+                </Text>
+                <Progress
+                  value={jobProgress}
+                  size="lg"
+                  radius="xl"
+                  color={INK.gold}
+                  style={{ width: "100%", maxWidth: 420 }}
+                />
+              </Stack>
+            ) : importResult ? (
               <>
                 <Stack align="center" gap={6}>
                   <Box
@@ -1506,7 +1870,9 @@ export default function ImportWizard({
                         <Text size="sm">
                           {rollbackResult.productsDeleted} product(s),{" "}
                           {rollbackResult.customersDeleted} customer(s),{" "}
-                          {rollbackResult.suppliersDeleted} supplier(s) and{" "}
+                          {rollbackResult.suppliersDeleted} supplier(s),{" "}
+                          {rollbackResult.invoicesDeleted} invoice(s),{" "}
+                          {rollbackResult.purchaseBillsDeleted} purchase bill(s) and{" "}
                           {rollbackResult.movementsDeleted} movement(s) removed
                           {rollbackResult.quantityReverted > 0 &&
                             `; ${rollbackResult.quantityReverted} unit(s) of opening stock reverted`}
@@ -1556,7 +1922,10 @@ export default function ImportWizard({
                     size="lg"
                     rightSection={<ArrowRight size={16} />}
                     style={{ backgroundColor: INK.navy }}
-                    onClick={onComplete}
+                    onClick={() => {
+                      reportOnboardingEvent({ type: "import-completed" });
+                      onComplete();
+                    }}
                   >
                     Go to Inventory
                   </Button>

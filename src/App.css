@@ -221,3 +221,27 @@ h6 {
 .mantine-DateInput-day[data-selected][data-weekend] {
   color: #ffffff;
 }
+
+/* ==========================================
+   RTL (Urdu) support
+   Mantine handles most RTL flipping via logical CSS
+   properties once the <html dir> attribute is set.
+   This ensures a proper Nastaliq-friendly fallback
+   for Arabic-script text while keeping Latin text
+   rendered with the app's normal font.
+   ========================================== */
+
+[dir="rtl"] body,
+[dir="rtl"] button,
+[dir="rtl"] input,
+[dir="rtl"] textarea,
+[dir="rtl"] select,
+[dir="rtl"] .mantine-Text-root,
+[dir="rtl"] .mantine-Button-label {
+  font-family: "Inter", "Noto Nastaliq Urdu", "Urdu Typesetting",
+    "Jameel Noori Nastaleeq", "Segoe UI", Tahoma, sans-serif;
+}
+
+[dir="rtl"] .mantine-Modal-content {
+  direction: rtl;
+}

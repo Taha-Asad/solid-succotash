@@ -3,7 +3,7 @@
 // ==========================================
 
 // Roles inside one company (tenant-scoped)
-export type UserRole = "owner" | "admin" | "employee";
+export type UserRole = "owner" | "admin" | "employee" | "super_admin";
 
 // ==========================================
 // RETURN TYPES (what Rust sends back to us)
@@ -18,6 +18,11 @@ export type PublicUser = {
   companyId: string | null;
   isActive: boolean;
   createdAt: string;
+  // Cross-tenant admin flag (migration 017, spec §3.11).
+  // Super admins have companyId = null and are not tenant-scoped.
+  isSuperAdmin: boolean;
+  // Forces a password change on the next login (spec §7.3).
+  mustChangePassword: boolean;
 };
 
 // Company info
@@ -118,6 +123,17 @@ export type PublicSupplier = {
   createdAt: string;
   updatedAt: string;
   version: number;
+};
+
+// A unit of measure (spec §23.16)
+export type PublicUnit = {
+  id: string;
+  companyId: string;
+  name: string;
+  symbol: string | null;
+  isDefault: boolean;
+  createdAt: string;
+  updatedAt: string;
 };
 
 // Product
@@ -232,9 +248,44 @@ export type FileAnalysis = {
   totalRows: number;
   fileType: string;
   proposedMappings: FieldMapping[];
+  // The mapping without any auto-matched template applied — lets the wizard
+  // revert to plain header detection (spec §23.5).
+  genericMappings: FieldMapping[];
+  // Populated when a saved per-target template matched this file's headers
+  // (spec §23.5 auto-map). The wizard uses it to show "auto-detected template".
+  autoTemplateId?: string | null;
+  autoTemplateName?: string | null;
 };
 
-export type ImportTarget = "products" | "customers" | "opening_stock" | "suppliers";
+// A reusable per-target mapping template (spec §23.5)
+export type ImportTemplate = {
+  id: string;
+  companyId: string;
+  templateName: string;
+  fileType: string;
+  columnMappings: FieldMapping[];
+  hasHeaderRow: boolean;
+  target: string;
+  useCount: number;
+  lastUsedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+// A selectable ERP adapter (spec §23.11)
+export type ErpAdapterInfo = {
+  key: string;
+  label: string;
+  description: string;
+};
+
+export type ImportTarget =
+  | "products"
+  | "customers"
+  | "opening_stock"
+  | "suppliers"
+  | "invoices"
+  | "purchase_bills";
 
 export type ConflictStrategy = "skip" | "overwrite" | "suffix";
 
@@ -245,6 +296,7 @@ export type ImportRequest = {
   fileBytes: number[];
   fileType: string;
   templateName: string;
+  hasHeaderRow?: boolean;
   importData: boolean;
   conflictStrategy: ConflictStrategy;
   dryRun: boolean;
@@ -273,10 +325,13 @@ export type ImportJob = {
   id: string;
   fileType: string;
   fileName: string | null;
-  status: string; // "processing" | "completed" | "rolled_back"
+  target: string; // "products" | "customers" | "suppliers" | "opening_stock"
+  status: string; // "pending" | "processing" | "completed" | "failed" | "rolled_back"
   totalRows: number;
   processedRows: number;
+  attemptedRows: number;
   errorRows: number;
+  progress: number; // 0-100
   errorDetails: string | null;
   createdBy: string;
   createdAt: string;
@@ -285,10 +340,20 @@ export type ImportJob = {
   importedRecords: number;
 };
 
+// Live polling snapshot of a single import job (spec §23.3 progress)
+export type ImportJobStatus = {
+  job: ImportJob;
+  result: ImportResult | null; // present once the job reaches a terminal state
+};
+
 export type RollbackResult = {
   productsDeleted: number;
   customersDeleted: number;
   suppliersDeleted: number;
+  // Invoices + their line items removed (sales-invoice imports)
+  invoicesDeleted: number;
+  // Purchase bills + their line items removed (purchase-bill imports)
+  purchaseBillsDeleted: number;
   movementsDeleted: number;
   batchesDeleted: number;
   quantityReverted: number;
@@ -647,4 +712,168 @@ export type UpdatePermissionInput = {
   module: string;
   permission: string;
   allowed: boolean;
+};
+
+// ==========================================
+// SAAS / SUPER ADMIN TYPES (migration 017)
+// ==========================================
+
+export type PublicPackage = {
+  id: string;
+  name: string;
+  description: string | null;
+  price: number;
+  billingCycle: string;
+  moduleLimits: Record<string, unknown>;
+  maxUsers: number;
+  maxBranches: number;
+  maxStorageMb: number;
+  features: Record<string, unknown>;
+  isActive: boolean;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type PublicSubscription = {
+  id: string;
+  companyId: string;
+  packageId: string;
+  status: string;
+  trialEndsAt: string | null;
+  currentPeriodStart: string;
+  currentPeriodEnd: string;
+  canceledAt: string | null;
+  endedAt: string | null;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type PublicCompanyModule = {
+  id: string;
+  companyId: string;
+  moduleKey: string;
+  isEnabled: boolean;
+  settings: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type PublicFeatureFlag = {
+  id: string;
+  companyId: string;
+  featureKey: string;
+  isEnabled: boolean;
+  enabledBy: string | null;
+  reason: string | null;
+  expiresAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type TenantCompanySummary = {
+  id: string;
+  name: string;
+  email: string | null;
+  phone: string | null;
+  address: string | null;
+  taxNumber: string | null;
+  currencyCode: string;
+  isActive: boolean;
+  userCount: number;
+  packageName: string | null;
+  subscriptionStatus: string | null;
+  createdAt: string;
+};
+
+export type StatusCount = {
+  status: string;
+  count: number;
+};
+
+export type PackageCount = {
+  packageId: string;
+  packageName: string;
+  count: number;
+};
+
+export type MonthlyCount = {
+  month: string;
+  count: number;
+};
+
+export type PlatformAnalytics = {
+  mrr: number;
+  totalTenants: number;
+  activeTenants: number;
+  totalUsers: number;
+  subscriptionsByStatus: StatusCount[];
+  tenantsByPackage: PackageCount[];
+  monthlyGrowth: MonthlyCount[];
+};
+
+export type TenantCompanyDetail = {
+  company: PublicCompany;
+  subscription: PublicSubscription | null;
+  package: PublicPackage | null;
+  modules: PublicCompanyModule[];
+  featureFlags: PublicFeatureFlag[];
+  userCount: number;
+  ntn: string | null;
+  strn: string | null;
+  province: string | null;
+};
+
+export type RegisterTenantResult = {
+  company: PublicCompany;
+  adminUser: PublicUser;
+  subscription: PublicSubscription;
+  modules: PublicCompanyModule[];
+};
+
+export type CreatePackageInput = {
+  name: string;
+  description?: string | null;
+  price?: number;
+  billingCycle?: string;
+  moduleLimits?: string;
+  maxUsers?: number;
+  maxBranches?: number;
+  maxStorageMb?: number;
+  features?: string;
+  sortOrder?: number;
+};
+
+export type UpdatePackageInput = Partial<CreatePackageInput> & {
+  packageId: string;
+  isActive?: boolean;
+};
+
+export type RegisterTenantInput = {
+  companyName: string;
+  adminFullName: string;
+  adminEmail: string;
+  adminPassword: string;
+  packageId: string;
+  phone?: string | null;
+  address?: string | null;
+  taxNumber?: string | null;
+  currencyCode?: string;
+  ntn?: string | null;
+  strn?: string | null;
+  province?: string | null;
+};
+
+export type UpdateTenantCompanyInput = {
+  companyId: string;
+  name?: string;
+  email?: string | null;
+  phone?: string | null;
+  address?: string | null;
+  taxNumber?: string | null;
+  currencyCode?: string;
+  ntn?: string | null;
+  strn?: string | null;
+  province?: string | null;
 };

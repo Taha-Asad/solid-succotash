@@ -40,6 +40,8 @@ import {
   ContactRound,
   Moon,
   Sun,
+  CircleHelp,
+  FileSpreadsheet,
 } from "lucide-react";
 
 import {
@@ -52,10 +54,11 @@ import {
 } from "../api/backend";
 import { checkForUpdates, installUpdate } from "../api/updater";
 import type { UpdateResult } from "../api/updater";
-import type { PublicUser } from "../types/backend";
+import type { PublicUser, UserRole } from "../types/backend";
 
 import DashboardHome from "../features/dashboard/DashboardPage";
 import InventoryPage from "../features/inventory/InventoryPage";
+import ImportWizard from "../features/inventory/ImportWizard";
 import InvoicePage from "../features/invoices/InvoicePage";
 import PurchaseOrderPage from "../features/purchase-orders/PurchaseOrderPage";
 import ReportsPage from "../features/reports/ReportsPage";
@@ -65,8 +68,15 @@ import CustomersPage from "../features/customers/CustomersPage";
 import AccountsPage from "../features/accounts/AccountsPage";
 import SearchBar from "./SearchBar";
 import NotificationBell from "./NotificationBell";
+import HelpMenu from "./HelpMenu";
+import LanguageMenu from "./LanguageMenu";
+import HelpPage from "../features/help/HelpPage";
 import { INK } from "../theme";
 import { useAppTheme } from "../theme/AppThemeProvider";
+import { useI18n } from "../i18n/I18nProvider";
+import { useOnboarding } from "../onboarding/OnboardingProvider";
+import { usePermissions } from "../features/permissions/PermissionsProvider";
+import { reportOnboardingEvent } from "../onboarding/bus";
 
 // ==========================================
 // NAV MODEL
@@ -75,83 +85,108 @@ import { useAppTheme } from "../theme/AppThemeProvider";
 export type DashboardView =
   | "home"
   | "inventory"
+  | "import"
   | "invoices"
   | "customers"
   | "purchasing"
   | "reports"
   | "accounts"
   | "users"
-  | "settings";
+  | "settings"
+  | "help";
 
 const NAV_ITEMS: {
   key: DashboardView;
   label: string;
   description: string;
   icon: React.ReactNode;
-  roles: ("owner" | "admin" | "employee")[];
+  roles: UserRole[];
+  /** Permission module that gates this item's visibility (needs view). */
+  module?: string;
 }[] = [
   {
     key: "home",
     label: "Dashboard",
     description: "Overview & analytics",
     icon: <LayoutDashboard size={18} />,
-    roles: ["owner", "admin", "employee"],
+    roles: ["owner", "admin", "employee", "super_admin"],
   },
   {
     key: "inventory",
     label: "Inventory",
     description: "Products, stock & suppliers",
     icon: <Package size={18} />,
-    roles: ["owner", "admin", "employee"],
+    roles: ["owner", "admin", "employee", "super_admin"],
+    module: "inventory",
   },
   {
     key: "invoices",
     label: "Invoices",
     description: "Bills, payments & customers",
     icon: <ReceiptText size={18} />,
-    roles: ["owner", "admin", "employee"],
+    roles: ["owner", "admin", "employee", "super_admin"],
+    module: "invoices",
   },
   {
     key: "customers",
     label: "Customers",
     description: "Customer directory & accounts",
     icon: <ContactRound size={18} />,
-    roles: ["owner", "admin", "employee"],
+    roles: ["owner", "admin", "employee", "super_admin"],
   },
   {
     key: "purchasing",
     label: "Purchasing",
     description: "Purchase orders from suppliers",
     icon: <ShoppingCart size={18} />,
-    roles: ["owner", "admin", "employee"],
+    roles: ["owner", "admin", "employee", "super_admin"],
+    module: "purchase_orders",
+  },
+  {
+    key: "import",
+    label: "Import",
+    description: "Import customers, products & more from Excel/CSV",
+    icon: <FileSpreadsheet size={18} />,
+    roles: ["owner", "admin"],
   },
   {
     key: "reports",
     label: "Reports",
     description: "Sales, stock & profit analytics",
     icon: <ChartPie size={18} />,
-    roles: ["owner", "admin", "employee"],
+    roles: ["owner", "admin", "employee", "super_admin"],
+    module: "reports",
   },
   {
     key: "accounts",
     label: "Accounts",
     description: "Chart of accounts & journal",
     icon: <BookOpen size={18} />,
-    roles: ["owner", "admin", "employee"],
+    roles: ["owner", "admin", "employee", "super_admin"],
+    module: "ledger",
   },
   {
     key: "users",
     label: "Team",
     description: "Manage company users",
     icon: <Users size={18} />,
-    roles: ["owner", "admin"],
+    roles: ["owner", "admin", "super_admin"],
+    module: "users",
   },
   {
     key: "settings",
     label: "Settings",
     description: "Profile, invoices, backups & audit",
     icon: <Settings2 size={18} />,
-    roles: ["owner", "admin", "employee"],
+    roles: ["owner", "admin", "employee", "super_admin"],
+    module: "settings",
+  },
+  {
+    key: "help",
+    label: "Help",
+    description: "How to use this software",
+    icon: <CircleHelp size={18} />,
+    roles: ["owner", "admin", "employee", "super_admin"],
   },
 ];
 
@@ -224,6 +259,7 @@ export default function AppShell({
   onLogout: () => Promise<void>;
 }) {
   const [view, setView] = useState<DashboardView>("home");
+  const [prevView, setPrevView] = useState<DashboardView>("home");
   const [backing, setBacking] = useState(false);
   const [backupMsg, setBackupMsg] = useState<string | null>(null);
   const [updateResult, setUpdateResult] = useState<UpdateResult | null>(null);
@@ -235,6 +271,9 @@ export default function AppShell({
     theme: null,
   });
   const { isDark, toggleColorScheme } = useAppTheme();
+  const { t, lang } = useI18n();
+  const { startReplay } = useOnboarding();
+  const perms = usePermissions();
 
   useEffect(() => {
     Promise.all([getCompany(), getTheme()])
@@ -256,6 +295,16 @@ export default function AppShell({
     };
   }, []);
 
+  // Navigate between modules; the onboarding listens for these events to know
+  // when a "navigate to X" task step has been performed. Remember the view we
+  // came from so the Import Wizard's back action can return there.
+  function goTo(nextView: DashboardView) {
+    if (nextView === "import" && view !== "import") setPrevView(view);
+    setView(nextView);
+    reportOnboardingEvent({ type: "navigate", module: nextView });
+  }
+
+  // ----- branding + theme setup ----
   const updateAvailable =
     updateResult?.available && updateResult.update != null;
 
@@ -264,7 +313,7 @@ export default function AppShell({
     setUpdateMsg(null);
     try {
       await installUpdate();
-      setUpdateMsg("Update installed. The app will restart shortly.");
+      setUpdateMsg(t("update.installing"));
     } catch (err) {
       setUpdateMsg(`Error: ${getErrorMessage(err)}`);
     } finally {
@@ -272,21 +321,25 @@ export default function AppShell({
     }
   }
 
-  const navItems = NAV_ITEMS.filter((item) => item.roles.includes(user.role));
+  const navItems = NAV_ITEMS.filter(
+    (item) =>
+      item.roles.includes(user.role) &&
+      (!item.module || perms.can(item.module, "view")),
+  );
 
   async function handleBackup() {
     setBacking(true);
     setBackupMsg(null);
     try {
       const savePath = await saveFileDialog({
-        title: "Save Backup",
+        title: t("backup.title"),
         defaultPath: `backup-${new Date().toISOString().slice(0, 10)}.db`,
       });
       if (!savePath) return;
       const path = await createBackup(savePath);
-      setBackupMsg(`Backup saved: ${path}`);
+      setBackupMsg(t("backup.success", { path }));
     } catch (err) {
-      setBackupMsg(`Error: ${getErrorMessage(err)}`);
+      setBackupMsg(t("backup.error", { err: getErrorMessage(err) }));
     } finally {
       setBacking(false);
       setTimeout(() => setBackupMsg(null), 5000);
@@ -294,7 +347,7 @@ export default function AppShell({
   }
 
   const current = navItems.find((n) => n.key === view) ?? navItems[0];
-  const today = new Date().toLocaleDateString(undefined, {
+  const today = new Date().toLocaleDateString(lang === "ur" ? "ur-PK" : undefined, {
     weekday: "long",
     day: "numeric",
     month: "long",
@@ -387,14 +440,14 @@ export default function AppShell({
 
         {/* Nav */}
         <ScrollArea offsetScrollbars style={{ flex: 1 }}>
-          <Stack gap={4} px="sm">
+          <Stack gap={4} px="sm" data-tour="nav">
             <Text
               size="xs"
               px="md"
               pb="xs"
               style={{ color: "#6B7BA6", letterSpacing: 1.5, fontWeight: 700 }}
             >
-              WORKSPACE
+              {t("nav.workspace")}
             </Text>
             {navItems.map((item, index) => {
               const active = view === item.key;
@@ -408,7 +461,8 @@ export default function AppShell({
                     ease: [0.22, 1, 0.36, 1],
                     duration: 0.35,
                   }}
-                  onClick={() => setView(item.key)}
+                  onClick={() => goTo(item.key)}
+                  data-tour={`nav-${item.key}`}
                   style={{
                     position: "relative",
                     display: "flex",
@@ -462,7 +516,7 @@ export default function AppShell({
                     {item.icon}
                   </span>
                   <span style={{ position: "relative", flex: 1 }}>
-                    {item.label}
+                    {t(`nav.${item.key}`)}
                   </span>
                 </motion.button>
               );
@@ -525,7 +579,7 @@ export default function AppShell({
                   label: { fontWeight: 600 },
                 }}
               >
-                Sign out
+                {t("sidebar.signOut")}
               </Button>
             </Box>
           </motion.div>
@@ -564,22 +618,24 @@ export default function AppShell({
           >
             <Stack gap={0}>
               <Text size="sm" style={{ color: accentLabel, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase" }}>
-                {current?.label}
+                {current ? t(`nav.${current.key}`) : ""}
               </Text>
               <Text fw={800} size="lg" style={{ color: INK.text, letterSpacing: -0.3 }}>
-                {current?.description}
+                {current ? t(`nav.${current.key}Desc`) : ""}
               </Text>
             </Stack>
           </motion.div>
 
-          <Group gap="md">
-            <SearchBar
-              onSelect={(result) => {
-                if (result.resultType === "product") setView("inventory");
-                else if (result.resultType === "customer") setView("customers");
-              }}
-            />
-            <Text size="sm" c="dimmed">
+          <Group gap="md" wrap="nowrap">
+            <Box data-tour="topbar-search">
+              <SearchBar
+                onSelect={(result) => {
+                  if (result.resultType === "product") goTo("inventory");
+                  else if (result.resultType === "customer") goTo("customers");
+                }}
+              />
+            </Box>
+            <Text size="sm" c="dimmed" style={{ whiteSpace: "nowrap" }}>
               {today}
             </Text>
             {backupMsg && (
@@ -588,7 +644,9 @@ export default function AppShell({
               </Text>
             )}
             {updateAvailable && updateResult?.update && (
-              <Tooltip label={`New version ${updateResult.update.version} available`}>
+              <Tooltip
+                label={t("topbar.updateAvailable", { v: updateResult.update.version })}
+              >
                 <Button
                   variant="filled"
                   size="sm"
@@ -603,11 +661,11 @@ export default function AppShell({
                     },
                   }}
                 >
-                  Update v{updateResult.update.version}
+                  {t("topbar.update", { version: updateResult.update.version })}
                 </Button>
               </Tooltip>
             )}
-            <Tooltip label={isDark ? "Switch to light mode" : "Switch to dark mode"}>
+            <Tooltip label={isDark ? t("topbar.themeTooltipLight") : t("topbar.themeTooltipDark")}>
               <ActionIcon
                 variant="light"
                 size="lg"
@@ -623,37 +681,44 @@ export default function AppShell({
                 {isDark ? <Sun size={17} /> : <Moon size={17} />}
               </ActionIcon>
             </Tooltip>
-            <NotificationBell
-              onNavigate={(view) => setView(view)}
-            />
-            <Tooltip label="Backup database">
+            <Box data-tour="topbar-notifications">
+              <NotificationBell onNavigate={(view) => goTo(view)} />
+            </Box>
+            <Tooltip label={t("topbar.backupTooltip")}>
               <Button
                 variant="light"
                 size="sm"
                 leftSection={<DatabaseBackup size={15} />}
                 onClick={handleBackup}
                 loading={backing}
+                data-tour="topbar-backup"
                 styles={{ root: { fontWeight: 600 } }}
               >
-                Backup
+                {t("topbar.backup")}
               </Button>
             </Tooltip>
-            <Tooltip label="Settings">
+            <HelpMenu
+              onOpenDocs={() => goTo("help")}
+              onReplayTour={() => startReplay()}
+            />
+            <LanguageMenu />
+            <Tooltip label={t("topbar.settingsTooltip")}>
               <Button
                 variant="subtle"
                 size="sm"
                 leftSection={<Settings2 size={15} />}
-                onClick={() => setView("settings")}
+                onClick={() => goTo("settings")}
+                data-tour="topbar-settings"
                 styles={{ root: { fontWeight: 600 } }}
               >
-                Settings
+                {t("topbar.settings")}
               </Button>
             </Tooltip>
           </Group>
         </Box>
 
         {/* Animated page container */}
-        <Box style={{ flex: 1, overflowY: "auto", overflowX: "hidden" }}>
+        <Box style={{ flex: 1, overflowY: "auto", overflowX: "hidden" }} data-tour="content">
           <AnimatePresence mode="wait">
             <motion.div
               key={view}
@@ -664,15 +729,27 @@ export default function AppShell({
               style={{ padding: 28, minHeight: "100%" }}
             >
               {view === "home" && <DashboardHome user={user} />}
-              {view === "inventory" && <InventoryPage user={user} />}
-              {view === "invoices" && <InvoicePage user={user} />}
+              {view === "inventory" && (
+                <InventoryPage user={user} onOpenImport={() => goTo("import")} />
+              )}
+              {view === "import" && (
+                <ImportWizard
+                  user={user}
+                  backLabel={t("import.backTo", { view: t(`nav.${prevView}`) })}
+                  onComplete={() => goTo(prevView)}
+                />
+              )}
+              {view === "invoices" && <InvoicePage />}
               {view === "customers" && <CustomersPage user={user} />}
-              {view === "purchasing" && <PurchaseOrderPage user={user} />}
+              {view === "purchasing" && <PurchaseOrderPage />}
               {view === "reports" && <ReportsPage />}
               {view === "accounts" && <AccountsPage />}
               {view === "users" && <UserManagementView currentUser={user} />}
               {view === "settings" && (
                 <SettingsPage user={user} onLogout={onLogout} />
+              )}
+              {view === "help" && (
+                <HelpPage companyName={branding.companyName} />
               )}
             </motion.div>
           </AnimatePresence>
@@ -683,14 +760,16 @@ export default function AppShell({
       <Modal
         opened={updateOpen}
         onClose={() => setUpdateOpen(false)}
-        title="Update available"
+        title={t("update.title")}
         centered
         styles={{ title: { fontWeight: 800, color: INK.text } }}
       >
         <Stack gap="md">
           <Text size="sm">
-            Version <b>{updateResult?.update?.version}</b> is available. You
-            are running v{updateResult?.currentVersion}.
+            {t("update.bodyIntro", {
+              v: updateResult?.update?.version ?? "",
+              current: updateResult?.currentVersion ?? "",
+            })}
           </Text>
           {updateResult?.update?.body && (
             <Box
@@ -719,11 +798,10 @@ export default function AppShell({
             leftSection={<Download size={15} />}
             styles={{ root: { fontWeight: 700 } }}
           >
-            Download &amp; Install
+            {t("update.download")}
           </Button>
           <Text size="xs" c="dimmed">
-            The app will close and restart after the update is installed. Your
-            data is preserved.
+            {t("update.restartNote")}
           </Text>
         </Stack>
       </Modal>

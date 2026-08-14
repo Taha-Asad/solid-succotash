@@ -81,6 +81,14 @@ pub struct PublicUser {
     pub company_id: Option<String>,
     pub is_active: bool,
     pub created_at: String,
+    /// Cross-tenant admin flag (migration 017, spec §3.11). Super admins
+    /// have `company_id = None` and bypass company-scoped access checks.
+    /// `#[sqlx(default)]` keeps pre-017 SELECTs working (defaults to false).
+    #[sqlx(default)]
+    pub is_super_admin: bool,
+    /// Forces a password change on the next login (spec §7.3).
+    #[sqlx(default)]
+    pub must_change_password: bool,
 }
 
 // Internal database structure.
@@ -95,6 +103,10 @@ pub struct UserWithPassword {
     pub company_id: Option<String>,
     pub is_active: bool,
     pub created_at: String,
+    #[sqlx(default)]
+    pub is_super_admin: bool,
+    #[sqlx(default)]
+    pub must_change_password: bool,
 }
 
 // ==========================================
@@ -242,13 +254,15 @@ pub(crate) async fn require_current_user(
             u.role,
             u.company_id,
             u.is_active,
-            u.created_at
+            u.created_at,
+            u.is_super_admin,
+            u.must_change_password
         FROM users AS u
-        INNER JOIN companies AS c
+        LEFT JOIN companies AS c
             ON c.id = u.company_id
         WHERE u.id = ?
           AND u.is_active = 1
-          AND c.is_active = 1
+          AND (u.is_super_admin = 1 OR (c.id IS NOT NULL AND c.is_active = 1))
         "#,
     )
     .bind(&session_user_id)
@@ -298,13 +312,15 @@ pub async fn login_user(
             u.role,
             u.company_id,
             u.is_active,
-            u.created_at
+            u.created_at,
+            u.is_super_admin,
+            u.must_change_password
         FROM users AS u
-        INNER JOIN companies AS c
+        LEFT JOIN companies AS c
             ON c.id = u.company_id
         WHERE u.email = ? COLLATE NOCASE
           AND u.is_active = 1
-          AND c.is_active = 1
+          AND (u.is_super_admin = 1 OR (c.id IS NOT NULL AND c.is_active = 1))
         "#,
     )
     .bind(&email)
@@ -337,6 +353,8 @@ pub async fn login_user(
         company_id: user_row.company_id,
         is_active: user_row.is_active,
         created_at: user_row.created_at,
+        is_super_admin: user_row.is_super_admin,
+        must_change_password: user_row.must_change_password,
     };
 
     set_current_user(session.inner(), public_user.clone()).await;
@@ -538,7 +556,8 @@ pub async fn load_saved_session(
     // 2. Load the user from the database
     let user_row = sqlx::query_as::<_, UserWithPassword>(
         r#"
-        SELECT id, email, password_hash, full_name, role, company_id, is_active, created_at
+        SELECT id, email, password_hash, full_name, role, company_id, is_active, created_at,
+               is_super_admin, must_change_password
         FROM users
         WHERE id = ? AND is_active = 1
         "#,
@@ -568,6 +587,8 @@ pub async fn load_saved_session(
         company_id: user.company_id,
         is_active: user.is_active,
         created_at: user.created_at,
+        is_super_admin: user.is_super_admin,
+        must_change_password: user.must_change_password,
     };
 
     set_current_user(&session, public_user.clone()).await;
@@ -593,7 +614,10 @@ pub async fn clear_saved_session(pool: State<'_, SqlitePool>) -> Result<(), Stri
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::test_helpers::{deactivate_company, register_owner, setup_app, state_of};
+    use crate::commands::test_helpers::{
+        deactivate_company, insert_super_admin, register_owner, set_session_user, setup_app,
+        state_of,
+    };
 
     // ---------------------------------------------------------------
     // normalize_email
@@ -923,6 +947,69 @@ mod tests {
         .await
         .unwrap_err();
         assert_eq!(err, "Invalid email or password");
+    }
+
+    #[tokio::test]
+    async fn super_admin_can_log_in_without_company() {
+        // Input: a cross-tenant super admin (company_id = NULL, is_super_admin = 1).
+        // Expected: login succeeds even though the user belongs to no company.
+        let app = setup_app().await;
+        let pool = state_of::<SqlitePool>(&app);
+        insert_super_admin(&*pool, "root@admin.test").await;
+
+        let user = login_user(
+            state_of(&app),
+            state_of(&app),
+            state_of(&app),
+            "root@admin.test".to_string(),
+            "password123".to_string(),
+        )
+        .await
+        .expect("super admin login succeeds");
+        assert_eq!(user.role, "super_admin");
+        assert!(user.is_super_admin);
+        assert_eq!(user.company_id, None);
+
+        let current = current_user(state_of(&app), state_of(&app))
+            .await
+            .expect("session set");
+        assert!(current.is_super_admin);
+    }
+
+    #[tokio::test]
+    async fn require_current_user_allows_super_admin() {
+        // Input: a super admin signed into the session (no company).
+        // Expected: require_current_user still returns the user — the
+        // super-admin bypass replaces the old INNER JOIN on companies.
+        let app = setup_app().await;
+        let pool = state_of::<SqlitePool>(&app);
+        let super_admin = insert_super_admin(&*pool, "root@admin.test").await;
+        set_session_user(&app, super_admin).await;
+
+        let current = require_current_user(&*pool, &state_of::<SessionState>(&app))
+            .await
+            .expect("super admin session stays valid");
+        assert!(current.is_super_admin);
+        assert_eq!(current.email, "root@admin.test");
+    }
+
+    #[tokio::test]
+    async fn load_saved_session_restores_super_admin() {
+        // Input: a super admin with a saved session row.
+        // Expected: load_saved_session returns the user with is_super_admin = true.
+        let app = setup_app().await;
+        let pool = state_of::<SqlitePool>(&app);
+        let super_admin = insert_super_admin(&*pool, "root@admin.test").await;
+        set_session_user(&app, super_admin.clone()).await;
+
+        save_session(state_of(&app), state_of(&app)).await.expect("save session");
+        logout_user(state_of(&app)).await.expect("logout");
+
+        let restored = load_saved_session(state_of(&app), state_of(&app))
+            .await
+            .expect("saved super admin session restores");
+        assert!(restored.is_super_admin);
+        assert_eq!(restored.id, super_admin.id);
     }
 
     #[tokio::test]

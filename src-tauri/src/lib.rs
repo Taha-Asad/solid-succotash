@@ -112,10 +112,30 @@ pub async fn run() {
 
     println!("Starting Tauri application...");
 
+    // One-time Super Admin seeding (creates credentials + handover doc on
+    // first launch; idempotent afterwards).
+    if let Some(data_dir) = dirs::data_dir() {
+        let app_data = data_dir.join("ijazandcompany-erp");
+        if let Err(e) = commands::setup::ensure_super_admin(&sqlite_pool, &app_data).await {
+            eprintln!("Super admin seeding failed: {e}");
+        }
+    }
+
     tauri::Builder::default()
         .manage(sqlite_pool)
         .manage(commands::auth::SessionState::new())
         .manage(commands::auth::LoginAttemptTracker::new())
+        .setup(|app| {
+            // Capture the app handle (for import push-progress events) and
+            // resolve the bundled Tesseract OCR engine, if present.
+            commands::import_wizard::init_app_services(app.handle());
+            // Notification push channel: capture the handle for instant emits
+            // from stock/invoice/PO mutations and start a 30s background
+            // ticker so time-based alerts (expiry/overdue) surface on their own.
+            commands::notifications::init_notifications(app.handle());
+            commands::notifications::start_notification_ticker();
+            Ok(())
+        })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -156,8 +176,17 @@ pub async fn run() {
             commands::inventory::write_off_batch,
             commands::import_wizard::analyze_import_file,
             commands::import_wizard::execute_import,
+            commands::import_wizard::confirm_import,
             commands::import_wizard::list_import_jobs,
+            commands::import_wizard::get_import_job,
             commands::import_wizard::rollback_import,
+            commands::import_wizard::list_erp_adapters,
+            commands::import_wizard::list_import_templates,
+            commands::import_wizard::delete_import_template,
+            commands::units::list_units,
+            commands::units::create_unit,
+            commands::units::update_unit,
+            commands::units::delete_unit,
             commands::invoices::list_customers,
             commands::invoices::create_customer,
             commands::invoices::delete_customer,
@@ -230,6 +259,25 @@ pub async fn run() {
             // ---- Retention ----
             commands::retention::get_retention_summary,
             commands::retention::archive_old_records,
+            // ---- SaaS Layer ----
+            commands::saas::list_packages,
+            commands::saas::create_package,
+            commands::saas::update_package,
+            commands::saas::delete_package,
+            commands::saas::get_current_subscription,
+            commands::saas::get_company_subscription,
+            commands::saas::assign_company_subscription,
+            commands::saas::list_company_modules,
+            commands::saas::set_company_module,
+            commands::saas::list_feature_flags,
+            commands::saas::set_feature_flag,
+            commands::saas::list_tenant_companies,
+            commands::saas::get_tenant_company_detail,
+            commands::saas::get_platform_analytics,
+            commands::saas::register_tenant,
+            commands::saas::update_tenant_company,
+            commands::saas::archive_company,
+            commands::saas::activate_company,
         ])
         .run(tauri::generate_context!())
         .expect("Error while running Tauri application");

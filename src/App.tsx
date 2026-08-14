@@ -40,6 +40,11 @@ import {
 import LoginPage from "./features/auth/LoginPage";
 import SetupPage from "./features/auth/SetupPage";
 import AppShell from "./components/AppShell";
+import SuperAdminShell from "./features/superadmin/SuperAdminShell";
+
+import { OnboardingProvider } from "./onboarding/OnboardingProvider";
+import { PermissionsProvider } from "./features/permissions/PermissionsProvider";
+import { reportOnboardingEvent } from "./onboarding/bus";
 
 import type { PublicUser, RegisterCompanyResult } from "./types/backend";
 
@@ -111,6 +116,7 @@ function App() {
   // ---- HANDLERS PASSED TO CHILDREN ----
 
   async function handleLogin(loggedInUser: PublicUser) {
+    reportOnboardingEvent({ type: "logged-in" });
     setUser(loggedInUser);
     setScreen("dashboard");
     // Save session to SQLite so it survives restart
@@ -126,6 +132,7 @@ function App() {
     _result: RegisterCompanyResult,
   ) {
     // Company was just created and owner is auto-logged in
+    reportOnboardingEvent({ type: "logged-in" });
     setUser(newUser);
     setScreen("dashboard");
     // Save session after first setup
@@ -173,16 +180,37 @@ function App() {
   }
 
   if (screen === "setup") {
-    return <SetupPage onSetupComplete={handleSetupComplete} />;
+    return (
+      <OnboardingProvider screen={screen} user={null}>
+        <SetupPage onSetupComplete={handleSetupComplete} />
+      </OnboardingProvider>
+    );
   }
 
   if (screen === "login") {
-    return <LoginPage onLogin={handleLogin} />;
+    return (
+      <OnboardingProvider screen={screen} user={null}>
+        <LoginPage onLogin={handleLogin} />
+      </OnboardingProvider>
+    );
   }
 
   // screen === "dashboard"
   if (user) {
-    return <AppShell user={user} onLogout={handleLogout} />;
+    return (
+      <OnboardingProvider screen={screen} user={user}>
+        {/* Super admins (cross-tenant, companyId = null) get their own
+            dedicated Platform Command Center — a separate product surface
+            from the tenant workspace shell. */}
+        {user.isSuperAdmin ? (
+          <SuperAdminShell user={user} onLogout={handleLogout} />
+        ) : (
+          <PermissionsProvider>
+            <AppShell user={user} onLogout={handleLogout} />
+          </PermissionsProvider>
+        )}
+      </OnboardingProvider>
+    );
   }
 
   // Should never reach here, but just in case

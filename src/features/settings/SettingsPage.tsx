@@ -69,9 +69,16 @@ import type {
 
 import type { PublicUser } from "../../types/backend";
 
-import { Trash2, Upload, Check } from "lucide-react";
+import { Trash2, Upload, Check, Languages as LanguagesIcon } from "lucide-react";
 
 import { INK } from "../../theme";
+import { useI18n } from "../../i18n/I18nProvider";
+import { reportOnboardingEvent } from "../../onboarding/bus";
+import {
+  LANGUAGES,
+  LANGUAGE_ORDER,
+  type Lang,
+} from "../../i18n/translations";
 
 // ==========================================
 // PROPS
@@ -88,18 +95,26 @@ interface SettingsPageProps {
 
 export default function SettingsPage({ user, onLogout }: SettingsPageProps) {
   const canEdit = user.role === "owner";
+  const { t } = useI18n();
 
   return (
     <Stack>
-      <Title order={3}>Settings</Title>
+      <Title order={3}>{t("settings.title")}</Title>
       <Tabs defaultValue="company">
         <Tabs.List>
-          <Tabs.Tab value="company">Company Profile</Tabs.Tab>
-          <Tabs.Tab value="invoice">Invoice Settings</Tabs.Tab>
-          {canEdit && <Tabs.Tab value="theme">Theme & Branding</Tabs.Tab>}
-          <Tabs.Tab value="backup">Backup & Restore</Tabs.Tab>
-          {canEdit && <Tabs.Tab value="retention">Data Retention</Tabs.Tab>}
-          {canEdit && <Tabs.Tab value="audit">Audit Log</Tabs.Tab>}
+          <Tabs.Tab value="company">{t("settings.tab.company")}</Tabs.Tab>
+          <Tabs.Tab value="invoice">{t("settings.tab.invoice")}</Tabs.Tab>
+          {canEdit && (
+            <Tabs.Tab value="theme">{t("settings.tab.theme")}</Tabs.Tab>
+          )}
+          <Tabs.Tab value="backup">{t("settings.tab.backup")}</Tabs.Tab>
+          {canEdit && (
+            <Tabs.Tab value="retention">{t("settings.tab.retention")}</Tabs.Tab>
+          )}
+          {canEdit && (
+            <Tabs.Tab value="audit">{t("settings.tab.audit")}</Tabs.Tab>
+          )}
+          <Tabs.Tab value="language">{t("settings.tab.language")}</Tabs.Tab>
         </Tabs.List>
 
         <Tabs.Panel value="company" pt="md">
@@ -126,8 +141,111 @@ export default function SettingsPage({ user, onLogout }: SettingsPageProps) {
             <AuditLogTab />
           </Tabs.Panel>
         )}
+        <Tabs.Panel value="language" pt="md">
+          <LanguageTab />
+        </Tabs.Panel>
       </Tabs>
     </Stack>
+  );
+}
+
+// ==========================================
+// LANGUAGE TAB
+// ==========================================
+
+function LanguageTab() {
+  const { lang, setLang, t } = useI18n();
+
+  return (
+    <Card withBorder padding="lg" maw={620}>
+      <Group gap="sm" mb="sm">
+        <span
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            width: 38,
+            height: 38,
+            borderRadius: 12,
+            background: "linear-gradient(135deg, #C9952A 0%, #E6C965 100%)",
+            color: "#131C39",
+          }}
+        >
+          <LanguagesIcon size={18} />
+        </span>
+        <Title order={5}>{t("lang.title")}</Title>
+      </Group>
+      <Text size="sm" c="dimmed" mb="lg">
+        {t("lang.settingsIntro")}
+      </Text>
+
+      <Stack gap="sm">
+        {LANGUAGE_ORDER.map((code: Lang) => {
+          const meta = LANGUAGES[code];
+          const selected = lang === code;
+          return (
+            <Box
+              key={code}
+              onClick={() => setLang(code)}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                padding: "14px 16px",
+                borderRadius: 12,
+                cursor: "pointer",
+                border: `1.5px solid ${
+                  selected ? INK.gold : "var(--app-border)"
+                }`,
+                background: selected ? "rgba(201,149,42,0.08)" : "var(--app-surface)",
+                transition: "border-color 0.15s ease, background 0.15s ease",
+              }}
+              onMouseEnter={(e) => {
+                if (!selected) e.currentTarget.style.background = "var(--app-soft)";
+              }}
+              onMouseLeave={(e) => {
+                if (!selected)
+                  e.currentTarget.style.background = "var(--app-surface)";
+              }}
+            >
+              <Group gap="sm">
+                <span
+                  style={{
+                    width: 34,
+                    height: 34,
+                    borderRadius: 10,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    background: selected
+                      ? "linear-gradient(135deg, #C9952A 0%, #E6C965 100%)"
+                      : "var(--app-soft)",
+                    color: selected ? "#131C39" : INK.muted,
+                    fontWeight: 800,
+                    fontSize: 14,
+                  }}
+                >
+                  {code === "ur" ? "اردو" : "EN"}
+                </span>
+                <Box>
+                  <Text fw={700} size="sm" style={{ color: INK.text }}>
+                    {meta.native}
+                  </Text>
+                  <Text size="xs" c="dimmed">
+                    {meta.label} · {meta.dir === "rtl" ? "RTL" : "LTR"}
+                  </Text>
+                </Box>
+              </Group>
+              {selected && <Check size={18} style={{ color: INK.gold }} />}
+            </Box>
+          );
+        })}
+      </Stack>
+
+      <Text size="xs" c="dimmed" mt="md">
+        {t("lang.note")}
+      </Text>
+    </Card>
   );
 }
 
@@ -180,6 +298,7 @@ function CompanyProfileTab() {
         address: values.address || null,
         taxNumber: values.taxNumber || null,
       });
+      reportOnboardingEvent({ type: "settings-saved" });
       setSuccess("Company profile updated.");
     } catch (err) {
       setError(getErrorMessage(err));
@@ -229,7 +348,11 @@ function CompanyProfileTab() {
             </Text>
           )}
           <Group justify="flex-end">
-            <Button type="submit" loading={saving}>
+            <Button
+              type="submit"
+              loading={saving}
+              data-tour="settings-save"
+            >
               Save Changes
             </Button>
           </Group>
@@ -581,7 +704,7 @@ function ThemeBrandingTab() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
-  const { setColorScheme } = useAppTheme();
+  const { colorScheme, setColorScheme } = useAppTheme();
 
   const form = useForm({
     initialValues: DEFAULT_THEME,
@@ -598,10 +721,12 @@ function ThemeBrandingTab() {
   useEffect(() => {
     getTheme()
       .then((t) => {
-        form.setValues(t);
-        if (t.colorScheme) {
-          setColorScheme(t.colorScheme as "light" | "dark" | "auto");
-        }
+        // Only fill the form — do NOT call setColorScheme here. Applying the
+        // persisted company scheme on every visit would silently revert a dark
+        // theme to light just by opening Settings. The scheme only changes when
+        // the user picks it in the Color Scheme dropdown below; the dropdown
+        // mirrors the live scheme so it never disagrees with the topbar toggle.
+        form.setValues({ ...t, colorScheme });
         setLoading(false);
       })
       .catch((err) => {

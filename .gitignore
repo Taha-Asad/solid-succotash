@@ -22,3 +22,8 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Downloaded OCR engine (staged by scripts/fetch-tesseract.mjs)
+scripts/.cache/
+src-tauri/bin/tesseract/*
+!src-tauri/bin/tesseract/.gitkeep

@@ -1110,6 +1110,8 @@ pub async fn finalize_invoice(
     )
     .await;
 
+    crate::commands::notifications::emit_notifications_changed();
+
     Ok(updated)
 }
 
@@ -1265,6 +1267,8 @@ pub async fn record_payment(
         ),
     )
     .await;
+
+    crate::commands::notifications::emit_notifications_changed();
 
     Ok(updated)
 }

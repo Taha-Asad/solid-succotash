@@ -184,7 +184,7 @@ function TrialBalance() {
           <Stack gap={0}>
             <Text fw={700} style={{ color: INK.text }}>Trial Balance</Text>
             <Text size="xs" c="dimmed">
-              Sum of debits must equal sum of credits
+              Debit/Credit show every posting (e.g. sale + payment); Balance shows net position
             </Text>
           </Stack>
           <Group>

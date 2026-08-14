@@ -1,13 +1,13 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicehash/tauri/dev/crates/tauri-cli/schema.json",
   "productName": "Ijaz & Company ERP",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "identifier": "com.ijazandcompany.erp",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
     "beforeDevCommand": "npm run dev",
-    "beforeBuildCommand": "npm run build"
+    "beforeBuildCommand": "npm run build && npm run fetch-tesseract"
   },
   "app": {
     "withGlobalTauri": true,
@@ -31,6 +31,9 @@
     "active": true,
     "targets": ["nsis", "app"],
     "createUpdaterArtifacts": true,
+    "resources": {
+      "bin/tesseract": "tesseract"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

@@ -23,7 +23,9 @@ use calamine::{open_workbook_auto_from_rs, Data, Reader};
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use std::io::Cursor;
-use tauri::State;
+use std::path::PathBuf;
+use std::sync::OnceLock;
+use tauri::{AppHandle, Emitter, Manager, State};
 
 // ==========================================
 // TYPES
@@ -39,10 +41,49 @@ pub struct FileAnalysis {
     pub sample_rows: Vec<Vec<String>>,
     /// Total data rows (excluding header)
     pub total_rows: usize,
-    /// "xlsx", "csv", or "docx"
+    /// "xlsx", "csv", "docx", "pdf", "png", "jpg", or "jpeg"
     pub file_type: String,
     /// Rust's proposed mapping for each column
     pub proposed_mappings: Vec<FieldMapping>,
+    /// The mapping Rust would have proposed WITHOUT an auto-matched template.
+    /// `proposed_mappings` may have been replaced by a template's mappings
+    /// (spec §23.5); this keeps the generic proposals so the frontend can let
+    /// the user "clear the template" and go back to header detection.
+    pub generic_mappings: Vec<FieldMapping>,
+    /// When a saved per-target template matched this file's headers, its id.
+    /// The frontend uses this to show "auto-detected template" and to skip
+    /// asking the user to re-map (spec §23.5).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_template_id: Option<String>,
+    /// Name of the auto-matched template (same as `auto_template_id`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_template_name: Option<String>,
+}
+
+/// A reusable per-target mapping template (spec §23.5).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportTemplate {
+    pub id: String,
+    pub company_id: String,
+    pub template_name: String,
+    /// Stored value ("xlsx" or "csv" — other formats are normalised on save
+    /// because the legacy `import_templates.file_type` column has a CHECK
+    /// constraint that only allows those two).
+    pub file_type: String,
+    pub column_mappings: Vec<FieldMapping>,
+    pub has_header_row: bool,
+    /// What import target this template maps ("products", "customers", ...).
+    #[serde(default)]
+    pub target: String,
+    /// How many times this template has been auto-reused.
+    #[serde(default)]
+    pub use_count: i64,
+    /// ISO timestamp of the most recent reuse (NULL until used).
+    #[serde(default)]
+    pub last_used_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
 }
 
 /// A proposed mapping for one column
@@ -104,6 +145,9 @@ pub struct ImportRequest {
     pub file_type: String,
     /// Optional template name to save
     pub template_name: String,
+    /// Whether the file has a header row (defaults to true).
+    #[serde(default = "default_has_header_row")]
+    pub has_header_row: bool,
     /// Should we import the data rows too?
     pub import_data: bool,
     /// How existing SKU / name collisions are handled.
@@ -122,8 +166,12 @@ fn default_import_target() -> String {
     "products".to_string()
 }
 
+fn default_has_header_row() -> bool {
+    true
+}
+
 /// Result of the import operation
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImportResult {
     /// How many custom field definitions were created (products only)
@@ -144,7 +192,7 @@ pub struct ImportResult {
     pub errors: Vec<ImportError>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImportError {
     pub row_number: usize,
@@ -152,8 +200,8 @@ pub struct ImportError {
 }
 
 /// A persisted import job (migration 009 `import_jobs`). Written by
-/// `execute_import`, read by `list_import_jobs`, and rolled back by
-/// `rollback_import`.
+/// `execute_import`, read by `list_import_jobs` / `get_import_job`, and rolled
+/// back by `rollback_import`.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImportJob {
@@ -162,10 +210,16 @@ pub struct ImportJob {
     pub file_name: Option<String>,
     /// "products" | "customers" | "opening_stock" | "suppliers"
     pub target: String,
+    /// "pending" | "processing" | "completed" | "failed" | "rolled_back"
     pub status: String,
     pub total_rows: i64,
+    /// Rows successfully imported (products + customers + items).
     pub processed_rows: i64,
+    /// Rows processed so far — numerator of the live progress bar.
+    pub attempted_rows: i64,
     pub error_rows: i64,
+    /// 0–100 progress estimate based on `attempted_rows` / `total_rows`.
+    pub progress: i64,
     pub error_details: Option<String>,
     pub created_by: String,
     pub created_at: String,
@@ -176,13 +230,109 @@ pub struct ImportJob {
     pub imported_records: i64,
 }
 
-/// Result of rolling back an import job.
+/// A polled snapshot of a running (or finished) import job.
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportJobStatus {
+    pub job: ImportJob,
+    /// The full result once the job reaches a terminal state, else `None`.
+    /// Lets the frontend render the same result screen as the old
+    /// synchronous `execute_import` flow.
+    pub result: Option<ImportResult>,
+}
+
+// ---------------------------------------------------------------------------
+// PUSH PROGRESS EVENTS (spec §23.8, desktop-adapted)
+//
+// The background import worker pushes live progress to the frontend through
+// the Tauri event system instead of the frontend polling `get_import_job`.
+// This is the desktop analogue of the spec's SSE stream: one event per
+// progress flush, one terminal event when the job finishes. The frontend
+// still has a light `get_import_job` safety re-sync in case an event is
+// missed (e.g. a tiny import that finished before the listener registered).
+// ---------------------------------------------------------------------------
+
+/// Event payload emitted on `import:progress` (live) and `import:complete`
+/// (terminal). Serialized camelCase to match the frontend types.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportProgressEvent {
+    pub job_id: String,
+    /// "processing" | "completed" | "failed"
+    pub status: String,
+    /// 0–100 estimate based on `attempted_rows` / `total_rows`.
+    pub progress: i64,
+    pub attempted_rows: i64,
+    pub processed_rows: i64,
+    pub error_rows: i64,
+    pub total_rows: i64,
+    pub errors: Vec<ImportError>,
+    /// Present on the terminal `import:complete` event.
+    pub result: Option<ImportResult>,
+}
+
+/// Global handle captured during app setup. The background worker uses it to
+/// emit progress events; it is `None` in unit tests (mock apps never run
+/// `.setup()`), where emissions are simply skipped.
+static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
+
+/// Resolved bundle layout for the Tesseract OCR engine shipped with the app
+/// (set during setup). When absent, OCR falls back to a `tesseract` on PATH.
+static OCR_BUNDLE: OnceLock<Option<TesseractBundle>> = OnceLock::new();
+
+/// Location of the Tesseract engine bundled as a Tauri resource.
+#[derive(Debug, Clone)]
+struct TesseractBundle {
+    /// Path to the tesseract executable (resource dir).
+    exe: PathBuf,
+    /// Bundled `tessdata` directory — fed to the engine via `TESSDATA_PREFIX`.
+    tessdata: Option<PathBuf>,
+}
+
+/// Initializes the app-wide services the import worker needs:
+///  1. captures the AppHandle so background tasks can emit push events,
+///  2. resolves the bundled Tesseract OCR engine (spec §23.2 Phase 2) so
+///     image/scanned-document import works without Tesseract on PATH.
+/// Called once from the Tauri setup hook in `lib.rs`.
+pub fn init_app_services(app: &AppHandle) {
+    let _ = APP_HANDLE.set(app.clone());
+    let _ = OCR_BUNDLE.set(resolve_tesseract_bundle(app));
+}
+
+fn resolve_tesseract_bundle(app: &AppHandle) -> Option<TesseractBundle> {
+    let resource_dir = app.path().resource_dir().ok()?;
+    let bundle_dir = resource_dir.join("tesseract");
+    let exe_name = if cfg!(target_os = "windows") {
+        "tesseract.exe"
+    } else {
+        "tesseract"
+    };
+    let exe = bundle_dir.join(exe_name);
+    if !exe.is_file() {
+        return None;
+    }
+    let tessdata = bundle_dir.join("tessdata");
+    Some(TesseractBundle {
+        exe,
+        tessdata: if tessdata.is_dir() {
+            Some(tessdata)
+        } else {
+            None
+        },
+    })
+}
+
+/// Result of rolling back an import job.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RollbackResult {
     pub products_deleted: i64,
     pub customers_deleted: i64,
     pub suppliers_deleted: i64,
+    /// Invoices + their line items removed (sales-invoice imports).
+    pub invoices_deleted: i64,
+    /// Purchase bills + their line items removed (purchase-bill imports).
+    pub purchase_bills_deleted: i64,
     pub movements_deleted: i64,
     pub batches_deleted: i64,
     pub quantity_reverted: i64,
@@ -193,6 +343,13 @@ const MAX_IMPORT_FILE_BYTES: usize = 50 * 1024 * 1024; // 50 MB
 const MAX_IMPORT_ROWS: usize = 100_000;
 /// How long after completion an import can be rolled back.
 const ROLLBACK_WINDOW_SECS: u64 = 24 * 60 * 60;
+
+// Import quotas (spec §23.10). File size and row count are enforced inline;
+// the concurrency and hourly caps are checked by `check_import_quotas`
+// before a background job is created.
+const MAX_CONCURRENT_JOBS_PER_COMPANY: i64 = 1;
+const MAX_JOBS_PER_HOUR_PER_COMPANY: i64 = 5;
+const QUOTA_HOUR_SECS: i64 = 3600;
 
 /// Local unix-timestamp string, matching the project's other timestamp helpers.
 fn import_timestamp(secs: u64) -> String {
@@ -212,7 +369,305 @@ fn now_unix() -> u64 {
 
 /// Supported import targets. The frontend lets the user pick one before
 /// uploading a file; each target has its own field mapping vocabulary.
-pub const IMPORT_TARGETS: [&str; 4] = ["products", "customers", "opening_stock", "suppliers"];
+///
+/// `invoices` / `purchase_bills` are the spec's primary historical-data
+/// targets (§23.2). They are imported as **records**: headers + line-item
+/// snapshots are written exactly as the file describes, but no stock,
+/// batch or ledger mutation happens — the opening-stock target owns the
+/// stock position, and imported history is always safe to roll back.
+pub const IMPORT_TARGETS: [&str; 6] = [
+    "products",
+    "customers",
+    "opening_stock",
+    "suppliers",
+    "invoices",
+    "purchase_bills",
+];
+
+// ==========================================
+// ERP MIGRATION ADAPTERS (spec §23.11)
+// ==========================================
+//
+// A pre-built registry of named ERP export formats. When a user picks an
+// adapter, `propose_mappings` pre-fills the field mapping from the ERP's
+// known column names so migration needs near-zero manual mapping work.
+
+/// A named ERP adapter shown in the wizard's "ERP system" selector.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ErpAdapterInfo {
+    pub key: String,
+    pub name: String,
+    pub description: String,
+}
+
+pub const ERP_ADAPTER_KEYS: [&str; 6] = [
+    "quickbooks_csv",
+    "quickbooks_online",
+    "odoo_csv",
+    "erpnext_csv",
+    "excel_generic",
+    "tally_csv",
+];
+
+/// Lists the pre-built ERP adapters (spec §23.11) the wizard can pre-fill
+/// mappings from. Adapters are stored as static definitions here and are
+/// applied at analyze time; no deployment is needed to adjust the alias
+/// vocabulary.
+#[tauri::command]
+pub async fn list_erp_adapters() -> Vec<ErpAdapterInfo> {
+    vec![
+        ErpAdapterInfo {
+            key: "quickbooks_csv".to_string(),
+            name: "QuickBooks Desktop".to_string(),
+            description: "Items, customers, vendors and sales invoices (CSV / IIF)".to_string(),
+        },
+        ErpAdapterInfo {
+            key: "quickbooks_online".to_string(),
+            name: "QuickBooks Online".to_string(),
+            description: "Products, customers and invoices exported as CSV".to_string(),
+        },
+        ErpAdapterInfo {
+            key: "odoo_csv".to_string(),
+            name: "Odoo".to_string(),
+            description: "Product, partner (customer/vendor) and invoice CSV exports".to_string(),
+        },
+        ErpAdapterInfo {
+            key: "erpnext_csv".to_string(),
+            name: "ERPNext".to_string(),
+            description: "Item, customer and sales-invoice CSV exports".to_string(),
+        },
+        ErpAdapterInfo {
+            key: "excel_generic".to_string(),
+            name: "MS Excel (generic)".to_string(),
+            description: "Generic invoice spreadsheet — the spec's alias dictionary (§23.5)".to_string(),
+        },
+        ErpAdapterInfo {
+            key: "tally_csv".to_string(),
+            name: "Tally".to_string(),
+            description: "Stock items / inventory master CSV exports".to_string(),
+        },
+    ]
+}
+
+/// The adapter's known column names for a target, as
+/// `(target_field, alias column names)`. Column names are matched against
+/// normalized headers, so casing/punctuation differences are tolerated.
+fn erp_adapter_fields<'a>(
+    adapter: &str,
+    target: &str,
+) -> Vec<(&'a str, &'a [&'a str])> {
+    let fields: &[(&'a str, &'a [&'a str])] = match (adapter, target) {
+        // ---- QuickBooks Desktop / Online: items, customers, vendors ----
+        ("quickbooks_csv" | "quickbooks_online", "products") => &[
+            ("name", &["name", "item", "item name", "product name"]),
+            (
+                "sku",
+                &["part number", "partnumber", "sku", "item code", "code"],
+            ),
+            (
+                "quantity_in_stock",
+                &["qty on hand", "quantity on hand", "on hand", "qty"],
+            ),
+            ("cost_price", &["purchase cost", "cost price", "cost"]),
+            (
+                "sell_price",
+                &["sales price", "selling price", "price", "rate"],
+            ),
+            ("unit", &["uom", "unit of measure", "unit"]),
+            (
+                "category",
+                &["class", "category", "income account", "account"],
+            ),
+            ("supplier", &["preferred vendor", "vendor"]),
+            ("tax_rate", &["tax rate", "tax percent", "tax"]),
+        ],
+        ("quickbooks_csv" | "quickbooks_online", "customers") => &[
+            (
+                "customer_name",
+                &["name", "customer", "customer name", "company name"],
+            ),
+            ("email", &["email", "email address"]),
+            (
+                "phone",
+                &["phone", "phone number", "phone no", "mobile"],
+            ),
+            (
+                "address",
+                &["bill address", "billing address", "address", "ship address"],
+            ),
+            ("ntn", &["tax id", "tax id number", "tax number", "vat reg"]),
+            (
+                "buyer_type",
+                &["customer type", "customer status", "status"],
+            ),
+        ],
+        ("quickbooks_csv" | "quickbooks_online", "suppliers") => &[
+            (
+                "supplier_name",
+                &["name", "supplier", "vendor", "vendor name", "company name"],
+            ),
+            ("contact_person", &["contact", "contact person", "contact name"]),
+            ("email", &["email", "email address"]),
+            ("phone", &["phone", "phone number", "phone no"]),
+            ("address", &["address", "billing address"]),
+            ("tax_number", &["tax id", "tax id number", "tax number", "vat"]),
+        ],
+        ("quickbooks_csv" | "quickbooks_online", "invoices") => &[
+            ("invoice_number", &["invoice no", "invoice number", "inv no", "inv number", "no"]),
+            ("invoice_date", &["invoice date", "inv date", "transaction date", "date"]),
+            ("customer_name", &["customer", "customer name", "buyer", "sold to"]),
+            ("product_sku", &["item", "item name", "item description", "product", "product name"]),
+            ("quantity", &["qty", "quantity"]),
+            ("unit_price", &["rate", "unit price", "price", "sales price"]),
+            ("tax_rate", &["tax rate", "tax percent", "tax"]),
+            ("total_amount", &["total", "grand total", "bill amount", "amount"]),
+            ("amount_paid", &["amount paid", "paid amount", "received amount"]),
+            ("status", &["status", "invoice status", "payment status"]),
+        ],
+
+        // ---- Odoo ----
+        ("odoo_csv", "products") => &[
+            ("name", &["name", "product name"]),
+            (
+                "sku",
+                &["internal reference", "default code", "sku", "product code"],
+            ),
+            ("cost_price", &["cost", "standard price", "cost price"]),
+            (
+                "sell_price",
+                &["list price", "sale price", "selling price"],
+            ),
+            (
+                "quantity_in_stock",
+                &["on hand quantity", "qty available", "quantity on hand", "stock quantity"],
+            ),
+            ("category", &["product category", "category", "categ"]),
+            ("unit", &["uom", "unit of measure", "internal uom"]),
+            ("supplier", &["vendor", "seller"]),
+            ("tax_rate", &["taxes", "tax rate", "tax"]),
+        ],
+        ("odoo_csv", "customers") => &[
+            ("customer_name", &["name", "customer", "customer name", "partner", "partner name"]),
+            ("email", &["email", "email address"]),
+            ("phone", &["phone", "phone number", "mobile", "mobile number"]),
+            ("address", &["street", "address", "street2", "billing address"]),
+            ("ntn", &["tax id", "vat", "tax number", "vat number"]),
+        ],
+        ("odoo_csv", "suppliers") => &[
+            ("supplier_name", &["name", "supplier", "vendor", "vendor name", "partner"]),
+            ("contact_person", &["contact", "contact person", "contact name"]),
+            ("email", &["email", "email address"]),
+            ("phone", &["phone", "phone number", "mobile"]),
+            ("address", &["street", "address", "billing address"]),
+            ("tax_number", &["tax id", "vat", "tax number"]),
+        ],
+        ("odoo_csv", "invoices") => &[
+            ("invoice_number", &["name", "number", "invoice number", "invoice no", "reference"]),
+            ("invoice_date", &["invoice date", "date", "billing date", "invoice date invoice"]),
+            ("customer_name", &["partner", "customer", "customer name", "partner name"]),
+            ("product_sku", &["product", "product name", "item", "sku"]),
+            ("quantity", &["quantity", "qty"]),
+            ("unit_price", &["unit price", "price unit", "price", "rate"]),
+            ("tax_rate", &["tax", "taxes", "tax rate"]),
+            ("total_amount", &["amount total", "total", "grand total", "amount"]),
+            ("amount_paid", &["amount paid", "paid amount", "residual", "amount due"]),
+            ("status", &["status", "invoice status", "payment status"]),
+        ],
+
+        // ---- ERPNext ----
+        ("erpnext_csv", "products") => &[
+            ("sku", &["item code", "item_code", "sku", "item"]),
+            ("name", &["item name", "item_name", "name", "item description"]),
+            ("cost_price", &["valuation rate", "valuation_rate", "cost price", "cost"]),
+            ("sell_price", &["standard rate", "standard_rate", "price", "selling rate", "sales rate"]),
+            (
+                "quantity_in_stock",
+                &["actual quantity", "actual_qty", "quantity on hand", "on hand", "qty"],
+            ),
+            ("category", &["item group", "item_group", "category"]),
+            ("unit", &["stock uom", "stock_uom", "uom", "unit of measure"]),
+            ("supplier", &["supplier", "vendor"]),
+        ],
+        ("erpnext_csv", "customers") => &[
+            ("customer_name", &["customer name", "customer_name", "name", "customer"]),
+            ("email", &["email id", "email_id", "email", "email address"]),
+            ("phone", &["mobile no", "mobile_no", "phone", "mobile number"]),
+            ("address", &["address", "billing address", "territory"]),
+        ],
+        ("erpnext_csv", "suppliers") => &[
+            ("supplier_name", &["supplier name", "supplier_name", "name", "supplier"]),
+            ("contact_person", &["contact", "contact person", "contact name"]),
+            ("email", &["email id", "email_id", "email"]),
+            ("phone", &["mobile no", "mobile_no", "phone"]),
+            ("address", &["address", "billing address"]),
+        ],
+        ("erpnext_csv", "invoices") => &[
+            ("invoice_number", &["name", "invoice number", "invoice no", "reference"]),
+            ("invoice_date", &["posting date", "posting_date", "invoice date", "date"]),
+            ("customer_name", &["customer", "customer name"]),
+            ("product_sku", &["item code", "item_code", "item", "product"]),
+            ("quantity", &["qty", "quantity"]),
+            ("unit_price", &["rate", "unit price", "price"]),
+            ("tax_rate", &["tax", "tax rate", "taxes"]),
+            ("total_amount", &["grand total", "total", "amount", "net total"]),
+            ("amount_paid", &["amount paid", "paid amount", "outstanding amount"]),
+            ("status", &["status", "invoice status"]),
+        ],
+
+        // ---- MS Excel generic invoice (spec §23.5 alias dictionary) ----
+        ("excel_generic", "invoices") => &[
+            (
+                "customer_name",
+                &["buyer", "client", "customer", "purchaser", "sold to", "customer name"],
+            ),
+            (
+                "total_amount",
+                &["amount", "total", "amt", "grand total", "bill amount", "total amount"],
+            ),
+            (
+                "invoice_date",
+                &["date", "inv date", "invoice date", "billing date"],
+            ),
+            (
+                "invoice_number",
+                &["inv #", "invoice no", "invoice number", "ref", "reference"],
+            ),
+        ],
+
+        // ---- Tally ----
+        ("tally_csv", "products") => &[
+            ("name", &["name", "stock item", "item name", "item"]),
+            ("sku", &["sku", "code", "item code", "part number"]),
+            (
+                "quantity_in_stock",
+                &["opening quantity", "opening qty", "quantity", "closing quantity", "on hand"],
+            ),
+            ("cost_price", &["opening rate", "purchase price", "rate", "cost price", "valuation rate"]),
+            ("sell_price", &["sales price", "selling price", "rate"]),
+            ("unit", &["units", "uom", "unit", "unit of measure"]),
+        ],
+        ("tally_csv", "invoices") => &[
+            ("invoice_number", &["invoice no", "invoice number", "voucher no", "voucher number", "ref"]),
+            ("invoice_date", &["date", "invoice date", "voucher date", "billing date"]),
+            ("customer_name", &["customer", "customer name", "party", "buyer", "sold to"]),
+            ("product_sku", &["item", "item name", "product", "stock item", "sku"]),
+            ("quantity", &["qty", "quantity"]),
+            ("unit_price", &["rate", "unit price", "price", "amount"]),
+            ("tax_rate", &["tax rate", "tax", "gst", "vat"]),
+            ("total_amount", &["total", "grand total", "bill amount", "amount"]),
+            ("status", &["status", "voucher type", "type"]),
+        ],
+
+        _ => &[],
+    };
+    fields.to_vec()
+}
+
+/// Whether an adapter key is registered.
+fn is_valid_adapter(adapter: &str) -> bool {
+    ERP_ADAPTER_KEYS.contains(&adapter)
+}
 
 // ==========================================
 // STEP 1: ANALYZE THE FILE
@@ -229,8 +684,9 @@ pub async fn analyze_import_file(
     file_bytes: Vec<u8>,
     file_type: String,
     target: Option<String>,
+    adapter: Option<String>,
 ) -> Result<FileAnalysis, String> {
-    let _current_user = require_current_user(pool.inner(), session.inner()).await?;
+    let current_user = require_current_user(pool.inner(), session.inner()).await?;
 
     let target = target.unwrap_or_else(|| "products".to_string());
     if !IMPORT_TARGETS.contains(&target.as_str()) {
@@ -238,6 +694,15 @@ pub async fn analyze_import_file(
             "Unknown import target '{target}'. Supported: {}",
             IMPORT_TARGETS.join(", ")
         ));
+    }
+
+    if let Some(adapter) = adapter.as_deref() {
+        if !adapter.is_empty() && !is_valid_adapter(adapter) {
+            return Err(format!(
+                "Unknown ERP adapter '{adapter}'. Supported: {}",
+                ERP_ADAPTER_KEYS.join(", ")
+            ));
+        }
     }
 
     if file_bytes.is_empty() {
@@ -252,18 +717,50 @@ pub async fn analyze_import_file(
         ));
     }
 
-    match file_type.as_str() {
-        "xlsx" | "xls" => analyze_excel(file_bytes, &target).await,
-        "csv" => analyze_csv(file_bytes, &target).await,
-        "docx" => analyze_docx(file_bytes, &target).await,
-        _ => Err(format!(
-            "Unsupported file type: {file_type}. Supported: xlsx, xls, csv, docx"
-        )),
+    let mut analysis = match file_type.as_str() {
+        "xlsx" | "xls" => analyze_excel(file_bytes, &target, adapter.as_deref()).await?,
+        "csv" => analyze_csv(file_bytes, &target, adapter.as_deref()).await?,
+        "docx" => analyze_docx(file_bytes, &target, adapter.as_deref()).await?,
+        "pdf" => analyze_pdf(file_bytes, &target, adapter.as_deref()).await?,
+        "png" | "jpg" | "jpeg" => analyze_image(file_bytes, &target, adapter.as_deref()).await?,
+        _ => {
+            return Err(format!(
+                "Unsupported file type: {file_type}. Supported: xlsx, xls, csv, docx, pdf, \
+                 png, jpg"
+            ));
+        }
+    };
+
+    // Spec §23.5 auto-map: when no ERP adapter is pinned and a saved per-target
+    // template matches this file's headers, reuse its mappings instead of the
+    // generic proposals.
+    let generic_mappings = analysis.proposed_mappings.clone();
+    if adapter.as_deref().is_none_or(|a| a.is_empty()) {
+        if let Some(template) = match_import_template(
+            pool.inner(),
+            current_user.company_id.as_deref().unwrap_or(""),
+            &target,
+            &analysis.headers,
+        )
+        .await?
+        {
+            analysis.auto_template_id = Some(template.id.clone());
+            analysis.auto_template_name = Some(template.template_name.clone());
+            analysis.proposed_mappings = template.column_mappings.clone();
+            bump_template_usage(pool.inner(), &template.id).await;
+        }
     }
+    analysis.generic_mappings = generic_mappings;
+
+    Ok(analysis)
 }
 
 /// Reads an Excel file and returns analysis
-async fn analyze_excel(file_bytes: Vec<u8>, target: &str) -> Result<FileAnalysis, String> {
+async fn analyze_excel(
+    file_bytes: Vec<u8>,
+    target: &str,
+    adapter: Option<&str>,
+) -> Result<FileAnalysis, String> {
     let cursor = Cursor::new(file_bytes);
     let mut workbook = open_workbook_auto_from_rs(cursor)
         .map_err(|e| format!("Failed to read Excel file: {e}"))?;
@@ -298,19 +795,26 @@ async fn analyze_excel(file_bytes: Vec<u8>, target: &str) -> Result<FileAnalysis
     let sample_rows: Vec<Vec<String>> = data_rows.iter().take(5).cloned().collect();
 
     // Propose mappings
-    let proposed_mappings = propose_mappings(target, &headers);
+    let proposed_mappings = propose_mappings(target, adapter, &headers);
 
     Ok(FileAnalysis {
         headers,
         sample_rows,
         total_rows,
         file_type: "xlsx".to_string(),
+        generic_mappings: proposed_mappings.clone(),
         proposed_mappings,
+        auto_template_id: None,
+        auto_template_name: None,
     })
 }
 
 /// Reads a CSV file and returns analysis
-async fn analyze_csv(file_bytes: Vec<u8>, target: &str) -> Result<FileAnalysis, String> {
+async fn analyze_csv(
+    file_bytes: Vec<u8>,
+    target: &str,
+    adapter: Option<&str>,
+) -> Result<FileAnalysis, String> {
     let cursor = Cursor::new(file_bytes);
     let mut rdr = csv::ReaderBuilder::new()
         .has_headers(true)
@@ -332,14 +836,17 @@ async fn analyze_csv(file_bytes: Vec<u8>, target: &str) -> Result<FileAnalysis, 
 
     let total_rows = data_rows.len();
     let sample_rows: Vec<Vec<String>> = data_rows.iter().take(5).cloned().collect();
-    let proposed_mappings = propose_mappings(target, &headers);
+    let proposed_mappings = propose_mappings(target, adapter, &headers);
 
     Ok(FileAnalysis {
         headers,
         sample_rows,
         total_rows,
         file_type: "csv".to_string(),
+        generic_mappings: proposed_mappings.clone(),
         proposed_mappings,
+        auto_template_id: None,
+        auto_template_name: None,
     })
 }
 
@@ -348,7 +855,11 @@ async fn analyze_csv(file_bytes: Vec<u8>, target: &str) -> Result<FileAnalysis, 
 /// A .docx file is actually a ZIP containing XML files.
 /// The main content lives in word/document.xml.
 /// Word tables use <w:tbl>, <w:tr> (row), <w:tc> (cell) tags.
-async fn analyze_docx(file_bytes: Vec<u8>, target: &str) -> Result<FileAnalysis, String> {
+async fn analyze_docx(
+    file_bytes: Vec<u8>,
+    target: &str,
+    adapter: Option<&str>,
+) -> Result<FileAnalysis, String> {
     // Unused here — the XML parsing was extracted into parse_docx_table().
     // use quick_xml::events::Event;
     // use quick_xml::Reader as XmlReader;
@@ -385,15 +896,68 @@ async fn analyze_docx(file_bytes: Vec<u8>, target: &str) -> Result<FileAnalysis,
     let data_rows = all_rows[1..].to_vec();
     let total_rows = data_rows.len();
     let sample_rows: Vec<Vec<String>> = data_rows.iter().take(5).cloned().collect();
-    let proposed_mappings = propose_mappings(target, &headers);
+    let proposed_mappings = propose_mappings(target, adapter, &headers);
 
     Ok(FileAnalysis {
         headers,
         sample_rows,
         total_rows,
         file_type: "docx".to_string(),
+        generic_mappings: proposed_mappings.clone(),
         proposed_mappings,
+        auto_template_id: None,
+        auto_template_name: None,
     })
+}
+
+/// Analyzes a PDF file (spec §23.2 Phase 2). Text-based PDFs (PDFs with a
+/// text layer, e.g. ERP/accounting exports) are extracted directly. Scanned
+/// PDFs without a text layer are rejected with guidance — they need OCR.
+async fn analyze_pdf(
+    file_bytes: Vec<u8>,
+    target: &str,
+    adapter: Option<&str>,
+) -> Result<FileAnalysis, String> {
+    let all_rows = read_pdf_rows(&file_bytes)?;
+    Ok(build_text_analysis(all_rows, "pdf", target, adapter))
+}
+
+/// Analyzes an image file (spec §23.2 Phase 2) by running OCR over it.
+/// Requires Tesseract OCR to be installed and reachable on PATH.
+async fn analyze_image(
+    file_bytes: Vec<u8>,
+    target: &str,
+    adapter: Option<&str>,
+) -> Result<FileAnalysis, String> {
+    let all_rows = read_image_rows(&file_bytes)?;
+    Ok(build_text_analysis(all_rows, "png", target, adapter))
+}
+
+/// Shared analysis for text-derived formats (pdf / images via OCR): first row
+/// is the header, the rest are data rows, and mappings are proposed from the
+/// headers.
+fn build_text_analysis(
+    all_rows: Vec<Vec<String>>,
+    file_type: &str,
+    target: &str,
+    adapter: Option<&str>,
+) -> FileAnalysis {
+    let headers = all_rows[0].clone();
+    let data_rows = all_rows[1..].to_vec();
+    let total_rows = data_rows.len();
+    let sample_rows: Vec<Vec<String>> = data_rows.iter().take(5).cloned().collect();
+    let proposed_mappings = propose_mappings(target, adapter, &headers);
+
+    FileAnalysis {
+        headers,
+        sample_rows,
+        total_rows,
+        file_type: file_type.to_string(),
+        generic_mappings: proposed_mappings.clone(),
+        proposed_mappings,
+        auto_template_id: None,
+        auto_template_name: None,
+    }
 }
 
 // ==========================================
@@ -417,6 +981,50 @@ pub async fn execute_import(
         .ok_or("You are not assigned to a company")?;
 
     let target = request.target.as_str();
+    let (all_rows, _data_rows) = prepare_import(pool.inner(), company_id, &request).await?;
+
+    // ---- Dry-run preview: validate every row, write nothing ----
+    if request.dry_run {
+        return run_dry_run(pool.inner(), company_id, target, &request, &all_rows).await;
+    }
+
+    // ---- Setup-only run: custom fields + template, no data, no job ----
+    // No rows are written so there is nothing to track or roll back; run
+    // synchronously because it is effectively instant.
+    if !request.import_data {
+        let fields_created = create_product_custom_fields(pool.inner(), company_id, &request).await;
+        save_import_template(pool.inner(), company_id, &request).await;
+        return Ok(ImportResult {
+            fields_created,
+            products_imported: 0,
+            customers_imported: 0,
+            items_imported: 0,
+            rows_with_errors: 0,
+            rows_skipped: 0,
+            job_id: None,
+            errors: Vec::new(),
+        });
+    }
+
+    // ---- Confirm gate (spec §23.3) ----
+    // Data is only ever committed through `confirm_import`, after the user has
+    // reviewed the preview and explicitly confirmed. Refusing a bare commit
+    // here means the first action on a file (upload/analyze/preview) can never
+    // start writing rows.
+    Err(
+        "Import not confirmed. Preview the file first, then call confirm_import to commit."
+            .to_string(),
+    )
+}
+
+/// Shared validation + row reading used by both the preview (`execute_import`)
+/// and the confirmed commit (`confirm_import`).
+async fn prepare_import(
+    _pool: &SqlitePool,
+    _company_id: &str,
+    request: &ImportRequest,
+) -> Result<(Vec<Vec<String>>, usize), String> {
+    let target = request.target.as_str();
     if !IMPORT_TARGETS.contains(&target) {
         return Err(format!(
             "Unknown import target '{target}'. Supported: {}",
@@ -439,6 +1047,8 @@ pub async fn execute_import(
             "xlsx" | "xls" => read_excel_rows(&request.file_bytes)?,
             "csv" => read_csv_rows(&request.file_bytes)?,
             "docx" => read_docx_rows(&request.file_bytes)?,
+            "pdf" => read_pdf_rows(&request.file_bytes)?,
+            "png" | "jpg" | "jpeg" => read_image_rows(&request.file_bytes)?,
             _ => {
                 return Err("Unsupported file type".to_string());
             }
@@ -454,173 +1064,220 @@ pub async fn execute_import(
         ));
     }
 
-    // ---- Dry-run preview: validate every row, write nothing ----
+    Ok((all_rows, data_rows))
+}
+
+/// Commits an import after the user confirmed the preview (spec §23.3).
+///
+/// This is the only command that creates an `import_jobs` row and starts the
+/// background worker. It is invoked from the wizard's dedicated "Confirm &
+/// Import" action — never from the preview/analysis step, so a file is never
+/// committed by the user's first action.
+#[tauri::command]
+pub async fn confirm_import(
+    pool: State<'_, SqlitePool>,
+    session: State<'_, SessionState>,
+    request: ImportRequest,
+) -> Result<ImportResult, String> {
+    let current_user = require_current_user(pool.inner(), session.inner()).await?;
+
+    let company_id = current_user
+        .company_id
+        .as_ref()
+        .ok_or("You are not assigned to a company")?;
+
+    if !request.import_data {
+        return Err(
+            "confirm_import requires import_data = true (nothing to commit otherwise)."
+                .to_string(),
+        );
+    }
     if request.dry_run {
-        return run_dry_run(pool.inner(), company_id, target, &request, &all_rows).await;
+        return Err(
+            "confirm_import cannot run a preview. Use execute_import with dry_run = true to preview, then confirm here."
+                .to_string(),
+        );
     }
 
-    let strategy = request.conflict_strategy;
+    let (all_rows, data_rows) = prepare_import(pool.inner(), company_id, &request).await?;
 
-    // ---- 1. Create the import job (enables rollback) ----
-    // Only record a job when data is actually being written; template/custom
-    // field setup without import data has nothing to roll back.
-    let job_id: Option<String> = if request.import_data {
-        Some(
-            create_import_job(
-                pool.inner(),
-                company_id,
-                &current_user,
-                &request,
-                data_rows,
-            )
-            .await?,
+    // ---- Quotas (spec §23.10) ----
+    // Concurrency + hourly caps are only checked at commit time — analyzing
+    // and previewing a file never creates a job, so it is never blocked.
+    check_import_quotas(pool.inner(), company_id).await?;
+
+    // ---- Background job: create the job, spawn the worker, return now ----
+    // The worker drives `pending -> processing -> completed|failed` and the
+    // frontend polls `get_import_job` for live progress. Counts are unknown
+    // at submit time, so the returned ImportResult carries only the job id.
+    let job_id = create_import_job(pool.inner(), company_id, &current_user, &request, data_rows)
+        .await?;
+
+    let worker_pool = pool.inner().clone();
+    let worker_company = company_id.clone();
+    let user_id = current_user.id.clone();
+    let user_email = current_user.email.clone();
+    let user_role = current_user.role.clone();
+    let worker_job_id = job_id.clone();
+    // Push-progress channel (spec §23.8): the worker emits `import:progress`
+    // / `import:complete` events through the app handle captured at setup.
+    // None in unit tests, where the worker simply skips emissions.
+    let app_handle = APP_HANDLE.get().cloned();
+
+    tokio::spawn(async move {
+        run_import_job(
+            app_handle,
+            worker_pool,
+            worker_company,
+            user_id,
+            user_email,
+            user_role,
+            request,
+            all_rows,
+            worker_job_id,
         )
-    } else {
-        None
-    };
+        .await;
+    });
 
-    // ---- 2. Create custom field definitions (products only) ----
+    Ok(ImportResult {
+        fields_created: 0,
+        products_imported: 0,
+        customers_imported: 0,
+        items_imported: 0,
+        rows_with_errors: 0,
+        rows_skipped: 0,
+        job_id: Some(job_id),
+        errors: Vec::new(),
+    })
+}
+
+// ==========================================
+// BACKGROUND IMPORT WORKER (spec §23.3 / §23.8)
+// ==========================================
+//
+// confirm_import hands the file off to a tokio task. The worker:
+//   1. flips the job to `processing` (started_at set),
+//   2. creates product custom fields + saves the import template,
+//   3. streams the rows, flushing `attempted_rows`/`processed_rows`/
+//      `error_rows` every 10 rows so a polling client sees a moving bar,
+//   4. finalizes to `completed` (or `failed` when every row errored),
+//      storing the full ImportResult as `result_json`,
+//   5. writes the audit trail.
+
+#[allow(clippy::too_many_arguments)]
+async fn run_import_job(
+    app_handle: Option<AppHandle>,
+    pool: SqlitePool,
+    company_id: String,
+    user_id: String,
+    user_email: String,
+    user_role: String,
+    request: ImportRequest,
+    all_rows: Vec<Vec<String>>,
+    job_id: String,
+) {
+    // ---- 1. Mark the job as running ----
+    let _ = sqlx::query(
+        "UPDATE import_jobs SET status = 'processing', started_at = ? WHERE id = ?",
+    )
+    .bind(import_timestamp(now_unix()))
+    .bind(&job_id)
+    .execute(&pool)
+    .await;
+
+    let total_rows = all_rows.len().saturating_sub(1) as i64;
+
+    // ---- 2. Custom field definitions (products only) ----
     // Customers, suppliers and opening stock have no free-form custom fields.
-    let mut fields_created = 0;
-    if target == "products" {
-        let custom_mappings: Vec<&FieldMapping> = request
-            .mappings
-            .iter()
-            .filter(|m| m.field_category == "custom")
-            .collect();
-
-        for mapping in &custom_mappings {
-            // Extract the field name from "custom:<name>"
-            let field_name = mapping
-                .target_field
-                .strip_prefix("custom:")
-                .unwrap_or(&mapping.target_field);
-
-            let field_label = mapping.source_column.clone();
-
-            // Detect field type from sample data
-            let field_type = detect_field_type(&request, mapping);
-
-            let id = uuid::Uuid::new_v4().to_string();
-            let order = fields_created as i64;
-
-            // Insert or update the field setting
-            let result = sqlx::query(
-                r#"
-                INSERT INTO company_field_settings
-                    (id, company_id, field_name, field_label, field_type,
-                     is_visible, field_order)
-                VALUES (?, ?, ?, ?, ?, 1, ?)
-                ON CONFLICT(company_id, field_name) DO UPDATE SET
-                    field_label = excluded.field_label,
-                    field_type = excluded.field_type,
-                    field_order = excluded.field_order,
-                    updated_at = CURRENT_TIMESTAMP
-                "#,
-            )
-            .bind(&id)
-            .bind(company_id)
-            .bind(field_name)
-            .bind(&field_label)
-            .bind(&field_type)
-            .bind(order)
-            .execute(pool.inner())
-            .await;
-
-            match result {
-                Ok(_) => {
-                    fields_created += 1;
-                }
-                Err(e) => {
-                    // Log but don't fail the whole import
-                    eprintln!("Warning: failed to create field '{field_name}': {e}");
-                }
-            }
-        }
-    }
+    let fields_created = create_product_custom_fields(&pool, &company_id, &request).await;
 
     // ---- 3. Save import template (if name provided) ----
-    if !request.template_name.is_empty() {
-        let template_id = uuid::Uuid::new_v4().to_string();
-        let mappings_json =
-            serde_json::to_string(&request.mappings).unwrap_or_else(|_| "{}".to_string());
-
-        let _ = sqlx::query(
-            r#"
-            INSERT INTO import_templates
-                (id, company_id, template_name, file_type, column_mappings)
-            VALUES (?, ?, ?, ?, ?)
-            "#,
-        )
-        .bind(&template_id)
-        .bind(company_id)
-        .bind(&request.template_name)
-        .bind(&request.file_type)
-        .bind(&mappings_json)
-        .execute(pool.inner())
-        .await;
-    }
+    save_import_template(&pool, &company_id, &request).await;
 
     // ---- 4. Import data rows ----
+    let strategy = request.conflict_strategy;
+    let target = request.target.as_str();
     let mut products_imported = 0;
     let mut customers_imported = 0;
     let mut items_imported = 0;
     let mut rows_skipped = 0;
     let mut rows_with_errors = 0;
+    let mut attempted = 0usize;
     let mut errors: Vec<ImportError> = Vec::new();
 
     for (row_index, row) in all_rows.iter().skip(1).enumerate() {
         let row_number = row_index + 2; // +2 because: skip header, 1-indexed
+        attempted += 1;
 
         // Skip completely empty rows
         if row.iter().all(|cell| cell.trim().is_empty()) {
             continue;
         }
 
-        // When import_data is false the row loop is empty (all_rows is
-        // empty), so the job_id is always present here.
-        let jid = job_id.as_deref().unwrap_or_default();
-
         let outcome = match target {
             "customers" => {
                 import_one_customer_row(
-                    pool.inner(),
-                    company_id,
+                    &pool,
+                    &company_id,
                     &request.mappings,
                     row,
-                    jid,
+                    &job_id,
                     strategy,
                 )
                 .await
             }
             "opening_stock" => {
                 import_one_opening_stock_row(
-                    pool.inner(),
-                    company_id,
+                    &pool,
+                    &company_id,
                     &request.mappings,
                     row,
-                    jid,
+                    &job_id,
                 )
                 .await
             }
             "suppliers" => {
                 import_one_supplier_row(
-                    pool.inner(),
-                    company_id,
+                    &pool,
+                    &company_id,
                     &request.mappings,
                     row,
-                    jid,
+                    &job_id,
+                    strategy,
+                )
+                .await
+            }
+            "invoices" => {
+                import_one_invoice_row(
+                    &pool,
+                    &company_id,
+                    &user_id,
+                    &request.mappings,
+                    row,
+                    &job_id,
+                    strategy,
+                )
+                .await
+            }
+            "purchase_bills" => {
+                import_one_purchase_bill_row(
+                    &pool,
+                    &company_id,
+                    &user_id,
+                    &request.mappings,
+                    row,
+                    &job_id,
                     strategy,
                 )
                 .await
             }
             _ => {
                 import_one_row(
-                    pool.inner(),
-                    company_id,
+                    &pool,
+                    &company_id,
                     &request.mappings,
                     row,
-                    jid,
+                    &job_id,
                     strategy,
                 )
                 .await
@@ -630,8 +1287,9 @@ pub async fn execute_import(
         match outcome {
             Ok(true) => match target {
                 "customers" => customers_imported += 1,
-                "opening_stock" => items_imported += 1,
-                "suppliers" => items_imported += 1,
+                "opening_stock" | "suppliers" | "invoices" | "purchase_bills" => {
+                    items_imported += 1
+                }
                 _ => products_imported += 1,
             },
             Ok(false) => rows_skipped += 1, // conflict strategy said skip
@@ -654,55 +1312,505 @@ pub async fn execute_import(
                 }
             }
         }
+
+        // Live progress: flush the counters every 10 rows so the frontend
+        // sees a moving bar instead of a spinner. The final state is written
+        // once by finish_import_job below.
+        if attempted % 10 == 0 {
+            let processed = (products_imported + customers_imported + items_imported) as i64;
+            update_import_progress(&pool, &job_id, attempted, processed, rows_with_errors as i64)
+                .await;
+            emit_import_progress(
+                &app_handle,
+                &job_id,
+                "processing",
+                progress_percent(total_rows, attempted as i64),
+                attempted as i64,
+                processed,
+                rows_with_errors as i64,
+                total_rows,
+            );
+        }
     }
+
+    let imported = (products_imported + customers_imported + items_imported) as i64;
 
     // ---- 5. Finalize the job ----
-    if let Some(ref jid) = job_id {
-        finish_import_job(
-            pool.inner(),
-            jid,
-            (products_imported + customers_imported + items_imported) as i64,
-            rows_with_errors as i64,
-            &errors,
-        )
-        .await;
-    }
-
-    let entity = match target {
-        "customers" => "customers",
-        "opening_stock" => "opening stock rows",
-        "suppliers" => "suppliers",
-        _ => "products",
-    };
-    log_audit(
-        pool.inner(),
-        company_id,
-        &current_user.id,
-        &current_user.email,
-        &current_user.role,
-        "import",
-        entity,
-        None,
-        &format!(
-            "Imported {} {entity}, {} custom fields ({} error(s), {} skipped)",
-            products_imported + customers_imported + items_imported,
-            fields_created,
-            rows_with_errors,
-            rows_skipped
-        ),
-    )
-    .await;
-
-    Ok(ImportResult {
+    let result = ImportResult {
         fields_created,
         products_imported,
         customers_imported,
         items_imported,
         rows_with_errors,
         rows_skipped,
-        job_id,
-        errors,
-    })
+        job_id: Some(job_id.clone()),
+        errors: errors.clone(),
+    };
+    finish_import_job(&pool, &job_id, &result, attempted).await;
+
+    // ---- 5b. Push the terminal event (spec §23.8) ----
+    let final_status = if result.rows_with_errors > 0 && imported == 0 {
+        "failed"
+    } else {
+        "completed"
+    };
+    emit_import_complete(&app_handle, &job_id, final_status, &result, total_rows);
+
+    // Notify the notification bell so low-stock / expiring alerts reflect the
+    // freshly imported stock.
+    if final_status == "completed" {
+        crate::commands::notifications::emit_notifications_changed();
+    }
+
+    // ---- 6. Audit trail ----
+    let entity = match target {
+        "customers" => "customers",
+        "opening_stock" => "opening stock rows",
+        "suppliers" => "suppliers",
+        "invoices" => "invoices",
+        "purchase_bills" => "purchase bills",
+        _ => "products",
+    };
+    log_audit(
+        &pool,
+        &company_id,
+        &user_id,
+        &user_email,
+        &user_role,
+        "import",
+        entity,
+        None,
+        &format!(
+            "Imported {imported} {entity}, {fields_created} custom fields ({} error(s), {} skipped)",
+            rows_with_errors, rows_skipped
+        ),
+    )
+    .await;
+}
+
+/// 0–100 progress for a running job (`attempted` out of `total` rows).
+fn progress_percent(total_rows: i64, attempted_rows: i64) -> i64 {
+    if total_rows <= 0 {
+        return 0;
+    }
+    ((attempted_rows * 100) / total_rows).clamp(0, 100)
+}
+
+/// Pushes a live progress event to the frontend (spec §23.8). No-op when the
+/// app handle is unavailable (unit tests).
+fn emit_import_progress(
+    app_handle: &Option<AppHandle>,
+    job_id: &str,
+    status: &str,
+    progress: i64,
+    attempted_rows: i64,
+    processed_rows: i64,
+    error_rows: i64,
+    total_rows: i64,
+) {
+    if let Some(app) = app_handle {
+        let _ = app.emit(
+            "import:progress",
+            ImportProgressEvent {
+                job_id: job_id.to_string(),
+                status: status.to_string(),
+                progress,
+                attempted_rows,
+                processed_rows,
+                error_rows,
+                total_rows,
+                errors: Vec::new(),
+                result: None,
+            },
+        );
+    }
+}
+
+/// Pushes the terminal event carrying the full result (spec §23.8). No-op when
+/// the app handle is unavailable (unit tests).
+fn emit_import_complete(
+    app_handle: &Option<AppHandle>,
+    job_id: &str,
+    status: &str,
+    result: &ImportResult,
+    total_rows: i64,
+) {
+    if let Some(app) = app_handle {
+        let _ = app.emit(
+            "import:complete",
+            ImportProgressEvent {
+                job_id: job_id.to_string(),
+                status: status.to_string(),
+                progress: 100,
+                attempted_rows: result.products_imported as i64
+                    + result.customers_imported as i64
+                    + result.items_imported as i64
+                    + result.rows_skipped as i64
+                    + result.rows_with_errors as i64,
+                processed_rows: (result.products_imported
+                    + result.customers_imported
+                    + result.items_imported) as i64,
+                error_rows: result.rows_with_errors as i64,
+                total_rows,
+                errors: result.errors.clone(),
+                result: Some(result.clone()),
+            },
+        );
+    }
+}
+
+/// Creates/updates product custom-field settings (products target only).
+async fn create_product_custom_fields(
+    pool: &SqlitePool,
+    company_id: &str,
+    request: &ImportRequest,
+) -> usize {
+    if request.target != "products" {
+        return 0;
+    }
+
+    let custom_mappings: Vec<&FieldMapping> = request
+        .mappings
+        .iter()
+        .filter(|m| m.field_category == "custom")
+        .collect();
+
+    let mut fields_created = 0;
+    for mapping in &custom_mappings {
+        // Extract the field name from "custom:<name>"
+        let field_name = mapping
+            .target_field
+            .strip_prefix("custom:")
+            .unwrap_or(&mapping.target_field);
+
+        let field_label = mapping.source_column.clone();
+
+        // Detect field type from sample data
+        let field_type = detect_field_type(request, mapping);
+
+        let id = uuid::Uuid::new_v4().to_string();
+        let order = fields_created as i64;
+
+        // Insert or update the field setting
+        let result = sqlx::query(
+            r#"
+            INSERT INTO company_field_settings
+                (id, company_id, field_name, field_label, field_type,
+                 is_visible, field_order)
+            VALUES (?, ?, ?, ?, ?, 1, ?)
+            ON CONFLICT(company_id, field_name) DO UPDATE SET
+                field_label = excluded.field_label,
+                field_type = excluded.field_type,
+                field_order = excluded.field_order,
+                updated_at = CURRENT_TIMESTAMP
+            "#,
+        )
+        .bind(&id)
+        .bind(company_id)
+        .bind(field_name)
+        .bind(&field_label)
+        .bind(&field_type)
+        .bind(order)
+        .execute(pool)
+        .await;
+
+        match result {
+            Ok(_) => {
+                fields_created += 1;
+            }
+            Err(e) => {
+                // Log but don't fail the whole import
+                eprintln!("Warning: failed to create field '{field_name}': {e}");
+            }
+        }
+    }
+
+    fields_created
+}
+
+/// Saves the mapping as a reusable template (if a name was provided).
+///
+/// A template is scoped to (company, target, name): re-saving with the same
+/// name overwrites the stored mappings instead of inserting a duplicate row
+/// (the legacy table has no UNIQUE constraint we can add via ALTER, so the
+/// upsert lives here). Reusing a name also bumps `use_count` (spec §23.5).
+async fn save_import_template(pool: &SqlitePool, company_id: &str, request: &ImportRequest) {
+    if request.template_name.is_empty() {
+        return;
+    }
+
+    let mappings_json =
+        serde_json::to_string(&request.mappings).unwrap_or_else(|_| "{}".to_string());
+
+    // The legacy file_type column only allows 'xlsx' / 'csv' via CHECK.
+    let file_type = match request.file_type.as_str() {
+        "xlsx" | "csv" => request.file_type.clone(),
+        _ => "csv".to_string(),
+    };
+
+    let existing: Option<String> = sqlx::query_scalar(
+        "SELECT id FROM import_templates
+         WHERE company_id = ? AND target = ? AND template_name = ?",
+    )
+    .bind(company_id)
+    .bind(&request.target)
+    .bind(&request.template_name)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten();
+
+    let result = match existing {
+        Some(template_id) => {
+            sqlx::query(
+                r#"
+                UPDATE import_templates
+                SET column_mappings = ?, file_type = ?, has_header_row = ?,
+                    use_count = use_count + 1, last_used_at = CURRENT_TIMESTAMP,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                "#,
+            )
+            .bind(&mappings_json)
+            .bind(&file_type)
+            .bind(request.has_header_row as i32)
+            .bind(&template_id)
+            .execute(pool)
+            .await
+        }
+        None => {
+            let template_id = uuid::Uuid::new_v4().to_string();
+            sqlx::query(
+                r#"
+                INSERT INTO import_templates
+                    (id, company_id, template_name, file_type, column_mappings,
+                     has_header_row, target)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                "#,
+            )
+            .bind(&template_id)
+            .bind(company_id)
+            .bind(&request.template_name)
+            .bind(&file_type)
+            .bind(&mappings_json)
+            .bind(request.has_header_row as i32)
+            .bind(&request.target)
+            .execute(pool)
+            .await
+        }
+    };
+
+    if let Err(e) = result {
+        eprintln!("Warning: failed to save import template: {e}");
+    }
+}
+
+/// Returns the saved per-target templates for a company, newest first.
+/// `target` may be given to filter (usually the wizard's current import
+/// target). Used to power the template picker in the import wizard.
+#[tauri::command]
+pub async fn list_import_templates(
+    pool: tauri::State<'_, SqlitePool>,
+    session: tauri::State<'_, SessionState>,
+    target: Option<String>,
+) -> Result<Vec<ImportTemplate>, String> {
+    let current_user = require_current_user(pool.inner(), session.inner()).await?;
+    let company_id = current_user
+        .company_id
+        .as_deref()
+        .ok_or("You are not assigned to a company")?;
+
+    let templates = if let Some(target) = target {
+        sqlx::query_as::<_, ImportTemplateRow>(
+            "SELECT id, company_id, template_name, file_type, column_mappings,
+                    has_header_row, target, use_count, last_used_at, created_at, updated_at
+             FROM import_templates
+             WHERE company_id = ? AND target = ?
+             ORDER BY updated_at DESC",
+        )
+        .bind(company_id)
+        .bind(target)
+        .fetch_all(pool.inner())
+        .await
+    } else {
+        sqlx::query_as::<_, ImportTemplateRow>(
+            "SELECT id, company_id, template_name, file_type, column_mappings,
+                    has_header_row, target, use_count, last_used_at, created_at, updated_at
+             FROM import_templates
+             WHERE company_id = ?
+             ORDER BY updated_at DESC",
+        )
+        .bind(company_id)
+        .fetch_all(pool.inner())
+        .await
+    }
+    .map_err(|e| format!("Failed to list import templates: {e}"))?;
+
+    Ok(templates
+        .into_iter()
+        .map(ImportTemplateRow::into_model)
+        .collect::<Vec<ImportTemplate>>())
+}
+
+/// Deletes a saved import template. Returns the number of rows removed.
+#[tauri::command]
+pub async fn delete_import_template(
+    pool: tauri::State<'_, SqlitePool>,
+    session: tauri::State<'_, SessionState>,
+    template_id: String,
+) -> Result<u64, String> {
+    let current_user = require_current_user(pool.inner(), session.inner()).await?;
+    let company_id = current_user
+        .company_id
+        .as_deref()
+        .ok_or("You are not assigned to a company")?;
+
+    let result = sqlx::query("DELETE FROM import_templates WHERE id = ? AND company_id = ?")
+        .bind(&template_id)
+        .bind(company_id)
+        .execute(pool.inner())
+        .await
+        .map_err(|e| format!("Failed to delete import template: {e}"))?;
+    Ok(result.rows_affected())
+}
+
+/// Finds the best saved per-target template for a file whose headers match
+/// (spec §23.5 auto-map). A template matches when at least 2 of its mapped
+/// source columns appear in the file's headers and the overlap covers 60% of
+/// the template's columns. The strongest overlap wins; ties fall back to the
+/// most recently used template.
+async fn match_import_template(
+    pool: &SqlitePool,
+    company_id: &str,
+    target: &str,
+    headers: &[String],
+) -> Result<Option<ImportTemplate>, String> {
+    let rows = sqlx::query_as::<_, ImportTemplateRow>(
+        "SELECT id, company_id, template_name, file_type, column_mappings,
+                has_header_row, target, use_count, last_used_at, created_at, updated_at
+         FROM import_templates
+         WHERE company_id = ? AND target = ?",
+    )
+    .bind(company_id)
+    .bind(target)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("Failed to load import templates: {e}"))?;
+
+    let norm = |h: &String| {
+        h.trim()
+            .to_lowercase()
+            .replace([' ', '-', '_', '.'], "")
+    };
+
+    let file_headers: Vec<String> = headers.iter().map(norm).collect();
+    let mut best: Option<(usize, f64, i64, String, ImportTemplate)> = None;
+
+    for row in rows {
+        let template = row.into_model();
+        let mappings = template.column_mappings.clone();
+        if mappings.is_empty() {
+            continue;
+        }
+        let mapped: Vec<String> = mappings
+            .iter()
+            .map(|m| norm(&m.source_column))
+            .collect();
+        let hits = mapped
+            .iter()
+            .filter(|m| file_headers.iter().any(|h| h == *m))
+            .count();
+        if hits >= 2 {
+            let ratio = hits as f64 / mapped.len() as f64;
+            if ratio >= 0.6 {
+                let freshness = template.last_used_at.clone().unwrap_or_default();
+                let candidate = (hits, ratio, template.use_count, freshness, template);
+                if best.as_ref().is_none_or(|(bh, br, bu, bf, _)| {
+                    candidate.0 > *bh
+                        || (candidate.0 == *bh && candidate.1 > *br)
+                        || (candidate.0 == *bh
+                            && (candidate.1 - *br).abs() < f64::EPSILON
+                            && candidate.2 > *bu)
+                        || (candidate.0 == *bh
+                            && (candidate.1 - *br).abs() < f64::EPSILON
+                            && candidate.2 == *bu
+                            && candidate.3 > *bf)
+                }) {
+                    best = Some(candidate);
+                }
+            }
+        }
+    }
+
+    Ok(best.map(|(_, _, _, _, t)| t))
+}
+
+/// Records a template reuse: bumps `use_count` and stamps `last_used_at`.
+async fn bump_template_usage(pool: &SqlitePool, template_id: &str) {
+    let _ = sqlx::query(
+        "UPDATE import_templates
+         SET use_count = use_count + 1, last_used_at = CURRENT_TIMESTAMP,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?",
+    )
+    .bind(template_id)
+    .execute(pool)
+    .await;
+}
+
+/// Row mapper for `import_templates`. `column_mappings` is a JSON string that
+/// `from_row` decodes into `Vec<FieldMapping>`.
+struct ImportTemplateRow {
+    id: String,
+    company_id: String,
+    template_name: String,
+    file_type: String,
+    column_mappings: String,
+    has_header_row: bool,
+    target: String,
+    use_count: i64,
+    last_used_at: Option<String>,
+    created_at: String,
+    updated_at: String,
+}
+
+impl ImportTemplateRow {
+    fn into_model(self) -> ImportTemplate {
+        let column_mappings = serde_json::from_str(&self.column_mappings)
+            .unwrap_or_default();
+        ImportTemplate {
+            id: self.id,
+            company_id: self.company_id,
+            template_name: self.template_name,
+            file_type: self.file_type,
+            column_mappings,
+            has_header_row: self.has_header_row,
+            target: self.target,
+            use_count: self.use_count,
+            last_used_at: self.last_used_at,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+        }
+    }
+}
+
+impl<'r> sqlx::FromRow<'r, sqlx::sqlite::SqliteRow> for ImportTemplateRow {
+    fn from_row(row: &'r sqlx::sqlite::SqliteRow) -> Result<Self, sqlx::Error> {
+        use sqlx::Row;
+        Ok(ImportTemplateRow {
+            id: row.try_get("id")?,
+            company_id: row.try_get("company_id")?,
+            template_name: row.try_get("template_name")?,
+            file_type: row.try_get("file_type")?,
+            column_mappings: row.try_get("column_mappings")?,
+            has_header_row: row.try_get::<i64, _>("has_header_row")? != 0,
+            target: row.try_get("target")?,
+            use_count: row.try_get("use_count")?,
+            last_used_at: row.try_get("last_used_at")?,
+            created_at: row.try_get("created_at")?,
+            updated_at: row.try_get("updated_at")?,
+        })
+    }
 }
 
 // ==========================================
@@ -710,6 +1818,51 @@ pub async fn execute_import(
 // ==========================================
 
 /// Creates an `import_jobs` row so the run can be rolled back later.
+/// The row starts as `pending`; the background worker flips it to
+/// `processing` when it starts and to `completed`/`failed` when it finishes.
+async fn check_import_quotas(pool: &SqlitePool, company_id: &str) -> Result<(), String> {
+    // Concurrent jobs: a company may only have ONE pending/processing import
+    // at a time (spec §23.10).
+    let running: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM import_jobs
+         WHERE company_id = ? AND status IN ('pending', 'processing')",
+    )
+    .bind(company_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| format!("Quota check error: {e}"))?;
+    if running >= MAX_CONCURRENT_JOBS_PER_COMPANY {
+        return Err(
+            "Another import is still running for this company. Wait for it to finish \
+             before starting a new one (concurrency limit: 1)."
+                .to_string(),
+        );
+    }
+
+    // Hourly cap: at most N import jobs per hour per company (spec §23.10).
+    let since = now_unix() as i64 - QUOTA_HOUR_SECS;
+    let recent: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM import_jobs
+         WHERE company_id = ? AND CAST(created_at AS INTEGER) >= ?",
+    )
+    .bind(company_id)
+    .bind(since)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| format!("Quota check error: {e}"))?;
+    if recent >= MAX_JOBS_PER_HOUR_PER_COMPANY {
+        return Err(format!(
+            "Hourly import quota reached ({MAX_JOBS_PER_HOUR_PER_COMPANY} jobs per hour). \
+             Wait an hour or roll back an earlier import before continuing."
+        ));
+    }
+
+    Ok(())
+}
+
+/// Creates an `import_jobs` row so the run can be rolled back later.
+/// The row starts as `pending`; the background worker flips it to
+/// `processing` when it starts and to `completed`/`failed` when it finishes.
 async fn create_import_job(
     pool: &SqlitePool,
     company_id: &str,
@@ -727,9 +1880,9 @@ async fn create_import_job(
         r#"
         INSERT INTO import_jobs
             (id, company_id, file_type, file_name, status, target,
-             total_rows, processed_rows, error_rows, column_mappings,
+             total_rows, processed_rows, attempted_rows, error_rows, column_mappings,
              created_by, started_at, created_at)
-        VALUES (?, ?, ?, ?, 'processing', ?, ?, 0, 0, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, 'pending', ?, ?, 0, 0, 0, ?, ?, NULL, ?)
         "#,
     )
     .bind(&id)
@@ -741,7 +1894,6 @@ async fn create_import_job(
     .bind(&mappings_json)
     .bind(&user.id)
     .bind(&now)
-    .bind(&now)
     .execute(pool)
     .await
     .map_err(|e| format!("Failed to create import job: {e}"))?;
@@ -749,19 +1901,42 @@ async fn create_import_job(
     Ok(id)
 }
 
-/// Marks a finished import job as completed (or failed) with its row counts.
+/// Flushes live progress counters during a background import run.
+async fn update_import_progress(
+    pool: &SqlitePool,
+    job_id: &str,
+    attempted_rows: usize,
+    processed_rows: i64,
+    error_rows: i64,
+) {
+    let _ = sqlx::query(
+        r#"
+        UPDATE import_jobs
+        SET attempted_rows = ?, processed_rows = ?, error_rows = ?
+        WHERE id = ?
+        "#,
+    )
+    .bind(attempted_rows as i64)
+    .bind(processed_rows)
+    .bind(error_rows)
+    .bind(job_id)
+    .execute(pool)
+    .await;
+}
+
+/// Marks a finished import job as completed (or failed) with its full result.
 async fn finish_import_job(
     pool: &SqlitePool,
     job_id: &str,
-    processed_rows: i64,
-    error_rows: i64,
-    errors: &[ImportError],
+    result: &ImportResult,
+    attempted_rows: usize,
 ) {
-    let error_details = if errors.is_empty() {
+    let error_details = if result.errors.is_empty() {
         None
     } else {
         serde_json::to_string(
-            &errors
+            &result
+                .errors
                 .iter()
                 .map(|e| serde_json::json!({ "rowNumber": e.row_number, "reason": e.reason }))
                 .collect::<Vec<_>>(),
@@ -769,30 +1944,49 @@ async fn finish_import_job(
         .ok()
     };
     let now = import_timestamp(now_unix());
+    let imported = (result.products_imported + result.customers_imported + result.items_imported)
+        as i64;
     // Mark the job as failed when nothing was imported but errors occurred
     // (e.g. every row rejected). Any successful import counts as completed.
-    let status = if error_rows > 0 && processed_rows == 0 {
+    let status = if result.rows_with_errors > 0 && imported == 0 {
         "failed"
     } else {
         "completed"
     };
+    // Persist the full result so a polling client can render the same
+    // result screen as the old synchronous flow.
+    let result_json = serde_json::to_string(result).ok();
 
     let _ = sqlx::query(
         r#"
         UPDATE import_jobs
-        SET status = ?, processed_rows = ?, error_rows = ?,
-            error_details = ?, completed_at = ?
+        SET status = ?, processed_rows = ?, attempted_rows = ?, error_rows = ?,
+            error_details = ?, result_json = ?, completed_at = ?
         WHERE id = ?
         "#,
     )
     .bind(status)
-    .bind(processed_rows)
-    .bind(error_rows)
+    .bind(imported)
+    .bind(attempted_rows as i64)
+    .bind(result.rows_with_errors as i64)
     .bind(&error_details)
+    .bind(&result_json)
     .bind(&now)
     .bind(job_id)
     .execute(pool)
     .await;
+}
+
+/// 0–100 progress for a job. Terminal jobs report 100; running jobs report
+/// how many rows have been attempted against the total.
+fn job_progress(status: &str, total_rows: i64, attempted_rows: i64) -> i64 {
+    if matches!(status, "completed" | "failed" | "rolled_back") {
+        return 100;
+    }
+    if total_rows <= 0 {
+        return 0;
+    }
+    ((attempted_rows * 100) / total_rows).clamp(0, 100)
 }
 
 /// Lists recent import jobs for the current company.
@@ -805,10 +1999,11 @@ pub async fn list_import_jobs(
     let company_id = user.company_id.as_ref().ok_or("You are not assigned to a company")?;
 
     let now = now_unix();
-    let rows = sqlx::query_as::<_, (String, String, Option<String>, String, String, i64, i64, i64, Option<String>, String, Option<String>, String)>(
+    let rows = sqlx::query_as::<_, (String, String, Option<String>, String, String, i64, i64, i64, i64, Option<String>, Option<String>, String, Option<String>, String)>(
         r#"
         SELECT id, file_type, file_name, target, status, total_rows, processed_rows,
-               error_rows, error_details, created_by, completed_at, created_at
+               attempted_rows, error_rows, error_details, result_json, created_by,
+               completed_at, created_at
         FROM import_jobs
         WHERE company_id = ?
         ORDER BY created_at DESC
@@ -822,14 +2017,21 @@ pub async fn list_import_jobs(
 
     Ok(rows
         .into_iter()
-        .map(|(id, file_type, file_name, target, status, total_rows, processed_rows, error_rows, error_details, created_by, completed_at, created_at)| {
+        .map(|(id, file_type, file_name, target, status, total_rows, processed_rows, attempted_rows, error_rows, error_details, result_json, created_by, completed_at, created_at)| {
             let rollback_available = status == "completed"
                 && completed_at
                     .as_deref()
                     .and_then(|t| t.parse::<u64>().ok())
                     .map(|t| now.saturating_sub(t) <= ROLLBACK_WINDOW_SECS)
                     .unwrap_or(false);
-            let imported_records = processed_rows - error_rows;
+            let progress = job_progress(&status, total_rows, attempted_rows);
+            let imported_records = result_json
+                .as_deref()
+                .and_then(|j| serde_json::from_str::<ImportResult>(j).ok())
+                .map(|r| {
+                    (r.products_imported + r.customers_imported + r.items_imported) as i64
+                })
+                .unwrap_or_else(|| (processed_rows - error_rows).max(0));
             ImportJob {
                 id,
                 file_type,
@@ -838,7 +2040,9 @@ pub async fn list_import_jobs(
                 status,
                 total_rows,
                 processed_rows,
+                attempted_rows,
                 error_rows,
+                progress,
                 error_details,
                 created_by,
                 created_at,
@@ -848,6 +2052,74 @@ pub async fn list_import_jobs(
             }
         })
         .collect())
+}
+
+/// Polls a single import job (live progress + final result). The frontend
+/// calls this every few hundred ms after `execute_import` returns.
+#[tauri::command]
+pub async fn get_import_job(
+    pool: State<'_, SqlitePool>,
+    session: State<'_, SessionState>,
+    job_id: String,
+) -> Result<ImportJobStatus, String> {
+    let user = require_current_user(pool.inner(), session.inner()).await?;
+    let company_id = user.company_id.as_ref().ok_or("You are not assigned to a company")?;
+
+    let row = sqlx::query_as::<_, (String, String, Option<String>, String, String, i64, i64, i64, i64, Option<String>, Option<String>, String, Option<String>, String)>(
+        r#"
+        SELECT id, file_type, file_name, target, status, total_rows, processed_rows,
+               attempted_rows, error_rows, error_details, result_json, created_by,
+               completed_at, created_at
+        FROM import_jobs
+        WHERE id = ? AND company_id = ?
+        "#,
+    )
+    .bind(&job_id)
+    .bind(company_id)
+    .fetch_optional(pool.inner())
+    .await
+    .map_err(|e| format!("Database error: {e}"))?
+    .ok_or("Import job not found")?;
+
+    let (id, file_type, file_name, target, status, total_rows, processed_rows, attempted_rows, error_rows, error_details, result_json, created_by, completed_at, created_at) = row;
+
+    let now = now_unix();
+    let rollback_available = status == "completed"
+        && completed_at
+            .as_deref()
+            .and_then(|t| t.parse::<u64>().ok())
+            .map(|t| now.saturating_sub(t) <= ROLLBACK_WINDOW_SECS)
+            .unwrap_or(false);
+    let progress = job_progress(&status, total_rows, attempted_rows);
+    let result = result_json
+        .as_deref()
+        .and_then(|j| serde_json::from_str::<ImportResult>(j).ok());
+    let imported_records = result
+        .as_ref()
+        .map(|r| (r.products_imported + r.customers_imported + r.items_imported) as i64)
+        .unwrap_or_else(|| (processed_rows - error_rows).max(0));
+
+    Ok(ImportJobStatus {
+        job: ImportJob {
+            id,
+            file_type,
+            file_name,
+            target,
+            status,
+            total_rows,
+            processed_rows,
+            attempted_rows,
+            error_rows,
+            progress,
+            error_details,
+            created_by,
+            created_at,
+            completed_at,
+            rollback_available,
+            imported_records,
+        },
+        result,
+    })
 }
 
 /// Rolls back a completed import: removes the tagged records and reverts
@@ -960,6 +2232,44 @@ pub async fn rollback_import(
             .map_err(|e| format!("Failed to delete suppliers: {e}"))?
             .rows_affected() as i64;
 
+    // Invoices / purchase bills must be removed before their line items so
+    // the trigger that blocks items on finalized/paid invoices cannot fire.
+    let invoices_deleted =
+        sqlx::query("DELETE FROM invoices WHERE import_batch_id = ? AND company_id = ?")
+            .bind(&job_id)
+            .bind(company_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| format!("Failed to delete invoices: {e}"))?
+            .rows_affected() as i64;
+
+    let purchase_bills_deleted =
+        sqlx::query("DELETE FROM purchase_orders WHERE import_batch_id = ? AND company_id = ?")
+            .bind(&job_id)
+            .bind(company_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| format!("Failed to delete purchase bills: {e}"))?
+            .rows_affected() as i64;
+
+    let _invoice_items_deleted =
+        sqlx::query("DELETE FROM invoice_items WHERE import_batch_id = ? AND company_id = ?")
+            .bind(&job_id)
+            .bind(company_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| format!("Failed to delete invoice items: {e}"))?
+            .rows_affected() as i64;
+
+    let _po_items_deleted =
+        sqlx::query("DELETE FROM purchase_order_items WHERE import_batch_id = ? AND company_id = ?")
+            .bind(&job_id)
+            .bind(company_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| format!("Failed to delete purchase bill items: {e}"))?
+            .rows_affected() as i64;
+
     sqlx::query("UPDATE import_jobs SET status = 'rolled_back' WHERE id = ?")
         .bind(&job_id)
         .execute(&mut *tx)
@@ -974,6 +2284,8 @@ pub async fn rollback_import(
         products_deleted,
         customers_deleted,
         suppliers_deleted,
+        invoices_deleted,
+        purchase_bills_deleted,
         movements_deleted,
         batches_deleted,
         quantity_reverted,
@@ -1005,13 +2317,17 @@ async fn run_dry_run(
             "customers" => validate_customer_row(pool, company_id, request, row).await,
             "opening_stock" => validate_opening_stock_row(pool, company_id, request, row).await,
             "suppliers" => validate_supplier_row(pool, company_id, request, row).await,
+            "invoices" => validate_invoice_row(pool, company_id, request, row).await,
+            "purchase_bills" => validate_purchase_bill_row(pool, company_id, request, row).await,
             _ => validate_product_row(pool, company_id, request, row).await,
         };
 
         match validation {
             Ok(ValidationOutcome::Import) => match target {
                 "customers" => customers_imported += 1,
-                "opening_stock" | "suppliers" => items_imported += 1,
+                "opening_stock" | "suppliers" | "invoices" | "purchase_bills" => {
+                    items_imported += 1
+                }
                 _ => products_imported += 1,
             },
             Ok(ValidationOutcome::Skip) => rows_skipped += 1,
@@ -1213,6 +2529,159 @@ fn read_docx_rows(file_bytes: &[u8]) -> Result<Vec<Vec<String>>, String> {
     parse_docx_table(&document_xml)
 }
 
+/// Reads all rows from a PDF file (including header row).
+///
+/// Only text-layer PDFs are supported here: the text is extracted with
+/// `pdf-extract` and split into tabular rows by whitespace. Scanned PDFs that
+/// carry no embedded text are rejected — they would need OCR (see
+/// `read_image_rows` / `ocr_image_to_text`).
+fn read_pdf_rows(file_bytes: &[u8]) -> Result<Vec<Vec<String>>, String> {
+    let text = pdf_extract::extract_text_from_mem(file_bytes)
+        .map_err(|e| format!("Failed to read PDF text: {e}"))?;
+
+    let rows = parse_text_rows(&text);
+    if rows.is_empty() {
+        return Err(
+            "No text found in this PDF. It may be a scanned document. \
+             Use a PDF with a text layer (most accounting software exports have one), \
+             or export to CSV/XLSX instead."
+                .to_string(),
+        );
+    }
+    Ok(rows)
+}
+
+/// Reads all rows from an image file (including header row) by running OCR.
+///
+/// Images always need OCR (spec §23.2). We shell out to the Tesseract OCR
+/// command-line tool, so Tesseract must be installed and on PATH. The image is
+/// decoded first so corrupt/non-image files fail with a clear message instead
+/// of a confusing tesseract error.
+fn read_image_rows(file_bytes: &[u8]) -> Result<Vec<Vec<String>>, String> {
+    let text = ocr_image_to_text(file_bytes)?;
+
+    let rows = parse_text_rows(&text);
+    if rows.is_empty() {
+        return Err(
+            "OCR produced no readable text. Make sure the image is clear, in focus, \
+             and shows the table legibly."
+                .to_string(),
+        );
+    }
+    Ok(rows)
+}
+
+/// Splits OCR/extracted text into rows, then cells. Empty lines are dropped
+/// (headers of exported PDFs are usually separated by blank lines).
+fn parse_text_rows(text: &str) -> Vec<Vec<String>> {
+    text.lines()
+        .map(|line| line.trim_end().to_string())
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| split_text_line(&line))
+        .filter(|cells| !cells.is_empty())
+        .collect()
+}
+
+/// Splits one text line into cells. Tabs and runs of 2+ spaces separate
+/// columns; single spaces are preserved so names like "Ijaz & Company" stay
+/// in one cell.
+fn split_text_line(line: &str) -> Vec<String> {
+    let mut cells: Vec<String> = Vec::new();
+    let mut current = String::new();
+    let chars: Vec<char> = line.chars().collect();
+    let mut i = 0;
+
+    while i < chars.len() {
+        match chars[i] {
+            '\t' => {
+                push_text_cell(&mut cells, &mut current);
+                i += 1;
+            }
+            ' ' => {
+                let mut j = i;
+                while j < chars.len() && chars[j] == ' ' {
+                    j += 1;
+                }
+                if j - i >= 2 {
+                    push_text_cell(&mut cells, &mut current);
+                } else {
+                    current.push(' ');
+                }
+                i = j;
+            }
+            c => {
+                current.push(c);
+                i += 1;
+            }
+        }
+    }
+    push_text_cell(&mut cells, &mut current);
+    cells
+}
+
+fn push_text_cell(cells: &mut Vec<String>, current: &mut String) {
+    let cell = current.trim().to_string();
+    if !cell.is_empty() {
+        cells.push(cell);
+    }
+    current.clear();
+}
+
+/// Runs OCR over an image and returns the recognized text.
+///
+/// Prefers the Tesseract engine bundled with the app (spec §23.2 Phase 2,
+/// resolved at setup into `OCR_BUNDLE`), falling back to a `tesseract` on
+/// PATH. The image is decoded up front (so invalid files fail fast), written
+/// to a temp file, and `--psm 6` is used because ERP/accounting documents are
+/// uniform blocks.
+fn ocr_image_to_text(file_bytes: &[u8]) -> Result<String, String> {
+    let img = image::load_from_memory(file_bytes)
+        .map_err(|e| format!("Not a valid image file: {e}"))?;
+
+    let path = std::env::temp_dir().join(format!("ijaz_ocr_{}.png", uuid::Uuid::new_v4()));
+    img.save(&path)
+        .map_err(|e| format!("Failed to write temp image: {e}"))?;
+
+    let bundle = OCR_BUNDLE.get().cloned().flatten();
+    let mut command = if let Some(bundle) = &bundle {
+        let mut cmd = std::process::Command::new(&bundle.exe);
+        if let Some(tessdata) = &bundle.tessdata {
+            cmd.env("TESSDATA_PREFIX", tessdata);
+        }
+        cmd
+    } else {
+        std::process::Command::new("tesseract")
+    };
+
+    let output = command
+        .arg(&path)
+        .arg("stdout")
+        .arg("--psm")
+        .arg("6")
+        .output();
+
+    let _ = std::fs::remove_file(&path);
+
+    match output {
+        Ok(output) if output.status.success() => Ok(String::from_utf8_lossy(&output.stdout).into_owned()),
+        Ok(output) => Err(format!(
+            "Tesseract OCR failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )),
+        Err(e) => {
+            let hint = if bundle.is_some() {
+                "The bundled Tesseract engine could not run. \
+                 Reinstall the app, or import a CSV/XLSX/text-PDF instead."
+            } else {
+                "Tesseract OCR is not bundled with this build. \
+                 Install Tesseract OCR (https://github.com/tesseract-ocr/tesseract) and add it \
+                 to your PATH, or import a CSV/XLSX/text-PDF instead."
+            };
+            Err(format!("Tesseract OCR is not available: {e}. {hint}"))
+        }
+    }
+}
+
 /// Shared XML parser for .docx tables.
 /// Used by both analyze_docx and read_docx_rows.
 fn parse_docx_table(document_xml: &str) -> Result<Vec<Vec<String>>, String> {
@@ -1315,17 +2784,40 @@ fn parse_docx_table(document_xml: &str) -> Result<Vec<Vec<String>>, String> {
 /// This is the "AI/rule engine" from your spec.
 /// It recognizes common patterns across industries.
 /// The vocabulary depends on the import target.
-fn propose_mappings(target: &str, headers: &[String]) -> Vec<FieldMapping> {
+///
+/// When an ERP adapter (§23.11) is supplied, its known column names are
+/// tried first for every header and the fuzzy vocabulary is only used as a
+/// fallback, so a named adapter pre-fills the mapping with near-zero manual
+/// work.
+fn propose_mappings(target: &str, adapter: Option<&str>, headers: &[String]) -> Vec<FieldMapping> {
+    let adapter_hints: Vec<(&str, &[&str])> = adapter
+        .filter(|a| is_valid_adapter(a))
+        .map(|a| erp_adapter_fields(a, target))
+        .unwrap_or_default();
+
     headers
         .iter()
         .enumerate()
         .map(|(index, header)| {
             let normalized = normalize_header(header);
-            let (target_field, category, confidence) = match target {
-                "customers" => detect_customer_field(&normalized),
-                "suppliers" => detect_supplier_field(&normalized),
-                "opening_stock" => detect_opening_stock_field(&normalized),
-                _ => detect_field(&normalized),
+
+            // 1. ERP adapter column name (pre-filled, high confidence).
+            let adapter_hit = adapter_hints
+                .iter()
+                .find(|(_, aliases)| matches_any(&normalized, aliases))
+                .map(|(field, _)| (field.to_string(), "core".to_string(), "high".to_string()));
+
+            // 2. Fuzzy vocabulary per target.
+            let (target_field, category, confidence) = match adapter_hit {
+                Some(hit) => hit,
+                None => match target {
+                    "customers" => detect_customer_field(&normalized),
+                    "suppliers" => detect_supplier_field(&normalized),
+                    "opening_stock" => detect_opening_stock_field(&normalized),
+                    "invoices" => detect_invoice_field(&normalized),
+                    "purchase_bills" => detect_purchase_bill_field(&normalized),
+                    _ => detect_field(&normalized),
+                },
             };
             FieldMapping {
                 source_column: header.clone(),
@@ -1967,6 +3459,395 @@ fn detect_opening_stock_field(normalized: &str) -> (String, String, String) {
     )
 }
 
+/// Header detector for the sales-invoice import target (spec §23.2).
+/// Order matters: more specific patterns are checked first so e.g.
+/// "reference note" is never captured by the generic "ref" alias.
+fn detect_invoice_field(normalized: &str) -> (String, String, String) {
+    // DISCOUNT (before total_amount — "discount amount" contains "amount")
+    if matches_any(
+        normalized,
+        &["discount rate", "discount percent", "disc %", "discount"],
+    ) {
+        return (
+            "discount".to_string(),
+            "core".to_string(),
+            "high".to_string(),
+        );
+    }
+
+    // AMOUNT PAID (before total_amount — "amount paid" contains "amount")
+    if matches_any(
+        normalized,
+        &[
+            "amount paid",
+            "paid amount",
+            "amount received",
+            "received amount",
+            "payment received",
+        ],
+    ) {
+        return (
+            "amount_paid".to_string(),
+            "core".to_string(),
+            "high".to_string(),
+        );
+    }
+
+    // TAX RATE (before total_amount — "tax amount" contains "amount")
+    if matches_any(
+        normalized,
+        &["tax rate", "tax percent", "tax %", "sales tax", "gst", "vat", "tax"],
+    ) {
+        return (
+            "tax_rate".to_string(),
+            "core".to_string(),
+            "high".to_string(),
+        );
+    }
+
+    // TOTAL AMOUNT
+    if matches_any(
+        normalized,
+        &[
+            "total amount",
+            "grand total",
+            "bill amount",
+            "invoice total",
+            "net amount",
+            "net total",
+            "total",
+            "amount",
+            "amt",
+        ],
+    ) {
+        return (
+            "total_amount".to_string(),
+            "core".to_string(),
+            "high".to_string(),
+        );
+    }
+
+    // UNIT PRICE (before quantity — "unit qty" contains "qty", not "price")
+    if matches_any(
+        normalized,
+        &["unit price", "unit rate", "selling price", "sale price", "price", "rate"],
+    ) {
+        return (
+            "unit_price".to_string(),
+            "core".to_string(),
+            "high".to_string(),
+        );
+    }
+
+    // QUANTITY
+    if matches_any(
+        normalized,
+        &["no of units", "number of units", "quantity", "qty", "units", "unit count", "pieces"],
+    ) {
+        return (
+            "quantity".to_string(),
+            "core".to_string(),
+            "high".to_string(),
+        );
+    }
+
+    // PRODUCT LINE (SKU)
+    if matches_any(
+        normalized,
+        &[
+            "product sku",
+            "item sku",
+            "product code",
+            "item code",
+            "barcode",
+            "product",
+            "item",
+            "description",
+        ],
+    ) {
+        return (
+            "product_sku".to_string(),
+            "core".to_string(),
+            "high".to_string(),
+        );
+    }
+
+    // CUSTOMER
+    if matches_any(
+        normalized,
+        &[
+            "customer name",
+            "client name",
+            "sold to",
+            "billed to",
+            "customer",
+            "client",
+            "buyer",
+            "purchaser",
+            "party",
+            "name",
+        ],
+    ) {
+        return (
+            "customer_name".to_string(),
+            "core".to_string(),
+            "high".to_string(),
+        );
+    }
+
+    // STATUS
+    if matches_any(normalized, &["invoice status", "payment status", "status"]) {
+        return (
+            "status".to_string(),
+            "core".to_string(),
+            "medium".to_string(),
+        );
+    }
+
+    // DUE DATE
+    if matches_any(normalized, &["due date", "payment due date", "payment terms date"]) {
+        return (
+            "due_date".to_string(),
+            "core".to_string(),
+            "medium".to_string(),
+        );
+    }
+
+    // CUSTOMER PO NUMBER
+    if matches_any(
+        normalized,
+        &["po number", "po no", "customer po", "purchase order no", "order number"],
+    ) {
+        return (
+            "po_number".to_string(),
+            "core".to_string(),
+            "medium".to_string(),
+        );
+    }
+
+    // REFERENCE NOTE (before the generic "ref"/"reference" below)
+    if matches_any(normalized, &["reference note", "reference notes", "notes", "remarks", "remark", "note", "comment"]) {
+        return (
+            "reference_note".to_string(),
+            "core".to_string(),
+            "medium".to_string(),
+        );
+    }
+
+    // INVOICE DATE
+    if matches_any(
+        normalized,
+        &["invoice date", "inv date", "billing date", "transaction date", "date"],
+    ) {
+        return (
+            "invoice_date".to_string(),
+            "core".to_string(),
+            "high".to_string(),
+        );
+    }
+
+    // INVOICE NUMBER
+    if matches_any(
+        normalized,
+        &[
+            "invoice number",
+            "invoice no",
+            "invoice num",
+            "inv number",
+            "inv no",
+            "invoice #",
+            "inv #",
+            "reference number",
+            "reference",
+            "ref number",
+            "ref no",
+            "ref",
+        ],
+    ) {
+        return (
+            "invoice_number".to_string(),
+            "core".to_string(),
+            "high".to_string(),
+        );
+    }
+
+    // Everything else → skip
+    (
+        "skip".to_string(),
+        "skip".to_string(),
+        "unknown".to_string(),
+    )
+}
+
+/// Header detector for the purchase-bill import target (spec §23.2).
+fn detect_purchase_bill_field(normalized: &str) -> (String, String, String) {
+    // EXPECTED DATE (before expiry — "expected" contains "exp")
+    if matches_any(
+        normalized,
+        &["expected date", "expected arrival", "delivery date", "arrival date"],
+    ) {
+        return (
+            "expected_date".to_string(),
+            "core".to_string(),
+            "medium".to_string(),
+        );
+    }
+
+    // EXPIRY DATE
+    if matches_any(
+        normalized,
+        &["expiry date", "expiration date", "exp date", "expiry", "expiration", "best before", "use by", "sell by"],
+    ) {
+        return (
+            "expiry_date".to_string(),
+            "core".to_string(),
+            "high".to_string(),
+        );
+    }
+
+    // AMOUNT PAID
+    if matches_any(
+        normalized,
+        &["amount paid", "paid amount", "amount paid to supplier", "payment made"],
+    ) {
+        return (
+            "amount_paid".to_string(),
+            "core".to_string(),
+            "high".to_string(),
+        );
+    }
+
+    // TAX RATE
+    if matches_any(
+        normalized,
+        &["tax rate", "tax percent", "tax %", "sales tax", "gst", "vat", "tax"],
+    ) {
+        return (
+            "tax_rate".to_string(),
+            "core".to_string(),
+            "high".to_string(),
+        );
+    }
+
+    // TOTAL AMOUNT
+    if matches_any(
+        normalized,
+        &["total amount", "grand total", "bill amount", "invoice total", "net total", "total", "amount", "amt"],
+    ) {
+        return (
+            "total_amount".to_string(),
+            "core".to_string(),
+            "high".to_string(),
+        );
+    }
+
+    // UNIT COST
+    if matches_any(
+        normalized,
+        &["unit cost", "unit price", "purchase price", "cost price", "cost", "rate"],
+    ) {
+        return (
+            "unit_cost".to_string(),
+            "core".to_string(),
+            "high".to_string(),
+        );
+    }
+
+    // QUANTITY
+    if matches_any(
+        normalized,
+        &["quantity", "qty", "units", "no of units", "number of units", "pieces"],
+    ) {
+        return (
+            "quantity".to_string(),
+            "core".to_string(),
+            "high".to_string(),
+        );
+    }
+
+    // PRODUCT LINE (SKU)
+    if matches_any(
+        normalized,
+        &["product sku", "item sku", "product code", "item code", "barcode", "product", "item", "description"],
+    ) {
+        return (
+            "product_sku".to_string(),
+            "core".to_string(),
+            "high".to_string(),
+        );
+    }
+
+    // SUPPLIER
+    if matches_any(
+        normalized,
+        &[
+            "supplier name",
+            "vendor name",
+            "supplier",
+            "vendor",
+            "party",
+            "seller",
+            "account name",
+            "name",
+        ],
+    ) {
+        return (
+            "supplier_name".to_string(),
+            "core".to_string(),
+            "high".to_string(),
+        );
+    }
+
+    // STATUS
+    if matches_any(normalized, &["po status", "payment status", "status"]) {
+        return (
+            "status".to_string(),
+            "core".to_string(),
+            "medium".to_string(),
+        );
+    }
+
+    // REFERENCE NOTE
+    if matches_any(normalized, &["reference note", "reference notes", "notes", "remarks", "remark", "note", "comment"]) {
+        return (
+            "reference_note".to_string(),
+            "core".to_string(),
+            "medium".to_string(),
+        );
+    }
+
+    // PO DATE
+    if matches_any(
+        normalized,
+        &["po date", "bill date", "purchase date", "transaction date", "date"],
+    ) {
+        return (
+            "po_date".to_string(),
+            "core".to_string(),
+            "high".to_string(),
+        );
+    }
+
+    // PO NUMBER
+    if matches_any(
+        normalized,
+        &["po number", "po no", "bill number", "bill no", "purchase order no", "voucher number", "voucher no", "reference number", "reference", "ref"],
+    ) {
+        return (
+            "po_number".to_string(),
+            "core".to_string(),
+            "high".to_string(),
+        );
+    }
+
+    // Everything else → skip
+    (
+        "skip".to_string(),
+        "skip".to_string(),
+        "unknown".to_string(),
+    )
+}
+
 /// Check if a normalized header matches any of the patterns
 fn matches_any(normalized: &str, patterns: &[&str]) -> bool {
     patterns
@@ -2403,7 +4284,7 @@ async fn import_one_row(
         None
     };
     let supplier_id = if !parsed.supplier_name.is_empty() {
-        resolve_or_create_supplier(pool, company_id, &parsed.supplier_name).await?
+        resolve_or_create_supplier(pool, company_id, &parsed.supplier_name, job_id).await?
     } else {
         None
     };
@@ -3150,6 +5031,7 @@ async fn resolve_or_create_supplier(
     pool: &SqlitePool,
     company_id: &str,
     name: &str,
+    job_id: &str,
 ) -> Result<Option<String>, String> {
     let trimmed = name.trim();
     if trimmed.is_empty() {
@@ -3170,15 +5052,774 @@ async fn resolve_or_create_supplier(
     }
 
     let id = uuid::Uuid::new_v4().to_string();
-    sqlx::query("INSERT INTO suppliers (id, company_id, name) VALUES (?, ?, ?)")
+    sqlx::query("INSERT INTO suppliers (id, company_id, name, import_batch_id) VALUES (?, ?, ?, ?)")
         .bind(&id)
         .bind(company_id)
         .bind(trimmed)
+        .bind(job_id)
         .execute(pool)
         .await
         .map_err(|e| format!("Failed to create supplier '{trimmed}': {e}"))?;
 
     Ok(Some(id))
+}
+
+// ==========================================
+// SALES-INVOICE & PURCHASE-BILL IMPORTS (§23.2)
+// ==========================================
+//
+// Both targets import "historical records": a header plus a line-item
+// snapshot written exactly as the file describes. No stock, batch or ledger
+// mutation happens — the opening-stock target owns the stock position and
+// imported history is always safe to delete via rollback. Products and
+// parties are resolved by name/SKU; a party that does not exist yet is
+// created so the record has a valid foreign key.
+
+/// Rounds paisa to the nearest rupee, matching the invoice module's
+/// convention (50+ paisa rounds up).
+fn round_to_rupee_paisa(paisa: i64) -> i64 {
+    let rem = paisa.rem_euclid(100);
+    if rem >= 50 {
+        paisa - rem + 100
+    } else {
+        paisa - rem
+    }
+}
+
+/// Parses a date to YYYY-MM-DD, erroring when it is missing or unparseable.
+fn parse_import_date(value: &str, label: &str) -> Result<String, String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(format!("{label} is missing. Map a date column in your file."));
+    }
+    crate::commands::inventory::parse_expiry_date(trimmed).map_err(|_| {
+        format!(
+            "{label} '{trimmed}' is not a valid date. Use YYYY-MM-DD, YYYY/MM/DD or DD/MM/YYYY."
+        )
+    })
+}
+
+/// Parsed + validated sales-invoice row. One row = one invoice.
+struct ParsedInvoice {
+    invoice_number: String,
+    invoice_date: String,
+    due_date: Option<String>,
+    customer_name: String,
+    product_sku: String,
+    quantity: i64,
+    unit_price: i64,
+    tax_rate: i64,
+    discount: i64,
+    total_amount: Option<i64>,
+    amount_paid: i64,
+    status: String,
+    reference_note: String,
+    po_number: String,
+}
+
+fn parse_invoice_row(mappings: &[FieldMapping], row: &[String]) -> Result<ParsedInvoice, String> {
+    let mut invoice_number = String::new();
+    let mut invoice_date = String::new();
+    let mut due_date = String::new();
+    let mut customer_name = String::new();
+    let mut product_sku = String::new();
+    let mut quantity: i64 = 1;
+    let mut unit_price: i64 = 0;
+    let mut tax_rate: i64 = 0;
+    let mut discount: i64 = 0;
+    let mut total_amount: Option<i64> = None;
+    let mut amount_paid: i64 = 0;
+    let mut status = String::new();
+    let mut reference_note = String::new();
+    let mut po_number = String::new();
+
+    for mapping in mappings {
+        let Some(value) = mapping_value(mapping, row) else {
+            continue;
+        };
+        if value.is_empty() {
+            continue;
+        }
+        match mapping.target_field.as_str() {
+            "invoice_number" => invoice_number = value,
+            "invoice_date" => invoice_date = value,
+            "due_date" => due_date = value,
+            "customer_name" => customer_name = value,
+            "product_sku" => product_sku = value,
+            "quantity" => quantity = (value.parse::<f64>().unwrap_or(0.0).max(0.0)) as i64,
+            "unit_price" => unit_price = parse_price(&value),
+            "tax_rate" => tax_rate = (value.parse::<f64>().unwrap_or(0.0) * 100.0) as i64,
+            "discount" => discount = (value.parse::<f64>().unwrap_or(0.0) * 100.0) as i64,
+            "total_amount" => total_amount = Some(parse_price(&value)),
+            "amount_paid" => amount_paid = parse_price(&value),
+            "status" => status = value,
+            "reference_note" => reference_note = value,
+            "po_number" => po_number = value,
+            _ => {}
+        }
+    }
+
+    if invoice_number.trim().is_empty() {
+        return Err(format!(
+            "Row has no invoice number. Map an 'Invoice Number' column — one row is one invoice. Columns: [{}]",
+            mapped_fields_note(mappings, row)
+        ));
+    }
+    if customer_name.trim().is_empty() {
+        return Err(format!(
+            "Row has no customer. Map a 'Customer Name' column. Columns: [{}]",
+            mapped_fields_note(mappings, row)
+        ));
+    }
+    let invoice_date = parse_import_date(&invoice_date, "Invoice date")?;
+    let due_date = if due_date.trim().is_empty() {
+        None
+    } else {
+        Some(parse_import_date(&due_date, "Due date")?)
+    };
+    if quantity == 0 {
+        quantity = 1;
+    }
+
+    Ok(ParsedInvoice {
+        invoice_number: invoice_number.trim().to_string(),
+        invoice_date,
+        due_date,
+        customer_name,
+        product_sku: product_sku.trim().to_string(),
+        quantity,
+        unit_price,
+        tax_rate,
+        discount,
+        total_amount,
+        amount_paid,
+        status: normalize_invoice_status(&status),
+        reference_note,
+        po_number,
+    })
+}
+
+/// Normalizes a file's invoice status to one of the DB's allowed values.
+fn normalize_invoice_status(raw: &str) -> String {
+    let n = raw.trim().to_lowercase();
+    if n.is_empty() || n == "finalized" || n == "final" {
+        return "finalized".to_string();
+    }
+    if n == "paid" || n.contains("paid") {
+        return "paid".to_string();
+    }
+    if n == "cancelled" || n == "canceled" || n == "void" {
+        return "cancelled".to_string();
+    }
+    if n == "draft" || n == "pending" || n == "open" || n == "unpaid" || n == "due" {
+        return "draft".to_string();
+    }
+    "finalized".to_string()
+}
+
+/// Computes (status, amount_paid, balance_due) for an imported invoice.
+fn invoice_amounts(raw_status: &str, amount_paid: i64, grand_total: i64) -> (String, i64, i64) {
+    let status = normalize_invoice_status(raw_status);
+    match status.as_str() {
+        "draft" | "cancelled" => (status, 0, grand_total),
+        "paid" => (status, grand_total, 0),
+        _ => {
+            let paid = amount_paid.clamp(0, grand_total);
+            (status, paid, grand_total - paid)
+        }
+    }
+}
+
+/// Parsed + validated purchase-bill row. One row = one purchase order.
+struct ParsedPurchaseBill {
+    po_number: String,
+    po_date: String,
+    expected_date: Option<String>,
+    expiry_date: Option<String>,
+    supplier_name: String,
+    product_sku: String,
+    quantity: i64,
+    unit_cost: i64,
+    tax_rate: i64,
+    total_amount: Option<i64>,
+    amount_paid: i64,
+    status: String,
+    reference_note: String,
+}
+
+fn parse_purchase_bill_row(
+    mappings: &[FieldMapping],
+    row: &[String],
+) -> Result<ParsedPurchaseBill, String> {
+    let mut po_number = String::new();
+    let mut po_date = String::new();
+    let mut expected_date = String::new();
+    let mut expiry_date = String::new();
+    let mut supplier_name = String::new();
+    let mut product_sku = String::new();
+    let mut quantity: i64 = 1;
+    let mut unit_cost: i64 = 0;
+    let mut tax_rate: i64 = 0;
+    let mut total_amount: Option<i64> = None;
+    let mut amount_paid: i64 = 0;
+    let mut status = String::new();
+    let mut reference_note = String::new();
+
+    for mapping in mappings {
+        let Some(value) = mapping_value(mapping, row) else {
+            continue;
+        };
+        if value.is_empty() {
+            continue;
+        }
+        match mapping.target_field.as_str() {
+            "po_number" => po_number = value,
+            "po_date" => po_date = value,
+            "expected_date" => expected_date = value,
+            "expiry_date" => expiry_date = value,
+            "supplier_name" => supplier_name = value,
+            "product_sku" => product_sku = value,
+            "quantity" => quantity = (value.parse::<f64>().unwrap_or(0.0).max(0.0)) as i64,
+            "unit_cost" => unit_cost = parse_price(&value),
+            "tax_rate" => tax_rate = (value.parse::<f64>().unwrap_or(0.0) * 100.0) as i64,
+            "total_amount" => total_amount = Some(parse_price(&value)),
+            "amount_paid" => amount_paid = parse_price(&value),
+            "status" => status = value,
+            "reference_note" => reference_note = value,
+            _ => {}
+        }
+    }
+
+    if po_number.trim().is_empty() {
+        return Err(format!(
+            "Row has no purchase order number. Map a 'PO Number' column — one row is one purchase bill. Columns: [{}]",
+            mapped_fields_note(mappings, row)
+        ));
+    }
+    if supplier_name.trim().is_empty() {
+        return Err(format!(
+            "Row has no supplier. Map a 'Supplier Name' column. Columns: [{}]",
+            mapped_fields_note(mappings, row)
+        ));
+    }
+    let po_date = parse_import_date(&po_date, "PO date")?;
+    let expected_date = if expected_date.trim().is_empty() {
+        None
+    } else {
+        Some(parse_import_date(&expected_date, "Expected date")?)
+    };
+    let expiry_date = if expiry_date.trim().is_empty() {
+        None
+    } else {
+        Some(parse_import_date(&expiry_date, "Expiry date")?)
+    };
+    if quantity == 0 {
+        quantity = 1;
+    }
+
+    Ok(ParsedPurchaseBill {
+        po_number: po_number.trim().to_string(),
+        po_date,
+        expected_date,
+        expiry_date,
+        supplier_name,
+        product_sku: product_sku.trim().to_string(),
+        quantity,
+        unit_cost,
+        tax_rate,
+        total_amount,
+        amount_paid,
+        status: normalize_po_status(&status),
+        reference_note,
+    })
+}
+
+/// Normalizes a file's purchase-order status to one of the DB's allowed values.
+fn normalize_po_status(raw: &str) -> String {
+    let n = raw.trim().to_lowercase();
+    if n.is_empty() || n == "received" || n == "complete" || n == "completed" || n == "delivered" {
+        return "received".to_string();
+    }
+    if n == "paid" || n.contains("paid") {
+        return "paid".to_string();
+    }
+    if n == "cancelled" || n == "canceled" || n == "void" {
+        return "cancelled".to_string();
+    }
+    if n == "ordered" || n == "pending" || n == "open" || n == "processing" || n == "draft" {
+        return "ordered".to_string();
+    }
+    "received".to_string()
+}
+
+/// Computes (status, amount_paid, balance_due) for an imported purchase order.
+fn po_amounts(raw_status: &str, amount_paid: i64, grand_total: i64) -> (String, i64, i64) {
+    let status = normalize_po_status(raw_status);
+    match status.as_str() {
+        "draft" | "cancelled" => (status, 0, grand_total),
+        "paid" => (status, grand_total, 0),
+        _ => {
+            let paid = amount_paid.clamp(0, grand_total);
+            (status, paid, grand_total - paid)
+        }
+    }
+}
+
+async fn invoice_number_exists(
+    pool: &SqlitePool,
+    company_id: &str,
+    number: &str,
+) -> Result<bool, String> {
+    sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM invoices WHERE company_id = ? AND invoice_number = ? COLLATE NOCASE",
+    )
+    .bind(company_id)
+    .bind(number)
+    .fetch_one(pool)
+    .await
+    .map(|c| c > 0)
+    .map_err(|e| format!("Invoice lookup error: {e}"))
+}
+
+async fn po_number_exists(
+    pool: &SqlitePool,
+    company_id: &str,
+    number: &str,
+) -> Result<bool, String> {
+    sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM purchase_orders WHERE company_id = ? AND po_number = ? COLLATE NOCASE",
+    )
+    .bind(company_id)
+    .bind(number)
+    .fetch_one(pool)
+    .await
+    .map(|c| c > 0)
+    .map_err(|e| format!("PO lookup error: {e}"))
+}
+
+/// Generates the next free invoice number from the company's invoice counter,
+/// skipping numbers that already exist (e.g. imported with explicit numbers).
+async fn next_free_invoice_number(pool: &SqlitePool, company_id: &str) -> Result<String, String> {
+    let (prefix, mut next): (String, i64) = sqlx::query_as(
+        "SELECT invoice_prefix, next_number FROM company_invoice_settings WHERE company_id = ?",
+    )
+    .bind(company_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| format!("Invoice settings error: {e}"))?;
+
+    loop {
+        let candidate = format!("{prefix}-{:03}", next);
+        if !invoice_number_exists(pool, company_id, &candidate).await? {
+            sqlx::query(
+                "UPDATE company_invoice_settings SET next_number = ?, updated_at = CURRENT_TIMESTAMP WHERE company_id = ?",
+            )
+            .bind(next + 1)
+            .bind(company_id)
+            .execute(pool)
+            .await
+            .map_err(|e| format!("Failed to advance invoice counter: {e}"))?;
+            return Ok(candidate);
+        }
+        next += 1;
+    }
+}
+
+/// Generates the next free PO number from the company's PO counter.
+async fn next_free_po_number(pool: &SqlitePool, company_id: &str) -> Result<String, String> {
+    let (prefix, mut next): (String, i64) = sqlx::query_as(
+        "SELECT po_prefix, next_number FROM company_po_settings WHERE company_id = ?",
+    )
+    .bind(company_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| format!("PO settings error: {e}"))?;
+
+    loop {
+        let candidate = format!("{prefix}-{:03}", next);
+        if !po_number_exists(pool, company_id, &candidate).await? {
+            sqlx::query(
+                "UPDATE company_po_settings SET next_number = ?, updated_at = CURRENT_TIMESTAMP WHERE company_id = ?",
+            )
+            .bind(next + 1)
+            .bind(company_id)
+            .execute(pool)
+            .await
+            .map_err(|e| format!("Failed to advance PO counter: {e}"))?;
+            return Ok(candidate);
+        }
+        next += 1;
+    }
+}
+
+/// Finds an existing customer by name, or creates one tagged with the job so
+/// rollback can remove it again.
+async fn resolve_or_create_customer(
+    pool: &SqlitePool,
+    company_id: &str,
+    name: &str,
+    job_id: &str,
+) -> Result<String, String> {
+    let trimmed = name.trim().to_string();
+    let existing = sqlx::query_scalar::<_, String>(
+        "SELECT id FROM customers WHERE company_id = ? AND name = ? COLLATE NOCASE AND is_active = 1 LIMIT 1",
+    )
+    .bind(company_id)
+    .bind(&trimmed)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| format!("Customer lookup error: {e}"))?;
+
+    if let Some(id) = existing {
+        return Ok(id);
+    }
+
+    let id = uuid::Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO customers (id, company_id, name, import_batch_id) VALUES (?, ?, ?, ?)",
+    )
+    .bind(&id)
+    .bind(company_id)
+    .bind(&trimmed)
+    .bind(job_id)
+    .execute(pool)
+    .await
+    .map_err(|e| format!("Failed to create customer '{trimmed}': {e}"))?;
+
+    Ok(id)
+}
+
+/// Imports one sales-invoice row. Returns Ok(true) when a record was created,
+/// Ok(false) when the conflict strategy skipped it.
+///
+/// The header is inserted as `draft` first because the database refuses to
+/// add line items to a finalized/paid invoice; once the item is attached the
+/// status flips to the file's value.
+#[allow(clippy::too_many_arguments)]
+async fn import_one_invoice_row(
+    pool: &SqlitePool,
+    company_id: &str,
+    user_id: &str,
+    mappings: &[FieldMapping],
+    row: &[String],
+    job_id: &str,
+    strategy: ConflictStrategy,
+) -> Result<bool, String> {
+    let parsed = parse_invoice_row(mappings, row)?;
+    let number = if parsed.invoice_number.is_empty() {
+        next_free_invoice_number(pool, company_id).await?
+    } else {
+        parsed.invoice_number.clone()
+    };
+
+    let exists = invoice_number_exists(pool, company_id, &number).await?;
+    if exists && strategy == ConflictStrategy::Skip {
+        return Ok(false);
+    }
+
+    // Optional line item: summary rows carry no SKU.
+    let mut product_id: Option<String> = None;
+    let mut product_name = String::new();
+    let mut product_sku_display = String::new();
+    if !parsed.product_sku.is_empty() {
+        let product = sqlx::query_as::<_, (String, String)>(
+            "SELECT id, name FROM products WHERE company_id = ? AND sku = ? COLLATE NOCASE AND deleted_at IS NULL LIMIT 1",
+        )
+        .bind(company_id)
+        .bind(&parsed.product_sku)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| format!("Product lookup error: {e}"))?;
+        match product {
+            Some((id, name)) => {
+                product_id = Some(id);
+                product_name = name;
+                product_sku_display = parsed.product_sku.clone();
+            }
+            None => {
+                return Err(format!(
+                    "No product with SKU '{}' was found. Import your products first.",
+                    parsed.product_sku
+                ));
+            }
+        }
+    }
+
+    // Line computation (paisa; rupee-rounded, matching the app's invoices).
+    let qty = if product_id.is_some() {
+        parsed.quantity.max(1)
+    } else {
+        0
+    };
+    let subtotal = qty.saturating_mul(parsed.unit_price);
+    let discount_amount = subtotal.saturating_mul(parsed.discount) / 10_000;
+    let after_discount = subtotal.saturating_sub(discount_amount);
+    let tax_amount = after_discount.saturating_mul(parsed.tax_rate) / 10_000;
+    let line_total = round_to_rupee_paisa(after_discount.saturating_add(tax_amount));
+
+    let (subtotal_total, tax_total, discount_total, grand_total) = if product_id.is_some() {
+        (subtotal, tax_amount, discount_amount, line_total)
+    } else {
+        let total = parsed.total_amount.unwrap_or(0);
+        (total, 0, 0, total)
+    };
+
+    let (status, amount_paid, balance_due) =
+        invoice_amounts(&parsed.status, parsed.amount_paid, grand_total);
+
+    let customer_id = resolve_or_create_customer(pool, company_id, &parsed.customer_name, job_id)
+        .await?;
+
+    let invoice_id = uuid::Uuid::new_v4().to_string();
+    let due_date = parsed.due_date.as_deref().unwrap_or("");
+    sqlx::query(
+        "INSERT INTO invoices (id, company_id, invoice_number, invoice_date, due_date, customer_id,
+         status, subtotal, tax_total, discount_total, grand_total, po_number, reference_note,
+         amount_paid, balance_due, created_by, import_batch_id)
+         VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)",
+    )
+    .bind(&invoice_id)
+    .bind(company_id)
+    .bind(&number)
+    .bind(&parsed.invoice_date)
+    .bind(due_date)
+    .bind(&customer_id)
+    .bind(subtotal_total)
+    .bind(tax_total)
+    .bind(discount_total)
+    .bind(grand_total)
+    .bind(&parsed.po_number)
+    .bind(&parsed.reference_note)
+    .bind(grand_total)
+    .bind(user_id)
+    .bind(job_id)
+    .execute(pool)
+    .await
+    .map_err(|e| format!("Failed to create invoice '{number}': {e}"))?;
+
+    if let Some(pid) = product_id {
+        let item_id = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO invoice_items (id, invoice_id, company_id, product_id, product_name, product_sku,
+             quantity, unit_price, tax_rate, tax_amount, discount_rate, discount_amount, discount_type,
+             line_total, import_batch_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'percent', ?, ?)",
+        )
+        .bind(&item_id)
+        .bind(&invoice_id)
+        .bind(company_id)
+        .bind(&pid)
+        .bind(&product_name)
+        .bind(&product_sku_display)
+        .bind(qty)
+        .bind(parsed.unit_price)
+        .bind(parsed.tax_rate)
+        .bind(tax_amount)
+        .bind(parsed.discount)
+        .bind(discount_amount)
+        .bind(line_total)
+        .bind(job_id)
+        .execute(pool)
+        .await
+        .map_err(|e| format!("Failed to add item to invoice '{number}': {e}"))?;
+    }
+
+    // Flip the draft header to the file's real status + payment position.
+    sqlx::query("UPDATE invoices SET status = ?, amount_paid = ?, balance_due = ? WHERE id = ? AND company_id = ?")
+        .bind(&status)
+        .bind(amount_paid)
+        .bind(balance_due)
+        .bind(&invoice_id)
+        .bind(company_id)
+        .execute(pool)
+        .await
+        .map_err(|e| format!("Failed to finalize imported invoice '{number}': {e}"))?;
+
+    Ok(true)
+}
+
+/// Imports one purchase-bill row. Returns Ok(true) when a record was created,
+/// Ok(false) when the conflict strategy skipped it.
+#[allow(clippy::too_many_arguments)]
+async fn import_one_purchase_bill_row(
+    pool: &SqlitePool,
+    company_id: &str,
+    user_id: &str,
+    mappings: &[FieldMapping],
+    row: &[String],
+    job_id: &str,
+    strategy: ConflictStrategy,
+) -> Result<bool, String> {
+    let parsed = parse_purchase_bill_row(mappings, row)?;
+    let number = if parsed.po_number.is_empty() {
+        next_free_po_number(pool, company_id).await?
+    } else {
+        parsed.po_number.clone()
+    };
+
+    let exists = po_number_exists(pool, company_id, &number).await?;
+    if exists && strategy == ConflictStrategy::Skip {
+        return Ok(false);
+    }
+
+    let mut product_id: Option<String> = None;
+    let mut product_name = String::new();
+    let mut product_sku_display = String::new();
+    if !parsed.product_sku.is_empty() {
+        let product = sqlx::query_as::<_, (String, String)>(
+            "SELECT id, name FROM products WHERE company_id = ? AND sku = ? COLLATE NOCASE AND deleted_at IS NULL LIMIT 1",
+        )
+        .bind(company_id)
+        .bind(&parsed.product_sku)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| format!("Product lookup error: {e}"))?;
+        match product {
+            Some((id, name)) => {
+                product_id = Some(id);
+                product_name = name;
+                product_sku_display = parsed.product_sku.clone();
+            }
+            None => {
+                return Err(format!(
+                    "No product with SKU '{}' was found. Import your products first.",
+                    parsed.product_sku
+                ));
+            }
+        }
+    }
+
+    // Line computation (paisa, no discount on purchase lines).
+    let qty = if product_id.is_some() {
+        parsed.quantity.max(1)
+    } else {
+        0
+    };
+    let subtotal = qty.saturating_mul(parsed.unit_cost);
+    let tax_amount = subtotal.saturating_mul(parsed.tax_rate) / 10_000;
+    let line_total = subtotal.saturating_add(tax_amount);
+
+    let (subtotal_total, tax_total, grand_total) = if product_id.is_some() {
+        (subtotal, tax_amount, line_total)
+    } else {
+        let total = parsed.total_amount.unwrap_or(0);
+        (total, 0, total)
+    };
+
+    let (status, amount_paid, balance_due) =
+        po_amounts(&parsed.status, parsed.amount_paid, grand_total);
+
+    let quantity_received = if status == "received" || status == "paid" {
+        qty
+    } else {
+        0
+    };
+
+    let supplier_id = resolve_or_create_supplier(pool, company_id, &parsed.supplier_name, job_id)
+        .await?
+        .ok_or("Supplier is missing")?;
+
+    let po_id = uuid::Uuid::new_v4().to_string();
+    let expected_date = parsed.expected_date.as_deref().unwrap_or("");
+    sqlx::query(
+        "INSERT INTO purchase_orders (id, company_id, supplier_id, po_number, po_date, expected_date,
+         status, subtotal, tax_total, grand_total, amount_paid, balance_due, reference_note,
+         created_by, import_batch_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&po_id)
+    .bind(company_id)
+    .bind(&supplier_id)
+    .bind(&number)
+    .bind(&parsed.po_date)
+    .bind(expected_date)
+    .bind(&status)
+    .bind(subtotal_total)
+    .bind(tax_total)
+    .bind(grand_total)
+    .bind(amount_paid)
+    .bind(balance_due)
+    .bind(&parsed.reference_note)
+    .bind(user_id)
+    .bind(job_id)
+    .execute(pool)
+    .await
+    .map_err(|e| format!("Failed to create purchase order '{number}': {e}"))?;
+
+    if let Some(pid) = product_id {
+        let item_id = uuid::Uuid::new_v4().to_string();
+        let expiry_date = parsed.expiry_date.as_deref().unwrap_or("");
+        sqlx::query(
+            "INSERT INTO purchase_order_items (id, po_id, company_id, product_id, product_name, product_sku,
+             quantity_ordered, quantity_received, unit_cost, tax_rate, tax_amount, line_total,
+             expiry_date, import_batch_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&item_id)
+        .bind(&po_id)
+        .bind(company_id)
+        .bind(&pid)
+        .bind(&product_name)
+        .bind(&product_sku_display)
+        .bind(qty)
+        .bind(quantity_received)
+        .bind(parsed.unit_cost)
+        .bind(parsed.tax_rate)
+        .bind(tax_amount)
+        .bind(line_total)
+        .bind(expiry_date)
+        .bind(job_id)
+        .execute(pool)
+        .await
+        .map_err(|e| format!("Failed to add item to purchase order '{number}': {e}"))?;
+    }
+
+    Ok(true)
+}
+
+/// Dry-run invoice validation: parse + product-exists + duplicate number check.
+async fn validate_invoice_row(
+    pool: &SqlitePool,
+    company_id: &str,
+    request: &ImportRequest,
+    row: &[String],
+) -> Result<ValidationOutcome, String> {
+    let parsed = parse_invoice_row(&request.mappings, row)?;
+    if !parsed.product_sku.is_empty() && !sku_exists(pool, company_id, &parsed.product_sku).await? {
+        return Err(format!(
+            "No product with SKU '{}' was found. Import your products first.",
+            parsed.product_sku
+        ));
+    }
+    // Empty invoice numbers get auto-generated, so they never collide.
+    let exists = if parsed.invoice_number.is_empty() {
+        false
+    } else {
+        invoice_number_exists(pool, company_id, &parsed.invoice_number).await?
+    };
+    Ok(conflict_outcome(exists, request.conflict_strategy))
+}
+
+/// Dry-run purchase-bill validation.
+async fn validate_purchase_bill_row(
+    pool: &SqlitePool,
+    company_id: &str,
+    request: &ImportRequest,
+    row: &[String],
+) -> Result<ValidationOutcome, String> {
+    let parsed = parse_purchase_bill_row(&request.mappings, row)?;
+    if !parsed.product_sku.is_empty() && !sku_exists(pool, company_id, &parsed.product_sku).await? {
+        return Err(format!(
+            "No product with SKU '{}' was found. Import your products first.",
+            parsed.product_sku
+        ));
+    }
+    let exists = if parsed.po_number.is_empty() {
+        false
+    } else {
+        po_number_exists(pool, company_id, &parsed.po_number).await?
+    };
+    Ok(conflict_outcome(exists, request.conflict_strategy))
 }
 
 #[cfg(test)]
@@ -3207,6 +5848,30 @@ mod tests {
         .fetch_one(&*pool)
         .await
         .expect("company id")
+    }
+
+    /// Waits for a background import job to reach a terminal state, then
+    /// returns the full `ImportResult` stored on the job. Mirrors what the
+    /// frontend does by polling `get_import_job`.
+    async fn finish_job(app: &tauri::App<MockRuntime>, job_id: &str) -> ImportResult {
+        let pool = app.state::<SqlitePool>();
+        for _ in 0..400 {
+            let status: String = sqlx::query_scalar("SELECT status FROM import_jobs WHERE id = ?")
+                .bind(job_id)
+                .fetch_one(&*pool)
+                .await
+                .expect("job status");
+            if matches!(status.as_str(), "completed" | "failed" | "rolled_back") {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+        let status = get_import_job(app.state(), app.state(), job_id.to_string())
+            .await
+            .expect("get job");
+        status
+            .result
+            .expect("finished job should carry a result")
     }
 
     fn mapping(
@@ -3273,7 +5938,7 @@ mod tests {
             "Tax Rate".to_string(),
             "Expiry Date".to_string(),
         ];
-        let mapped = propose_mappings("products", &headers);
+        let mapped = propose_mappings("products", None, &headers);
         assert_eq!(mapped[0].target_field, "sku");
         assert_eq!(mapped[0].field_category, "core");
         assert_eq!(mapped[0].confidence, "high");
@@ -3294,7 +5959,7 @@ mod tests {
         // Input: a header with no known pattern.
         // Expected: custom:<normalized> field, category "custom", confidence "unknown".
         let headers = vec!["Flavor".to_string()];
-        let mapped = propose_mappings("products", &headers);
+        let mapped = propose_mappings("products", None, &headers);
         assert_eq!(mapped[0].target_field, "custom:flavor");
         assert_eq!(mapped[0].field_category, "custom");
         assert_eq!(mapped[0].confidence, "unknown");
@@ -3305,7 +5970,7 @@ mod tests {
         // Input: headers ["Name", "Price"].
         // Expected: source_column/source_index echo the file.
         let headers = vec!["Name".to_string(), "Price".to_string()];
-        let mapped = propose_mappings("products", &headers);
+        let mapped = propose_mappings("products", None, &headers);
         assert_eq!(mapped[0].source_column, "Name");
         assert_eq!(mapped[0].source_index, 0);
         assert_eq!(mapped[1].source_column, "Price");
@@ -3327,7 +5992,7 @@ mod tests {
             "STRN".to_string(),
             "Buyer Type".to_string(),
         ];
-        let mapped = propose_mappings("customers", &headers);
+        let mapped = propose_mappings("customers", None, &headers);
         let fields: Vec<&str> = mapped.iter().map(|m| m.target_field.as_str()).collect();
         assert_eq!(
             fields,
@@ -3351,7 +6016,7 @@ mod tests {
         // Input: a column the customer vocabulary does not know.
         // Expected: mapped as "skip".
         let headers = vec!["Customer Name".to_string(), "Notes".to_string()];
-        let mapped = propose_mappings("customers", &headers);
+        let mapped = propose_mappings("customers", None, &headers);
         assert_eq!(mapped[0].target_field, "customer_name");
         assert_eq!(mapped[1].target_field, "skip");
         assert_eq!(mapped[1].field_category, "skip");
@@ -3368,7 +6033,7 @@ mod tests {
             "Cost Price".to_string(),
             "Expiry Date".to_string(),
         ];
-        let mapped = propose_mappings("opening_stock", &headers);
+        let mapped = propose_mappings("opening_stock", None, &headers);
         let fields: Vec<&str> = mapped.iter().map(|m| m.target_field.as_str()).collect();
         assert_eq!(
             fields,
@@ -3412,13 +6077,51 @@ mod tests {
         assert_eq!(
             cell_to_string(&Data::String("  Widget  ".to_string())),
             "Widget"
-        );
-        assert_eq!(cell_to_string(&Data::Int(42)), "42");
+        );        assert_eq!(cell_to_string(&Data::Int(42)), "42");
         assert_eq!(cell_to_string(&Data::Float(5.0)), "5");
         assert_eq!(cell_to_string(&Data::Float(5.5)), "5.5");
         assert_eq!(cell_to_string(&Data::Bool(true)), "true");
         assert_eq!(cell_to_string(&Data::Error(CellErrorType::NA)), "");
         assert_eq!(cell_to_string(&Data::Empty), "");
+    }
+
+    #[test]
+    fn split_text_line_uses_tabs_and_double_spaces_as_column_separators() {
+        // Input: a tab-separated line and a double-space-separated line.
+        // Expected: single spaces inside a cell are preserved, column runs split.
+        assert_eq!(
+            split_text_line("SKU\tProduct Name\tQty"),
+            vec!["SKU", "Product Name", "Qty"]
+        );
+        assert_eq!(
+            split_text_line("A-1  Widget  10"),
+            vec!["A-1", "Widget", "10"]
+        );
+        // Single spaces inside a name must NOT split the cell.
+        assert_eq!(
+            split_text_line("C-2  Ijaz & Company  5"),
+            vec!["C-2", "Ijaz & Company", "5"]
+        );
+        assert_eq!(split_text_line("   "), Vec::<String>::new());
+    }
+
+    #[test]
+    fn parse_text_rows_drops_blank_lines_and_pads_cells() {
+        // Input: lines with an empty line in the middle and a short cell.
+        // Expected: blank lines removed, every line still becomes a row.
+        let text = "SKU  Product Name  Qty\nA-1  Widget  10\n\nB-2  Gadget  20\n";
+        let rows = parse_text_rows(text);
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0], vec!["SKU", "Product Name", "Qty"]);
+        assert_eq!(rows[2], vec!["B-2", "Gadget", "20"]);
+    }
+
+    #[test]
+    fn read_pdf_rows_rejects_bytes_that_are_not_a_pdf() {
+        // Input: garbage bytes for a "PDF".
+        // Expected: Err with guidance, since the text layer cannot be parsed.
+        let err = read_pdf_rows(b"definitely not a pdf").unwrap_err();
+        assert!(err.contains("PDF"), "got: {err}");
     }
 
     // ---------------------------------------------------------------
@@ -3482,6 +6185,7 @@ mod tests {
             file_bytes: b"Name,Price\nAlpha,10.50\nBeta,20.25\n".to_vec(),
             file_type: "csv".to_string(),
             template_name: String::new(),
+            has_header_row: true,
             import_data: false,
         conflict_strategy: ConflictStrategy::default(),
         dry_run: false,
@@ -3501,6 +6205,7 @@ mod tests {
             file_bytes: b"Header\none\ntwo\nthree\n".to_vec(),
             file_type: "csv".to_string(),
             template_name: String::new(),
+            has_header_row: true,
             import_data: false,
         conflict_strategy: ConflictStrategy::default(),
         dry_run: false,
@@ -3550,6 +6255,7 @@ mod tests {
             csv.into_bytes(),
             "csv".to_string(),
             None,
+            None,
         )
         .await
         .expect("analyze");
@@ -3576,6 +6282,7 @@ mod tests {
             csv.into_bytes(),
             "csv".to_string(),
             None,
+            None,
         )
         .await
         .expect("analyze");
@@ -3594,6 +6301,7 @@ mod tests {
             Vec::new(),
             "csv".to_string(),
             None,
+            None,
         )
         .await
         .unwrap_err();
@@ -3601,21 +6309,196 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn execute_import_refuses_to_commit_without_confirm_gate() {
+        // Input: import_data = true, dry_run = false on execute_import.
+        // Expected: Err telling the caller to preview + confirm_import, and no
+        //           rows or import_jobs written (the §23.3 confirm gate).
+        let app = owner_app().await;
+        let csv = "SKU,Product Name\nA-1,Widget\n";
+
+        let err = execute_import(
+            app.state(),
+            app.state(),
+            ImportRequest {
+                target: "products".to_string(),
+                mappings: vec![
+                    mapping("SKU", 0, "sku", "core", "high"),
+                    mapping("Product Name", 1, "name", "core", "high"),
+                ],
+                file_bytes: csv.as_bytes().to_vec(),
+                file_type: "csv".to_string(),
+                template_name: String::new(),
+                has_header_row: true,
+                import_data: true,
+                conflict_strategy: ConflictStrategy::default(),
+                dry_run: false,
+                file_name: None,
+            },
+        )
+        .await
+        .expect_err("execute_import must not commit directly");
+
+        assert!(
+            err.contains("confirm_import"),
+            "expected confirm-gate error, got: {err}"
+        );
+
+        let pool = app.state::<SqlitePool>();
+        let products: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM products")
+            .fetch_one(&*pool)
+            .await
+            .expect("products");
+        assert_eq!(products, 0, "no rows may be written before confirmation");
+        let jobs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM import_jobs")
+            .fetch_one(&*pool)
+            .await
+            .expect("jobs");
+        assert_eq!(jobs, 0, "no import job may be created before confirmation");
+    }
+
+    #[tokio::test]
     async fn analyze_import_file_rejects_unsupported_type() {
-        // Input: file_type "pdf".
+        // Input: file_type "txt".
         // Expected: Err listing supported types.
         let app = owner_app().await;
         let err = analyze_import_file(
             app.state(),
             app.state(),
             b"data".to_vec(),
-            "pdf".to_string(),
+            "txt".to_string(),
+            None,
             None,
         )
         .await
         .unwrap_err();
         assert!(err.contains("Unsupported file type"), "got: {err}");
         assert!(err.contains("xlsx"));
+        assert!(err.contains("pdf"));
+    }
+
+    #[tokio::test]
+    async fn analyze_auto_reuses_matching_target_template() {
+        // Setup: save a "Medicines" template for the products target that maps
+        // SKU + Product Name.
+        // Expected: analyzing a file with those headers auto-detects the
+        // template, applies its mappings, and bumps its use_count.
+        let app = owner_app().await;
+        let company_id = current_company_id(&app).await;
+        let pool = app.state::<SqlitePool>();
+
+        save_import_template(
+            &*pool,
+            &company_id,
+            &ImportRequest {
+                target: "products".to_string(),
+                mappings: vec![
+                    FieldMapping {
+                        source_column: "SKU".to_string(),
+                        source_index: 0,
+                        target_field: "sku".to_string(),
+                        field_category: "core".to_string(),
+                        confidence: "high".to_string(),
+                        manual_value: None,
+                    },
+                    FieldMapping {
+                        source_column: "Product Name".to_string(),
+                        source_index: 1,
+                        target_field: "name".to_string(),
+                        field_category: "core".to_string(),
+                        confidence: "high".to_string(),
+                        manual_value: None,
+                    },
+                ],
+                file_bytes: Vec::new(),
+                file_type: "csv".to_string(),
+                template_name: "Medicines".to_string(),
+                has_header_row: true,
+                import_data: false,
+                conflict_strategy: ConflictStrategy::Skip,
+                dry_run: true,
+                file_name: None,
+            },
+        )
+        .await;
+
+        let csv = "SKU,Product Name\nA-1,Widget\n".to_string();
+        let analysis = analyze_import_file(
+            app.state(),
+            app.state(),
+            csv.into_bytes(),
+            "csv".to_string(),
+            Some("products".to_string()),
+            None,
+        )
+        .await
+        .expect("analyze");
+
+        assert_eq!(analysis.auto_template_name.as_deref(), Some("Medicines"));
+        assert!(
+            analysis.auto_template_id.is_some(),
+            "template id should be attached"
+        );
+        assert_eq!(analysis.proposed_mappings[0].target_field, "sku");
+        assert_eq!(analysis.proposed_mappings[1].target_field, "name");
+
+        let template_id = analysis.auto_template_id.unwrap();
+        let use_count: i64 = sqlx::query_scalar(
+            "SELECT use_count FROM import_templates WHERE id = ?",
+        )
+        .bind(&template_id)
+        .fetch_one(&*pool)
+        .await
+        .expect("use_count");
+        assert_eq!(use_count, 1, "auto-reuse must bump use_count");
+    }
+
+    #[tokio::test]
+    async fn analyze_does_not_auto_apply_template_from_other_target() {
+        // Setup: save a template for the "customers" target only.
+        // Expected: analyzing a products file does NOT match it.
+        let app = owner_app().await;
+        let company_id = current_company_id(&app).await;
+        let pool = app.state::<SqlitePool>();
+
+        save_import_template(
+            &*pool,
+            &company_id,
+            &ImportRequest {
+                target: "customers".to_string(),
+                mappings: vec![FieldMapping {
+                    source_column: "Name".to_string(),
+                    source_index: 0,
+                    target_field: "name".to_string(),
+                    field_category: "core".to_string(),
+                    confidence: "high".to_string(),
+                    manual_value: None,
+                }],
+                file_bytes: Vec::new(),
+                file_type: "csv".to_string(),
+                template_name: "CustomerList".to_string(),
+                has_header_row: true,
+                import_data: false,
+                conflict_strategy: ConflictStrategy::Skip,
+                dry_run: true,
+                file_name: None,
+            },
+        )
+        .await;
+
+        let csv = "SKU,Product Name\nA-1,Widget\n".to_string();
+        let analysis = analyze_import_file(
+            app.state(),
+            app.state(),
+            csv.into_bytes(),
+            "csv".to_string(),
+            Some("products".to_string()),
+            None,
+        )
+        .await
+        .expect("analyze");
+
+        assert!(analysis.auto_template_id.is_none());
+        assert!(analysis.auto_template_name.is_none());
     }
 
     #[tokio::test]
@@ -3628,6 +6511,7 @@ mod tests {
             app.state(),
             b"a,b\n1,2".to_vec(),
             "csv".to_string(),
+            None,
             None,
         )
         .await
@@ -3652,7 +6536,7 @@ mod tests {
         let bytes = make_docx(xml);
 
         let analysis =
-            analyze_import_file(app.state(), app.state(), bytes, "docx".to_string(), None)
+            analyze_import_file(app.state(), app.state(), bytes, "docx".to_string(), None, None)
                 .await
                 .expect("analyze");
         assert_eq!(analysis.file_type, "docx");
@@ -3675,9 +6559,9 @@ mod tests {
             "<w:body><w:p><w:r><w:t>Just text</w:t></w:r></w:p></w:body></w:document>",
         );
         let bytes = make_docx(xml);
-        let err = analyze_import_file(app.state(), app.state(), bytes, "docx".to_string(), None)
-            .await
-            .unwrap_err();
+        let err = analyze_import_file(app.state(), app.state(), bytes, "docx".to_string(), None, None)
+        .await
+        .unwrap_err();
         assert!(err.contains("No table found"), "got: {err}");
     }
 
@@ -3700,7 +6584,7 @@ mod tests {
             "A-2,Widget Two,Gadgets,Acme Supplies,5,2000.00,1000.00,0,,\n",
         );
 
-        let result = execute_import(
+        let result = confirm_import(
             app.state(),
             app.state(),
             ImportRequest {
@@ -3720,6 +6604,7 @@ mod tests {
                 file_bytes: csv.as_bytes().to_vec(),
                 file_type: "csv".to_string(),
                 template_name: "default".to_string(),
+                has_header_row: true,
                 import_data: true,
             conflict_strategy: ConflictStrategy::default(),
             dry_run: false,
@@ -3728,6 +6613,9 @@ mod tests {
         )
         .await
         .expect("import");
+
+        let job_id = result.job_id.expect("job id");
+        let result = finish_job(&app, &job_id).await;
 
         assert_eq!(result.products_imported, 2);
         assert_eq!(result.fields_created, 1);
@@ -3846,7 +6734,7 @@ mod tests {
         // so 1 product imported and 1 row skipped (not an error).
         let app = owner_app().await;
         let csv = "SKU,Product Name\nA-1,Widget\nA-1,Widget Dup\n";
-        let result = execute_import(
+        let result = confirm_import(
             app.state(),
             app.state(),
             ImportRequest {
@@ -3858,6 +6746,7 @@ mod tests {
                 file_bytes: csv.as_bytes().to_vec(),
                 file_type: "csv".to_string(),
                 template_name: String::new(),
+                has_header_row: true,
                 import_data: true,
                 conflict_strategy: ConflictStrategy::default(),
                 dry_run: false,
@@ -3866,6 +6755,9 @@ mod tests {
         )
         .await
         .expect("import");
+
+        let job_id = result.job_id.expect("job id");
+        let result = finish_job(&app, &job_id).await;
 
         assert_eq!(result.products_imported, 1);
         assert_eq!(result.rows_skipped, 1);
@@ -3891,7 +6783,7 @@ mod tests {
         .expect("seed product");
 
         let csv = "SKU,Product Name\nA-1,New Name\n";
-        let result = execute_import(
+        let result = confirm_import(
             app.state(),
             app.state(),
             ImportRequest {
@@ -3903,6 +6795,7 @@ mod tests {
                 file_bytes: csv.as_bytes().to_vec(),
                 file_type: "csv".to_string(),
                 template_name: String::new(),
+                has_header_row: true,
                 import_data: true,
                 conflict_strategy: ConflictStrategy::Overwrite,
                 dry_run: false,
@@ -3911,6 +6804,9 @@ mod tests {
         )
         .await
         .expect("import");
+
+        let job_id = result.job_id.expect("job id");
+        let result = finish_job(&app, &job_id).await;
 
         assert_eq!(result.products_imported, 1);
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM products WHERE company_id = ?")
@@ -3947,7 +6843,7 @@ mod tests {
         .expect("seed product");
 
         let csv = "SKU,Product Name\nA-1,Another\n";
-        let result = execute_import(
+        let result = confirm_import(
             app.state(),
             app.state(),
             ImportRequest {
@@ -3959,6 +6855,7 @@ mod tests {
                 file_bytes: csv.as_bytes().to_vec(),
                 file_type: "csv".to_string(),
                 template_name: String::new(),
+                has_header_row: true,
                 import_data: true,
                 conflict_strategy: ConflictStrategy::Suffix,
                 dry_run: false,
@@ -3967,6 +6864,9 @@ mod tests {
         )
         .await
         .expect("import");
+
+        let job_id = result.job_id.expect("job id");
+        let result = finish_job(&app, &job_id).await;
 
         assert_eq!(result.products_imported, 1);
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM products WHERE company_id = ?")
@@ -3991,7 +6891,7 @@ mod tests {
         // Expected: every row errors with the "no product NAME" message.
         let app = owner_app().await;
         let csv = "SKU\nA-1\nA-2\n";
-        let result = execute_import(
+        let result = confirm_import(
             app.state(),
             app.state(),
             ImportRequest {
@@ -4000,6 +6900,7 @@ mod tests {
                 file_bytes: csv.as_bytes().to_vec(),
                 file_type: "csv".to_string(),
                 template_name: String::new(),
+                has_header_row: true,
                 import_data: true,
             conflict_strategy: ConflictStrategy::default(),
             dry_run: false,
@@ -4008,6 +6909,9 @@ mod tests {
         )
         .await
         .expect("import");
+
+        let job_id = result.job_id.expect("job id");
+        let result = finish_job(&app, &job_id).await;
 
         assert_eq!(result.products_imported, 0);
         assert_eq!(result.rows_with_errors, 2);
@@ -4024,7 +6928,7 @@ mod tests {
         // Expected: blank row skipped, both products imported.
         let app = owner_app().await;
         let csv = "SKU,Product Name\nA-1,Widget\n\nA-2,Gadget\n";
-        let result = execute_import(
+        let result = confirm_import(
             app.state(),
             app.state(),
             ImportRequest {
@@ -4036,6 +6940,7 @@ mod tests {
                 file_bytes: csv.as_bytes().to_vec(),
                 file_type: "csv".to_string(),
                 template_name: String::new(),
+                has_header_row: true,
                 import_data: true,
             conflict_strategy: ConflictStrategy::default(),
             dry_run: false,
@@ -4044,6 +6949,10 @@ mod tests {
         )
         .await
         .expect("import");
+
+        let job_id = result.job_id.expect("job id");
+        let result = finish_job(&app, &job_id).await;
+
         assert_eq!(result.products_imported, 2);
         assert_eq!(result.rows_with_errors, 0);
     }
@@ -4054,7 +6963,7 @@ mod tests {
         // Expected: that row fails; others still import.
         let app = owner_app().await;
         let csv = "SKU,Product Name,Expiry Date\nA-1,Widget,not-a-date\nA-2,Gadget,\n";
-        let result = execute_import(
+        let result = confirm_import(
             app.state(),
             app.state(),
             ImportRequest {
@@ -4067,6 +6976,7 @@ mod tests {
                 file_bytes: csv.as_bytes().to_vec(),
                 file_type: "csv".to_string(),
                 template_name: String::new(),
+                has_header_row: true,
                 import_data: true,
             conflict_strategy: ConflictStrategy::default(),
             dry_run: false,
@@ -4075,6 +6985,9 @@ mod tests {
         )
         .await
         .expect("import");
+
+        let job_id = result.job_id.expect("job id");
+        let result = finish_job(&app, &job_id).await;
 
         assert_eq!(result.products_imported, 1);
         assert_eq!(result.rows_with_errors, 1);
@@ -4106,6 +7019,7 @@ mod tests {
                 file_bytes: csv.as_bytes().to_vec(),
                 file_type: "csv".to_string(),
                 template_name: String::new(),
+                has_header_row: true,
                 import_data: false,
             conflict_strategy: ConflictStrategy::default(),
             dry_run: false,
@@ -4135,7 +7049,7 @@ mod tests {
         for i in 0..55 {
             csv.push_str(&format!("SKU-{i}\n"));
         }
-        let result = execute_import(
+        let result = confirm_import(
             app.state(),
             app.state(),
             ImportRequest {
@@ -4144,6 +7058,7 @@ mod tests {
                 file_bytes: csv.into_bytes(),
                 file_type: "csv".to_string(),
                 template_name: String::new(),
+                has_header_row: true,
                 import_data: true,
             conflict_strategy: ConflictStrategy::default(),
             dry_run: false,
@@ -4152,6 +7067,9 @@ mod tests {
         )
         .await
         .expect("import");
+
+        let job_id = result.job_id.expect("job id");
+        let result = finish_job(&app, &job_id).await;
 
         assert_eq!(result.products_imported, 0);
         assert_eq!(result.rows_with_errors, 50);
@@ -4183,6 +7101,7 @@ mod tests {
                 file_bytes: b"a,b\n1,2".to_vec(),
                 file_type: "csv".to_string(),
                 template_name: String::new(),
+                has_header_row: true,
                 import_data: true,
             conflict_strategy: ConflictStrategy::default(),
             dry_run: false,
@@ -4206,7 +7125,7 @@ mod tests {
             "Zainab Ali,zainab@mail.com,03111234567,Karachi,,NTN-002,STRN-002,unregistered\n",
         );
 
-        let result = execute_import(
+        let result = confirm_import(
             app.state(),
             app.state(),
             ImportRequest {
@@ -4224,6 +7143,7 @@ mod tests {
                 file_bytes: csv.as_bytes().to_vec(),
                 file_type: "csv".to_string(),
                 template_name: String::new(),
+                has_header_row: true,
                 import_data: true,
             conflict_strategy: ConflictStrategy::default(),
             dry_run: false,
@@ -4232,6 +7152,9 @@ mod tests {
         )
         .await
         .expect("import");
+
+        let job_id = result.job_id.expect("job id");
+        let result = finish_job(&app, &job_id).await;
 
         assert_eq!(result.customers_imported, 2);
         assert_eq!(result.rows_with_errors, 0);
@@ -4284,7 +7207,7 @@ mod tests {
             "Ahmed Khan,03111234567\n",
         );
 
-        let result = execute_import(
+        let result = confirm_import(
             app.state(),
             app.state(),
             ImportRequest {
@@ -4296,6 +7219,7 @@ mod tests {
                 file_bytes: csv.as_bytes().to_vec(),
                 file_type: "csv".to_string(),
                 template_name: String::new(),
+                has_header_row: true,
                 import_data: true,
             conflict_strategy: ConflictStrategy::default(),
             dry_run: false,
@@ -4304,6 +7228,9 @@ mod tests {
         )
         .await
         .expect("import");
+
+        let job_id = result.job_id.expect("job id");
+        let result = finish_job(&app, &job_id).await;
 
         assert_eq!(result.customers_imported, 1);
         assert_eq!(result.rows_with_errors, 0);
@@ -4324,7 +7251,7 @@ mod tests {
         let app = owner_app().await;
         let csv = "Customer Name,Phone\n,03001234567\n";
 
-        let result = execute_import(
+        let result = confirm_import(
             app.state(),
             app.state(),
             ImportRequest {
@@ -4336,6 +7263,7 @@ mod tests {
                 file_bytes: csv.as_bytes().to_vec(),
                 file_type: "csv".to_string(),
                 template_name: String::new(),
+                has_header_row: true,
                 import_data: true,
             conflict_strategy: ConflictStrategy::default(),
             dry_run: false,
@@ -4344,6 +7272,9 @@ mod tests {
         )
         .await
         .expect("import");
+
+        let job_id = result.job_id.expect("job id");
+        let result = finish_job(&app, &job_id).await;
 
         assert_eq!(result.customers_imported, 0);
         assert_eq!(result.rows_with_errors, 1);
@@ -4364,7 +7295,7 @@ mod tests {
 
         // Seed the product via the products import path.
         let product_csv = "SKU,Product Name,Quantity\nA-1,Widget One,5\n";
-        let product_result = execute_import(
+        let product_result = confirm_import(
             app.state(),
             app.state(),
             ImportRequest {
@@ -4377,6 +7308,7 @@ mod tests {
                 file_bytes: product_csv.as_bytes().to_vec(),
                 file_type: "csv".to_string(),
                 template_name: String::new(),
+                has_header_row: true,
                 import_data: true,
             conflict_strategy: ConflictStrategy::default(),
             dry_run: false,
@@ -4385,13 +7317,15 @@ mod tests {
         )
         .await
         .expect("product import");
+        let product_job_id = product_result.job_id.expect("product job id");
+        let product_result = finish_job(&app, &product_job_id).await;
         assert_eq!(product_result.products_imported, 1);
 
         let stock_csv = concat!(
             "SKU,Opening Qty,Cost Price,Expiry Date\n",
             "A-1,10,850.00,2026-12-31\n",
         );
-        let stock_result = execute_import(
+        let stock_result = confirm_import(
             app.state(),
             app.state(),
             ImportRequest {
@@ -4405,6 +7339,7 @@ mod tests {
                 file_bytes: stock_csv.as_bytes().to_vec(),
                 file_type: "csv".to_string(),
                 template_name: String::new(),
+                has_header_row: true,
                 import_data: true,
             conflict_strategy: ConflictStrategy::default(),
             dry_run: false,
@@ -4413,6 +7348,9 @@ mod tests {
         )
         .await
         .expect("stock import");
+
+        let stock_job_id = stock_result.job_id.expect("stock job id");
+        let stock_result = finish_job(&app, &stock_job_id).await;
 
         assert_eq!(stock_result.items_imported, 1);
         assert_eq!(stock_result.rows_with_errors, 0);
@@ -4453,7 +7391,7 @@ mod tests {
         let app = owner_app().await;
         let csv = "SKU,Opening Qty\nMISSING-1,10\n";
 
-        let result = execute_import(
+        let result = confirm_import(
             app.state(),
             app.state(),
             ImportRequest {
@@ -4465,6 +7403,7 @@ mod tests {
                 file_bytes: csv.as_bytes().to_vec(),
                 file_type: "csv".to_string(),
                 template_name: String::new(),
+                has_header_row: true,
                 import_data: true,
             conflict_strategy: ConflictStrategy::default(),
             dry_run: false,
@@ -4473,6 +7412,9 @@ mod tests {
         )
         .await
         .expect("import");
+
+        let job_id = result.job_id.expect("job id");
+        let result = finish_job(&app, &job_id).await;
 
         assert_eq!(result.items_imported, 0);
         assert_eq!(result.rows_with_errors, 1);
@@ -4503,7 +7445,7 @@ mod tests {
             "Global Traders,Sana,03111234567,sana@global.pk,7654321-0\n",
         );
 
-        let result = execute_import(
+        let result = confirm_import(
             app.state(),
             app.state(),
             ImportRequest {
@@ -4518,6 +7460,7 @@ mod tests {
                 file_bytes: csv.as_bytes().to_vec(),
                 file_type: "csv".to_string(),
                 template_name: String::new(),
+                has_header_row: true,
                 import_data: true,
                 conflict_strategy: ConflictStrategy::default(),
                 dry_run: false,
@@ -4526,6 +7469,9 @@ mod tests {
         )
         .await
         .expect("import");
+
+        let job_id = result.job_id.expect("job id");
+        let result = finish_job(&app, &job_id).await;
 
         assert_eq!(result.items_imported, 2);
         assert_eq!(result.rows_with_errors, 0);
@@ -4549,7 +7495,7 @@ mod tests {
         let app = owner_app().await;
         let csv = "Supplier Name,Phone\n,03001234567\n";
 
-        let result = execute_import(
+        let result = confirm_import(
             app.state(),
             app.state(),
             ImportRequest {
@@ -4561,6 +7507,7 @@ mod tests {
                 file_bytes: csv.as_bytes().to_vec(),
                 file_type: "csv".to_string(),
                 template_name: String::new(),
+                has_header_row: true,
                 import_data: true,
                 conflict_strategy: ConflictStrategy::default(),
                 dry_run: false,
@@ -4569,6 +7516,9 @@ mod tests {
         )
         .await
         .expect("import");
+
+        let job_id = result.job_id.expect("job id");
+        let result = finish_job(&app, &job_id).await;
 
         assert_eq!(result.items_imported, 0);
         assert_eq!(result.rows_with_errors, 1);
@@ -4600,6 +7550,7 @@ mod tests {
                 file_bytes: csv.as_bytes().to_vec(),
                 file_type: "csv".to_string(),
                 template_name: String::new(),
+                has_header_row: true,
                 import_data: true,
                 conflict_strategy: ConflictStrategy::default(),
                 dry_run: true,
@@ -4635,7 +7586,7 @@ mod tests {
         let company_id = current_company_id(&app).await;
         let csv = "SKU,Product Name,Quantity\nA-1,Widget,5\n";
 
-        let result = execute_import(
+        let result = confirm_import(
             app.state(),
             app.state(),
             ImportRequest {
@@ -4648,6 +7599,7 @@ mod tests {
                 file_bytes: csv.as_bytes().to_vec(),
                 file_type: "csv".to_string(),
                 template_name: String::new(),
+                has_header_row: true,
                 import_data: true,
                 conflict_strategy: ConflictStrategy::default(),
                 dry_run: false,
@@ -4657,6 +7609,9 @@ mod tests {
         .await
         .expect("import");
         let job_id = result.job_id.expect("job id");
+        // Wait for the background import to finish before checking state.
+        let result = finish_job(&app, &job_id).await;
+        assert_eq!(result.products_imported, 1);
 
         let pool = app.state::<SqlitePool>();
         let before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM products WHERE company_id = ?")
@@ -4710,7 +7665,7 @@ mod tests {
         //           list_import_jobs command returns it with counts.
         let app = owner_app().await;
         let csv = "Customer Name,Email\nAcme Corp,a@b.com\n";
-        let result = execute_import(
+        let result = confirm_import(
             app.state(),
             app.state(),
             ImportRequest {
@@ -4722,6 +7677,7 @@ mod tests {
                 file_bytes: csv.as_bytes().to_vec(),
                 file_type: "csv".to_string(),
                 template_name: String::new(),
+                has_header_row: true,
                 import_data: true,
                 conflict_strategy: ConflictStrategy::default(),
                 dry_run: false,
@@ -4731,6 +7687,9 @@ mod tests {
         .await
         .expect("import");
         let job_id = result.job_id.expect("job created");
+        // Wait for the background import to finish so the job is "completed".
+        let result = finish_job(&app, &job_id).await;
+        assert_eq!(result.customers_imported, 1);
 
         let jobs = list_import_jobs(app.state(), app.state()).await.expect("list");
         let job = jobs.into_iter().find(|j| j.id == job_id).expect("job found");
@@ -4748,7 +7707,7 @@ mod tests {
         // Expected: job status "failed" (not completed).
         let app = owner_app().await;
         let csv = "SKU,Product Name\nA-1,Widget\n";
-        let result = execute_import(
+        let result = confirm_import(
             app.state(),
             app.state(),
             ImportRequest {
@@ -4761,6 +7720,7 @@ mod tests {
                 file_bytes: csv.as_bytes().to_vec(),
                 file_type: "csv".to_string(),
                 template_name: String::new(),
+                has_header_row: true,
                 import_data: true,
                 conflict_strategy: ConflictStrategy::default(),
                 dry_run: false,
@@ -4770,6 +7730,8 @@ mod tests {
         .await
         .expect("import");
         let job_id = result.job_id.expect("job created");
+        // Wait for the background import to finish (job will be "failed").
+        let result = finish_job(&app, &job_id).await;
         assert_eq!(result.products_imported, 0);
         assert!(result.rows_with_errors >= 1);
 
@@ -4800,6 +7762,7 @@ mod tests {
                 file_bytes: csv.as_bytes().to_vec(),
                 file_type: "csv".to_string(),
                 template_name: String::new(),
+                has_header_row: true,
                 import_data: false,
                 conflict_strategy: ConflictStrategy::default(),
                 dry_run: false,

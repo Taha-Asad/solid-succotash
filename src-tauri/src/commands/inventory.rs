@@ -1297,6 +1297,8 @@ pub async fn adjust_stock(
     )
     .await;
 
+    crate::commands::notifications::emit_notifications_changed();
+
     Ok(product)
 }
 
@@ -1883,6 +1885,12 @@ pub async fn write_off_batch(
 
     let (_, product_id, current_qty) = batch;
 
+    if current_qty <= 0 {
+        return Err(
+            "This batch is already depleted (0 units left) — nothing to write off.".to_string(),
+        );
+    }
+
     if quantity <= 0 || quantity > current_qty {
         return Err(format!(
             "Invalid write-off quantity. Must be between 1 and {current_qty}."
@@ -1971,6 +1979,7 @@ pub async fn write_off_batch(
         &format!("Wrote off {quantity} unit(s): {}", reference),
     )
     .await;
+    crate::commands::notifications::emit_notifications_changed();
     Ok(to_public(updated, status))
 }
 
@@ -4001,5 +4010,44 @@ mod tests {
         .fetch_one(&*pool)
         .await
         .unwrap()
+    }
+
+    #[tokio::test]
+    async fn write_off_depleted_batch_is_rejected() {
+        // Input: a batch already at 0 units.
+        // Expected: a clear "already depleted" error, NOT "between 1 and 0".
+        let app = owner_app().await;
+        let company_id = register_owner_company_id(&app).await;
+        let product = make_product(&app, "Depleted Item", None).await;
+        let pool = app.state::<SqlitePool>();
+        let batch_id = Uuid::new_v4().to_string();
+        sqlx::query(
+            r#"
+            INSERT INTO stock_batches
+                (id, company_id, product_id, quantity, unit_cost, expiry_date, batch_number, source)
+            VALUES (?, ?, ?, 0, 0, '2030-01-01', 'DPL', 'adjustment')
+            "#,
+        )
+        .bind(&batch_id)
+        .bind(&company_id)
+        .bind(&product.id)
+        .execute(&*pool)
+        .await
+        .unwrap();
+
+        let err = write_off_batch(
+            app.state(),
+            app.state(),
+            batch_id.clone(),
+            1,
+            "test".to_string(),
+        )
+        .await
+        .expect_err("write-off of a depleted batch must fail");
+
+        assert!(
+            err.contains("already depleted"),
+            "expected a clear depleted message, got: {err}"
+        );
     }
 }

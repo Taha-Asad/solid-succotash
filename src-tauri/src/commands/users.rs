@@ -373,6 +373,8 @@ mod tests {
             company_id: Some("c1".into()),
             is_active: true,
             created_at: "2026-01-01".into(),
+            is_super_admin: false,
+            must_change_password: false,
         };
         assert_eq!(get_company_id(&user).unwrap(), "c1");
     }
@@ -389,6 +391,8 @@ mod tests {
             company_id: None,
             is_active: true,
             created_at: "2026-01-01".into(),
+            is_super_admin: false,
+            must_change_password: false,
         };
         assert_eq!(
             get_company_id(&user).unwrap_err(),

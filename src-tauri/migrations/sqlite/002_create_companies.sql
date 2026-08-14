@@ -12,6 +12,17 @@ CREATE TABLE IF NOT EXISTS companies (
     currency_code TEXT NOT NULL DEFAULT 'PKR',
     is_active INTEGER NOT NULL DEFAULT 1
         CHECK (is_active IN (0, 1)),
+    -- SaaS / FBR columns. Added for fresh databases by migration 017;
+    -- existing databases get them from `ensure_saas_columns`
+    -- (db/sqlite_migrate.rs). See SAAS_SPECIFICATION.md §3.10.
+    deleted_at TEXT,
+    version INTEGER NOT NULL DEFAULT 1,     -- optimistic locking
+    ntn TEXT,                               -- National Tax Number (FBR)
+    strn TEXT,                              -- Sales Tax Registration Number (FBR)
+    fbr_registered INTEGER NOT NULL DEFAULT 0
+        CHECK (fbr_registered IN (0, 1)),
+    fbr_registration_date TEXT,
+    province TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

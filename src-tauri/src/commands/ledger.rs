@@ -98,7 +98,6 @@ pub struct AccountBalance {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JournalEntryWithLines {
-    #[serde(flatten)]
     pub entry: JournalEntry,
     pub lines: Vec<JournalLine>,
 }

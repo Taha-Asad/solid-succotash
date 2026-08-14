@@ -168,6 +168,43 @@ pub async fn set_session_user(app: &tauri::App<MockRuntime>, user: PublicUser) {
     crate::commands::auth::set_current_user(&session, user).await;
 }
 
+/// Inserts a cross-tenant super admin directly into the DB (bypasses
+/// register_company, which always creates a tenant-scoped owner).
+/// Super admins have company_id = NULL and is_super_admin = 1.
+pub async fn insert_super_admin(pool: &SqlitePool, email: &str) -> PublicUser {
+    let password_hash = crate::commands::auth::hash_password("password123")
+        .await
+        .expect("hash should succeed");
+
+    let user_id = Uuid::new_v4().to_string();
+    sqlx::query(
+        r#"
+        INSERT INTO users (id, email, password_hash, full_name, role, company_id, is_active, is_super_admin)
+        VALUES (?, ?, ?, ?, 'super_admin', NULL, 1, 1)
+        "#,
+    )
+    .bind(&user_id)
+    .bind(email)
+    .bind(&password_hash)
+    .bind("Super Admin")
+    .execute(pool)
+    .await
+    .expect("insert_super_admin should succeed");
+
+    sqlx::query_as::<_, PublicUser>(
+        r#"
+        SELECT id, email, full_name, role, company_id, is_active, created_at,
+               is_super_admin, must_change_password
+        FROM users
+        WHERE id = ?
+        "#,
+    )
+    .bind(&user_id)
+    .fetch_one(pool)
+    .await
+    .expect("fetch super admin should succeed")
+}
+
 /// Deactivates the company owned by the given id (simulates an
 /// "inactive company" scenario for require_current_user).
 pub async fn deactivate_company(pool: &SqlitePool, company_id: &str) {

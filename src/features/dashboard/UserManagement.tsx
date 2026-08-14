@@ -519,11 +519,13 @@ function RolesPermissionsCard({
 }) {
   const [selectedRole, setSelectedRole] = useState<string | null>(null);
   const [matrix, setMatrix] = useState<Record<string, boolean>>({});
+  const [hoverCol, setHoverCol] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const selected = roles.find((r) => r.role === selectedRole);
+  const isOwnerRole = selected?.role === "owner";
 
   useEffect(() => {
     if (selectedRole && roles.length > 0) {
@@ -650,14 +652,52 @@ function RolesPermissionsCard({
 
             {selected ? (
               <>
-                <ScrollArea mt="lg" style={{ maxWidth: "100%" }}>
-                  <Table verticalSpacing="xs">
+                <ScrollArea
+                  mt="lg"
+                  mah={430}
+                  type="auto"
+                  offsetScrollbars
+                  scrollbarSize={8}
+                  style={{ maxWidth: "100%" }}
+                >
+                  <Table
+                    stickyHeader
+                    highlightOnHover
+                    withRowBorders
+                    withColumnBorders
+                    style={{ tableLayout: "fixed", width: "100%", minWidth: 900 }}
+                  >
                     <Table.Thead>
                       <Table.Tr>
-                        <Table.Th w={180}>Module</Table.Th>
+                        <Table.Th w={220} style={{ verticalAlign: "middle" }}>
+                          <Text size="xs" tt="uppercase" c="dimmed" fw={700} style={{ letterSpacing: 0.6 }}>
+                            Module
+                          </Text>
+                        </Table.Th>
                         {PERMISSION_ORDER.map((perm) => (
-                          <Table.Th key={perm} ta="center">
-                            {PERMISSION_LABELS[perm] ?? perm}
+                          <Table.Th
+                            key={perm}
+                            ta="center"
+                            w={100}
+                            onMouseEnter={() => setHoverCol(perm)}
+                            onMouseLeave={() => setHoverCol(null)}
+                            style={{
+                              verticalAlign: "middle",
+                              background:
+                                hoverCol === perm
+                                  ? "rgba(124,111,208,0.14)"
+                                  : "var(--app-surface)",
+                            }}
+                          >
+                            <Text
+                              size="xs"
+                              tt="uppercase"
+                              c="dimmed"
+                              fw={700}
+                              style={{ letterSpacing: 0.6 }}
+                            >
+                              {PERMISSION_LABELS[perm] ?? perm}
+                            </Text>
                           </Table.Th>
                         ))}
                       </Table.Tr>
@@ -669,16 +709,29 @@ function RolesPermissionsCard({
                         if (perms.length === 0) return null;
                         return (
                           <Table.Tr key={module}>
-                            <Table.Td>
+                            <Table.Td style={{ verticalAlign: "middle" }}>
                               <Text size="sm" fw={600} style={{ color: INK.text }}>
                                 {MODULE_LABELS[module] ?? module}
                               </Text>
                             </Table.Td>
-                            {PERMISSION_ORDER.map((perm) => {
+                            {PERMISSION_ORDER.map((perm, colIdx) => {
                               const entry = perms.find((p) => p.permission === perm);
+                              const cellBg = hoverCol
+                                ? hoverCol === perm
+                                  ? "rgba(124,111,208,0.12)"
+                                  : undefined
+                                : colIdx % 2 === 1
+                                  ? "var(--app-soft)"
+                                  : undefined;
                               if (!entry) {
                                 return (
-                                  <Table.Td key={perm} ta="center">
+                                  <Table.Td
+                                    key={perm}
+                                    ta="center"
+                                    onMouseEnter={() => setHoverCol(perm)}
+                                    onMouseLeave={() => setHoverCol(null)}
+                                    style={{ verticalAlign: "middle", background: cellBg }}
+                                  >
                                     <Text size="xs" c="dimmed">
                                       —
                                     </Text>
@@ -686,15 +739,25 @@ function RolesPermissionsCard({
                                 );
                               }
                               return (
-                                <Table.Td key={perm} ta="center">
+                                <Table.Td
+                                  key={perm}
+                                  ta="center"
+                                  onMouseEnter={() => setHoverCol(perm)}
+                                  onMouseLeave={() => setHoverCol(null)}
+                                  style={{ verticalAlign: "middle", background: cellBg }}
+                                >
                                   <Checkbox
-                                    checked={matrix[`${module}:${perm}`] ?? false}
-                                    onChange={(event) =>
+                                    checked={
+                                      isOwnerRole ? true : (matrix[`${module}:${perm}`] ?? false)
+                                    }
+                                    disabled={isOwnerRole}
+                                    onChange={(event) => {
+                                      const checked = event.currentTarget.checked;
                                       setMatrix((prev) => ({
                                         ...prev,
-                                        [`${module}:${perm}`]: event.currentTarget.checked,
-                                      }))
-                                    }
+                                        [`${module}:${perm}`]: checked,
+                                      }));
+                                    }}
                                     color={INK.chart.violet}
                                   />
                                 </Table.Td>
@@ -709,7 +772,9 @@ function RolesPermissionsCard({
 
                 <Group mt="lg" justify="space-between" wrap="wrap">
                   <Text size="xs" c="dimmed">
-                    {selected.description || "No description."}
+                    {isOwnerRole
+                      ? "The owner always has full access. Owner permissions cannot be changed."
+                      : (selected.description || "No description.")}
                   </Text>
                   <Group gap="sm">
                     {selected.isCustom && (
@@ -723,7 +788,7 @@ function RolesPermissionsCard({
                         Delete Role
                       </Button>
                     )}
-                    <Button onClick={handleSave} loading={saving}>
+                    <Button onClick={handleSave} loading={saving} disabled={isOwnerRole}>
                       Save Permissions
                     </Button>
                   </Group>

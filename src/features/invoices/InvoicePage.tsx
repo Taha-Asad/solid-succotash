@@ -61,13 +61,14 @@ import type {
   PublicInvoice,
   PublicInvoiceItem,
   PublicProduct,
-  PublicUser,
   InvoiceWithDetails,
 } from "../../types/backend";
 
 import { INK } from "../../theme";
 import { AppDateInput } from "../../components/AppDateInput";
 import { ReceiptText, Plus } from "lucide-react";
+import { reportOnboardingEvent } from "../../onboarding/bus";
+import { usePermissions } from "../permissions/PermissionsProvider";
 
 // ==========================================
 // HELPERS
@@ -125,15 +126,11 @@ const STATUS_COLORS: Record<string, string> = {
 // PROPS
 // ==========================================
 
-interface InvoicePageProps {
-  user: PublicUser;
-}
-
 // ==========================================
 // MAIN COMPONENT
 // ==========================================
 
-export default function InvoicePage({ user }: InvoicePageProps) {
+export default function InvoicePage() {
   const [view, setView] = useState<"list" | "detail">("list");
   const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(
     null,
@@ -152,34 +149,27 @@ export default function InvoicePage({ user }: InvoicePageProps) {
   if (view === "detail" && selectedInvoiceId) {
     return (
       <InvoiceDetailView
-        user={user}
         invoiceId={selectedInvoiceId}
         onBack={backToList}
       />
     );
   }
 
-  return <InvoiceListView user={user} onOpenInvoice={openInvoice} />;
+  return <InvoiceListView onOpenInvoice={openInvoice} />;
 }
 
 // ==========================================
 // INVOICE LIST VIEW
 // ==========================================
 
-function InvoiceListView({
-  user,
-  onOpenInvoice,
-}: {
-  user: PublicUser;
-  onOpenInvoice: (id: string) => void;
-}) {
+function InvoiceListView({ onOpenInvoice }: { onOpenInvoice: (id: string) => void }) {
+  const perms = usePermissions();
+  const canCreate = perms.can("invoices", "create");
   const [invoices, setInvoices] = useState<PublicInvoice[]>([]);
   const [customers, setCustomers] = useState<PublicCustomer[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [createModalOpen, setCreateModalOpen] = useState(false);
-
-  const canManage = user.role === "owner" || user.role === "admin";
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -219,6 +209,7 @@ function InvoiceListView({
   }) {
     try {
       const invoice = await createInvoice(values);
+      reportOnboardingEvent({ type: "invoice-created" });
       setCreateModalOpen(false);
       await load();
       onOpenInvoice(invoice.id);
@@ -245,7 +236,7 @@ function InvoiceListView({
             Create, finalize and collect payments on your sales invoices.
           </Text>
         </Stack>
-        {canManage && (
+        {canCreate && (
           <Button
             leftSection={<Plus size={16} />}
             onClick={() => setCreateModalOpen(true)}
@@ -257,6 +248,7 @@ function InvoiceListView({
                 "&:hover": { filter: "brightness(1.05)" },
               },
             }}
+            data-tour="new-invoice"
           >
             New Invoice
           </Button>
@@ -397,7 +389,6 @@ function InvoiceListView({
         onClose={() => setCreateModalOpen(false)}
         onCreate={handleCreateInvoice}
         customers={customers}
-        user={user}
         onCustomerCreated={load}
       />
     </Stack>
@@ -413,7 +404,6 @@ function CreateInvoiceModal({
   onClose,
   onCreate,
   customers,
-  user: _user,
   onCustomerCreated,
 }: {
   opened: boolean;
@@ -426,7 +416,6 @@ function CreateInvoiceModal({
     referenceNote: string;
   }) => Promise<void>;
   customers: PublicCustomer[];
-  user: PublicUser;
   onCustomerCreated: () => Promise<void>;
 }) {
   const [loading, setLoading] = useState(false);
@@ -489,7 +478,7 @@ function CreateInvoiceModal({
 
   const customerOptions = customers
     .filter((c) => c.isActive)
-    .map((c) => ({ value: c.id, label: c.name }));
+    .map((c) => ({ value: c.id, label: c.name ?? "" }));
 
   return (
     <Modal
@@ -635,14 +624,15 @@ function CreateInvoiceModal({
 // ==========================================
 
 function InvoiceDetailView({
-  user,
   invoiceId,
   onBack,
 }: {
-  user: PublicUser;
   invoiceId: string;
   onBack: () => void;
 }) {
+  const perms = usePermissions();
+  const canFinalize = perms.can("invoices", "finalize");
+  const canEdit = perms.can("invoices", "edit");
   const [details, setDetails] = useState<InvoiceWithDetails | null>(null);
   const [products, setProducts] = useState<PublicProduct[]>([]);
   const [loading, setLoading] = useState(true);
@@ -650,8 +640,6 @@ function InvoiceDetailView({
   const [addItemModalOpen, setAddItemModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<PublicInvoiceItem | null>(null);
   const [paymentModalOpen, setPaymentModalOpen] = useState(false);
-
-  const canManage = user.role === "owner" || user.role === "admin";
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -722,6 +710,7 @@ function InvoiceDetailView({
   async function handleFinalize() {
     try {
       await finalizeInvoice(invoiceId);
+      reportOnboardingEvent({ type: "invoice-finalized" });
       await load();
     } catch (err) {
       setError(getErrorMessage(err));
@@ -793,7 +782,7 @@ function InvoiceDetailView({
   const isFinalized = invoice.status === "finalized";
 
   return (
-    <Stack>
+    <Stack data-tour="invoice-detail">
       {/* Header */}
       <Group justify="space-between">
         <Group>
@@ -822,12 +811,12 @@ function InvoiceDetailView({
               <Menu.Item onClick={handleExportExcel}>Export Excel file</Menu.Item>
             </Menu.Dropdown>
           </Menu>
-          {isDraft && canManage && (
+          {isDraft && canFinalize && (
             <Button color="green" onClick={handleFinalize}>
               ✓ Finalize Invoice
             </Button>
           )}
-          {isFinalized && canManage && (
+          {isFinalized && canEdit && (
             <Button color="blue" onClick={() => setPaymentModalOpen(true)}>
               💰 Record Payment
             </Button>
@@ -903,7 +892,7 @@ function InvoiceDetailView({
       {/* Line items */}
       <Group justify="space-between">
         <Title order={5}>Items</Title>
-        {isDraft && canManage && (
+        {isDraft && canEdit && (
           <Button
             size="sm"
             onClick={() => {
@@ -970,7 +959,7 @@ function InvoiceDetailView({
                     {paisaToDisplay(item.lineTotal)}
                   </Text>
                 </Table.Td>
-                {isDraft && (
+                {isDraft && canEdit && (
                   <Table.Td>
                     <Group gap={4} justify="flex-end" wrap="nowrap">
                       <ActionIcon
