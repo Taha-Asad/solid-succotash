@@ -235,6 +235,13 @@ export function OnboardingProvider({
 
   // ----- Deadlock guard: skip a task whose target can never appear -----------
   // (e.g. a restricted role without "Add Product"). Never blocks the user.
+  // Timeout is 8 seconds to give slow page transitions ample time to mount.
+  //
+  // IMPORTANT: steps with a `completeOn` event are gated on the user actually
+  // performing the action (e.g. add-product requires navigating to inventory
+  // first). Auto-completing these would skip the step before the user reaches
+  // the right page. Only auto-complete steps with NO completion event — those
+  // are truly unreachable (e.g. a button hidden for the current role).
 
   useEffect(() => {
     if (phase !== "app") return;
@@ -243,13 +250,21 @@ export function OnboardingProvider({
     if (!step || step.kind !== "task") return;
     if (!step.selector || step.center) return;
 
+    // Skip steps that have a user-action completion event — those should only
+    // be completed by the user actually doing the work, never auto-completed.
+    if (step.completeOn && step.completeOn.length > 0) return;
+
     const timer = window.setTimeout(() => {
       if (taskCompleteRef.current) return;
+      // Only auto-complete if the element truly does not exist in the DOM
+      // AND no Mantine modal is open (the target might be behind a modal).
+      const modalOpen = document.querySelector("[data-modal-content]");
+      if (modalOpen) return;
       if (!document.querySelector(step.selector!)) {
         setTaskComplete(true);
         if (userIdRef.current) storeProgress(userIdRef.current, stepIndex);
       }
-    }, 4000);
+    }, 8000);
 
     return () => window.clearTimeout(timer);
   }, [phase, stepIndex]);

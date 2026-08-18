@@ -218,7 +218,7 @@ function StatCard({
   return (
     <motion.div {...fadeUp} transition={{ duration: 0.45 }} className="lift">
       <Card withBorder shadow="sm" padding="lg">
-        <Text size="xs" fw={600} style={{ color: "#5C6B84", letterSpacing: 0.4, textTransform: "uppercase" }}>
+        <Text size="xs" fw={600} style={{ color: INK.muted, letterSpacing: 0.4, textTransform: "uppercase" }}>
           {label}
         </Text>
         <Text fw={800} size="xl" style={{ color: tint, letterSpacing: -0.4 }} className="tabular">
@@ -387,8 +387,8 @@ function SalesReport() {
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="4 4" stroke="#E7ECF5" vertical={false} />
-                  <XAxis dataKey="name" tick={{ fontSize: 11, fill: "#5C6B84" }} tickLine={false} axisLine={false} />
-                  <YAxis tick={{ fontSize: 11, fill: "#5C6B84" }} tickLine={false} axisLine={false} tickFormatter={(v) => `${v >= 1000 ? `${(v / 1000).toFixed(1)}k` : v}`} />
+                  <XAxis dataKey="name" tick={{ fontSize: 11, fill: INK.muted }} tickLine={false} axisLine={false} />
+                  <YAxis tick={{ fontSize: 11, fill: INK.muted }} tickLine={false} axisLine={false} tickFormatter={(v) => `${v >= 1000 ? `${(v / 1000).toFixed(1)}k` : v}`} />
                   <Tooltip formatter={(value) => [fmtMoney(value), ""]} labelStyle={{ fontWeight: 700 }} contentStyle={tooltipStyle} />
                   <Area type="monotone" dataKey="Revenue" stroke={INK.chart.navy} strokeWidth={2.5} fill="url(#salesRev)" animationDuration={900} />
                   <Area type="monotone" dataKey="Collected" stroke={INK.chart.gold} strokeWidth={2} fill="url(#salesPaid)" animationDuration={900} />
@@ -410,8 +410,8 @@ function SalesReport() {
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={productData} layout="vertical" margin={{ top: 4, right: 20, left: 8, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="4 4" stroke="#E7ECF5" horizontal={false} />
-                    <XAxis type="number" tick={{ fontSize: 11, fill: "#5C6B84" }} tickLine={false} axisLine={false} tickFormatter={(v) => `${v >= 1000 ? `${(v / 1000).toFixed(1)}k` : v}`} />
-                    <YAxis type="category" dataKey="name" width={130} tick={{ fontSize: 11, fill: "#5C6B84" }} tickLine={false} axisLine={false} />
+                    <XAxis type="number" tick={{ fontSize: 11, fill: INK.muted }} tickLine={false} axisLine={false} tickFormatter={(v) => `${v >= 1000 ? `${(v / 1000).toFixed(1)}k` : v}`} />
+                    <YAxis type="category" dataKey="name" width={130} tick={{ fontSize: 11, fill: INK.muted }} tickLine={false} axisLine={false} />
                     <Tooltip formatter={(value) => [fmtMoney(value), "Revenue"]} contentStyle={tooltipStyle} cursor={{ fill: "rgba(29,43,84,0.04)" }} />
                     <Bar dataKey="Revenue" radius={[0, 8, 8, 0]} animationDuration={900}>
                       {productData.map((_, i) => (
@@ -538,8 +538,8 @@ function StockReport() {
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={topStock} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="4 4" stroke="#E7ECF5" vertical={false} />
-                  <XAxis dataKey="name" tick={{ fontSize: 11, fill: "#5C6B84" }} tickLine={false} axisLine={false} interval={0} angle={-18} height={50} textAnchor="end" />
-                  <YAxis tick={{ fontSize: 11, fill: "#5C6B84" }} tickLine={false} axisLine={false} />
+                  <XAxis dataKey="name" tick={{ fontSize: 11, fill: INK.muted }} tickLine={false} axisLine={false} interval={0} angle={-18} height={50} textAnchor="end" />
+                  <YAxis tick={{ fontSize: 11, fill: INK.muted }} tickLine={false} axisLine={false} />
                   <Tooltip formatter={(value) => [`${Number(value ?? 0)} units`, "Stock"]} contentStyle={tooltipStyle} cursor={{ fill: "rgba(29,43,84,0.04)" }} />
                   <Bar dataKey="Stock" radius={[8, 8, 0, 0]} animationDuration={900}>
                     {topStock.map((entry, i) => (
@@ -668,8 +668,8 @@ function ProfitLossReport() {
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={barData} margin={{ top: 8, right: 8, left: -8, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="4 4" stroke="#E7ECF5" vertical={false} />
-                  <XAxis dataKey="name" tick={{ fontSize: 12, fill: "#5C6B84" }} tickLine={false} axisLine={false} />
-                  <YAxis tick={{ fontSize: 11, fill: "#5C6B84" }} tickLine={false} axisLine={false} tickFormatter={(v) => `${v >= 1000 ? `${(v / 1000).toFixed(1)}k` : v}`} />
+                  <XAxis dataKey="name" tick={{ fontSize: 12, fill: INK.muted }} tickLine={false} axisLine={false} />
+                  <YAxis tick={{ fontSize: 11, fill: INK.muted }} tickLine={false} axisLine={false} tickFormatter={(v) => `${v >= 1000 ? `${(v / 1000).toFixed(1)}k` : v}`} />
                   <Tooltip formatter={(value) => [fmtMoney(value), ""]} contentStyle={tooltipStyle} cursor={{ fill: "rgba(29,43,84,0.04)" }} />
                   <Bar dataKey="Value" radius={[8, 8, 0, 0]} animationDuration={900}>
                     {barData.map((entry, i) => (
@@ -965,8 +965,8 @@ function StockMovementsReport() {
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={chartData} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="4 4" stroke="#E7ECF5" vertical={false} />
-                  <XAxis dataKey="name" tick={{ fontSize: 11, fill: "#5C6B84" }} tickLine={false} axisLine={false} interval={0} angle={-20} height={60} textAnchor="end" />
-                  <YAxis tick={{ fontSize: 11, fill: "#5C6B84" }} tickLine={false} axisLine={false} />
+                  <XAxis dataKey="name" tick={{ fontSize: 11, fill: INK.muted }} tickLine={false} axisLine={false} interval={0} angle={-20} height={60} textAnchor="end" />
+                  <YAxis tick={{ fontSize: 11, fill: INK.muted }} tickLine={false} axisLine={false} />
                   <Tooltip contentStyle={tooltipStyle} cursor={{ fill: "rgba(29,43,84,0.04)" }} />
                   <Bar dataKey="Purchased" fill={INK.chart.green} radius={[6, 6, 0, 0]} animationDuration={900} />
                   <Bar dataKey="Sold" fill={INK.chart.blue} radius={[6, 6, 0, 0]} animationDuration={900} />

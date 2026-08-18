@@ -1,3 +1,5 @@
+#![allow(clippy::too_many_arguments)]
+
 // ==========================================
 // INVENTORY COMMANDS
 // ==========================================
@@ -1539,7 +1541,7 @@ pub async fn add_batch(
     batch_number: Option<&str>,
 ) -> Result<(), String> {
     upsert_batch(
-        &mut **tx,
+        tx,
         company_id,
         product_id,
         quantity,
@@ -2019,7 +2021,7 @@ pub async fn delete_category(
         "delete",
         "category",
         Some(&category_id),
-        &format!("Deleted category"),
+        "Deleted category",
     )
     .await;
 
@@ -2058,7 +2060,7 @@ pub async fn delete_supplier(
         "delete",
         "supplier",
         Some(&supplier_id),
-        &format!("Deleted supplier"),
+        "Deleted supplier",
     )
     .await;
 
@@ -2097,7 +2099,7 @@ pub async fn delete_product(
         "delete",
         "product",
         Some(&product_id),
-        &format!("Deleted product"),
+        "Deleted product",
     )
     .await;
 

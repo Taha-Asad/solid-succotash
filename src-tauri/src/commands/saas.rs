@@ -1,3 +1,5 @@
+#![allow(clippy::too_many_arguments)]
+
 // ==========================================
 // SAAS LAYER — packages, subscriptions, modules, feature flags
 // ==========================================
@@ -231,22 +233,22 @@ struct PackageRow {
 }
 
 impl PackageRow {
-    fn to_public(self) -> PublicPackage {
+    fn to_public(&self) -> PublicPackage {
         PublicPackage {
             module_limits: serde_json::from_str(&self.module_limits).unwrap_or_default(),
             features: serde_json::from_str(&self.features).unwrap_or_default(),
-            id: self.id,
-            name: self.name,
-            description: self.description,
+            id: self.id.clone(),
+            name: self.name.clone(),
+            description: self.description.clone(),
             price: self.price,
-            billing_cycle: self.billing_cycle,
+            billing_cycle: self.billing_cycle.clone(),
             max_users: self.max_users,
             max_branches: self.max_branches,
             max_storage_mb: self.max_storage_mb,
             is_active: self.is_active,
             sort_order: self.sort_order,
-            created_at: self.created_at,
-            updated_at: self.updated_at,
+            created_at: self.created_at.clone(),
+            updated_at: self.updated_at.clone(),
         }
     }
 }
@@ -268,20 +270,20 @@ struct SubscriptionRow {
 }
 
 impl SubscriptionRow {
-    fn to_public(self) -> PublicSubscription {
+    fn to_public(&self) -> PublicSubscription {
         PublicSubscription {
             metadata: serde_json::from_str(&self.metadata).unwrap_or_default(),
-            id: self.id,
-            company_id: self.company_id,
-            package_id: self.package_id,
-            status: self.status,
-            trial_ends_at: self.trial_ends_at,
-            current_period_start: self.current_period_start,
-            current_period_end: self.current_period_end,
-            canceled_at: self.canceled_at,
-            ended_at: self.ended_at,
-            created_at: self.created_at,
-            updated_at: self.updated_at,
+            id: self.id.clone(),
+            company_id: self.company_id.clone(),
+            package_id: self.package_id.clone(),
+            status: self.status.clone(),
+            trial_ends_at: self.trial_ends_at.clone(),
+            current_period_start: self.current_period_start.clone(),
+            current_period_end: self.current_period_end.clone(),
+            canceled_at: self.canceled_at.clone(),
+            ended_at: self.ended_at.clone(),
+            created_at: self.created_at.clone(),
+            updated_at: self.updated_at.clone(),
         }
     }
 }
@@ -298,15 +300,15 @@ struct CompanyModuleRow {
 }
 
 impl CompanyModuleRow {
-    fn to_public(self) -> PublicCompanyModule {
+    fn to_public(&self) -> PublicCompanyModule {
         PublicCompanyModule {
             settings: serde_json::from_str(&self.settings).unwrap_or_default(),
-            id: self.id,
-            company_id: self.company_id,
-            module_key: self.module_key,
+            id: self.id.clone(),
+            company_id: self.company_id.clone(),
+            module_key: self.module_key.clone(),
             is_enabled: self.is_enabled,
-            created_at: self.created_at,
-            updated_at: self.updated_at,
+            created_at: self.created_at.clone(),
+            updated_at: self.updated_at.clone(),
         }
     }
 }
@@ -325,17 +327,17 @@ struct FeatureFlagRow {
 }
 
 impl FeatureFlagRow {
-    fn to_public(self) -> PublicFeatureFlag {
+    fn to_public(&self) -> PublicFeatureFlag {
         PublicFeatureFlag {
-            id: self.id,
-            company_id: self.company_id,
-            feature_key: self.feature_key,
+            id: self.id.clone(),
+            company_id: self.company_id.clone(),
+            feature_key: self.feature_key.clone(),
             is_enabled: self.is_enabled,
-            enabled_by: self.enabled_by,
-            reason: self.reason,
-            expires_at: self.expires_at,
-            created_at: self.created_at,
-            updated_at: self.updated_at,
+            enabled_by: self.enabled_by.clone(),
+            reason: self.reason.clone(),
+            expires_at: self.expires_at.clone(),
+            created_at: self.created_at.clone(),
+            updated_at: self.updated_at.clone(),
         }
     }
 }
@@ -379,7 +381,7 @@ async fn fetch_subscription_for_company(
     .await
     .map_err(|error| format!("Database error: {error}"))?;
 
-    Ok(row.map(SubscriptionRow::to_public))
+    Ok(row.map(|r| r.to_public()))
 }
 
 async fn fetch_modules_for_company(
@@ -399,7 +401,7 @@ async fn fetch_modules_for_company(
     .await
     .map_err(|error| format!("Database error: {error}"))?;
 
-    Ok(rows.into_iter().map(CompanyModuleRow::to_public).collect())
+    Ok(rows.into_iter().map(|r| r.to_public()).collect())
 }
 
 /// Modules a tenant gets by default: every key in the package's
@@ -524,7 +526,7 @@ pub async fn list_packages(
         .await
         .map_err(|error| format!("Database error: {error}"))?;
 
-    Ok(rows.into_iter().map(PackageRow::to_public).collect())
+    Ok(rows.into_iter().map(|r| r.to_public()).collect())
 }
 
 fn validate_json_arg(value: &str, field_name: &str) -> Result<serde_json::Value, String> {
@@ -580,7 +582,7 @@ pub async fn create_package(
         "#,
     )
     .bind(&package_id)
-    .bind(&name)
+    .bind(name)
     .bind(&description)
     .bind(price)
     .bind(&billing_cycle)
@@ -605,7 +607,7 @@ pub async fn create_package(
     )
     .await;
 
-    fetch_package(pool.inner(), &package_id).await.map(PackageRow::to_public)
+    fetch_package(pool.inner(), &package_id).await.map(|r| r.to_public())
 }
 
 #[tauri::command]
@@ -705,7 +707,7 @@ pub async fn update_package(
     )
     .await;
 
-    fetch_package(pool.inner(), &package_id).await.map(PackageRow::to_public)
+    fetch_package(pool.inner(), &package_id).await.map(|r| r.to_public())
 }
 
 #[tauri::command]
@@ -976,7 +978,7 @@ pub async fn set_company_module(
     .fetch_one(pool.inner())
     .await
     .map_err(|error| format!("Database error: {error}"))
-    .map(CompanyModuleRow::to_public)
+    .map(|r| r.to_public())
 }
 
 // ==========================================
@@ -1006,7 +1008,7 @@ pub async fn list_feature_flags(
     .await
     .map_err(|error| format!("Database error: {error}"))?;
 
-    Ok(rows.into_iter().map(FeatureFlagRow::to_public).collect())
+    Ok(rows.into_iter().map(|r| r.to_public()).collect())
 }
 
 #[tauri::command]
@@ -1093,7 +1095,7 @@ pub async fn set_feature_flag(
     .fetch_one(pool.inner())
     .await
     .map_err(|error| format!("Database error: {error}"))
-    .map(FeatureFlagRow::to_public)
+    .map(|r| r.to_public())
 }
 
 // ==========================================
@@ -1158,7 +1160,7 @@ pub async fn get_tenant_company_detail(
 
     let subscription = fetch_subscription_for_company(pool.inner(), &company_id).await?;
     let package = match &subscription {
-        Some(sub) => Some(fetch_package(pool.inner(), &sub.package_id).await.map(PackageRow::to_public)?),
+        Some(sub) => Some(fetch_package(pool.inner(), &sub.package_id).await.map(|r| r.to_public())?),
         None => None,
     };
     let modules = fetch_modules_for_company(pool.inner(), &company_id).await?;
@@ -1197,7 +1199,7 @@ pub async fn get_tenant_company_detail(
         subscription,
         package,
         modules,
-        feature_flags: feature_flags.into_iter().map(FeatureFlagRow::to_public).collect(),
+        feature_flags: feature_flags.into_iter().map(|r| r.to_public()).collect(),
         user_count,
         ntn: extra.0,
         strn: extra.1,

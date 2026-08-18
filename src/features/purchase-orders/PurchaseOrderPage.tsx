@@ -180,7 +180,7 @@ function StatCard({
             <Text
               size="xs"
               fw={600}
-              style={{ color: "#5C6B84", letterSpacing: 0.4, textTransform: "uppercase" }}
+              style={{ color: INK.muted, letterSpacing: 0.4, textTransform: "uppercase" }}
             >
               {label}
             </Text>

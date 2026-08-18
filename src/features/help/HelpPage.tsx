@@ -75,9 +75,10 @@ export default function HelpPage({ companyName }: { companyName: string }) {
         blocks: section.blocks
           .map((block) => {
             const haystack = [
-              block.type === "list" || block.type === "steps"
-                ? block.items.join(" ")
-                : block.text,
+              (block.type === "list" || block.type === "steps" || block.type === "howto")
+                ? (block as { items: string[] }).items.join(" ")
+                : (block as { text: string }).text ?? "",
+              block.type === "howto" ? (block as { title: string }).title : "",
               section.title,
             ]
               .join(" ")
@@ -310,6 +311,32 @@ function SectionCard({
                     <List.Item key={j}>{item}</List.Item>
                   ))}
                 </List>
+              );
+            case "howto":
+              return (
+                <Card
+                  key={i}
+                  withBorder
+                  padding="md"
+                  style={{ background: "var(--app-gold-soft)", borderColor: "var(--app-border)" }}
+                >
+                  <Text fw={700} size="sm" mb="xs" style={{ color: "var(--app-gold-deep)" }}>
+                    {block.title}
+                  </Text>
+                  <List
+                    type="ordered"
+                    spacing="xs"
+                    size="sm"
+                    withPadding
+                    styles={{
+                      item: { color: INK.textSoft, lineHeight: 1.6 },
+                    }}
+                  >
+                    {block.items.map((item, j) => (
+                      <List.Item key={j}>{item}</List.Item>
+                    ))}
+                  </List>
+                </Card>
               );
             case "tip":
               return (

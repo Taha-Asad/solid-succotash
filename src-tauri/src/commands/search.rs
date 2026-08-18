@@ -141,3 +141,139 @@ pub async fn search_all(
 
     Ok(results)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::test_helpers::{register_owner_full, setup_app, state_of};
+    use tauri::Manager;
+
+    async fn insert_product(
+        app: &tauri::App<tauri::test::MockRuntime>,
+        company_id: &str,
+        name: &str,
+        sku: &str,
+    ) {
+        let pool = state_of::<SqlitePool>(app);
+        sqlx::query(
+            r#"
+            INSERT INTO products (id, company_id, sku, name, cost_price, sell_price, quantity_in_stock, unit)
+            VALUES (?, ?, ?, ?, 100, 200, 50, 'pcs')
+            "#,
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(company_id)
+        .bind(sku)
+        .bind(name)
+        .execute(pool.inner())
+        .await
+        .expect("insert product");
+    }
+
+    async fn insert_customer(
+        app: &tauri::App<tauri::test::MockRuntime>,
+        company_id: &str,
+        name: &str,
+        email: Option<&str>,
+        phone: Option<&str>,
+    ) {
+        let pool = state_of::<SqlitePool>(app);
+        sqlx::query(
+            r#"
+            INSERT INTO customers (id, company_id, name, email, phone)
+            VALUES (?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(company_id)
+        .bind(name)
+        .bind(email)
+        .bind(phone)
+        .execute(pool.inner())
+        .await
+        .expect("insert customer");
+    }
+
+    #[tokio::test]
+    async fn empty_query_returns_no_results() {
+        let app = setup_app().await;
+        let _owner = register_owner_full(&app, "owner@test.com").await;
+
+        let results = search_all(app.state(), app.state(), "".to_string())
+            .await
+            .expect("should succeed");
+        assert!(results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn single_char_query_returns_no_results() {
+        let app = setup_app().await;
+        let _owner = register_owner_full(&app, "owner@test.com").await;
+
+        let results = search_all(app.state(), app.state(), "a".to_string())
+            .await
+            .expect("should succeed");
+        assert!(results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn search_finds_product_by_name() {
+        let app = setup_app().await;
+        let owner = register_owner_full(&app, "owner@test.com").await;
+
+        insert_product(&app, &owner.company.id, "Widget Premium", "WDG-001").await;
+
+        let results = search_all(app.state(), app.state(), "Widget".to_string())
+            .await
+            .expect("should succeed");
+        assert!(!results.is_empty());
+        assert_eq!(results[0].result_type, "product");
+        assert_eq!(results[0].name, "Widget Premium");
+    }
+
+    #[tokio::test]
+    async fn search_finds_product_by_sku() {
+        let app = setup_app().await;
+        let owner = register_owner_full(&app, "owner@test.com").await;
+
+        insert_product(&app, &owner.company.id, "Widget", "SKU-XYZ-123").await;
+
+        let results = search_all(app.state(), app.state(), "SKU-XYZ".to_string())
+            .await
+            .expect("should succeed");
+        assert!(!results.is_empty());
+        assert_eq!(results[0].result_type, "product");
+    }
+
+    #[tokio::test]
+    async fn search_finds_customer_by_name() {
+        let app = setup_app().await;
+        let owner = register_owner_full(&app, "owner@test.com").await;
+
+        insert_customer(&app, &owner.company.id, "Acme Corp", Some("info@acme.com"), Some("0300-123")).await;
+
+        let results = search_all(app.state(), app.state(), "Acme".to_string())
+            .await
+            .expect("should succeed");
+        assert!(!results.is_empty());
+        assert_eq!(results[0].result_type, "customer");
+        assert_eq!(results[0].name, "Acme Corp");
+    }
+
+    #[tokio::test]
+    async fn search_returns_both_products_and_customers() {
+        let app = setup_app().await;
+        let owner = register_owner_full(&app, "owner@test.com").await;
+
+        insert_product(&app, &owner.company.id, "Test Item", "TST-001").await;
+        insert_customer(&app, &owner.company.id, "Test Customer", None, None).await;
+
+        let results = search_all(app.state(), app.state(), "Test".to_string())
+            .await
+            .expect("should succeed");
+        let product_hits = results.iter().filter(|r| r.result_type == "product").count();
+        let customer_hits = results.iter().filter(|r| r.result_type == "customer").count();
+        assert!(product_hits > 0, "should find product");
+        assert!(customer_hits > 0, "should find customer");
+    }
+}

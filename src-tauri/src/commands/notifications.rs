@@ -220,7 +220,7 @@ fn today_str() -> String {
     let mut y = 1970u64;
     let mut rem = days;
     loop {
-        let d = if (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0) {
+        let d = if (y.is_multiple_of(4) && !y.is_multiple_of(100)) || y.is_multiple_of(400) {
             366
         } else {
             365
@@ -231,7 +231,7 @@ fn today_str() -> String {
         rem -= d;
         y += 1;
     }
-    let leap = (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0);
+    let leap = (y.is_multiple_of(4) && !y.is_multiple_of(100)) || y.is_multiple_of(400);
     let md = [
         31,
         if leap { 29 } else { 28 },

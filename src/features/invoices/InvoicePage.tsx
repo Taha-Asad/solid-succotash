@@ -258,21 +258,21 @@ function InvoiceListView({ onOpenInvoice }: { onOpenInvoice: (id: string) => voi
       {/* Summary cards */}
       <SimpleGrid cols={{ base: 1, sm: 3 }}>
         <Card withBorder shadow="sm" padding="lg">
-          <Text size="xs" fw={600} style={{ color: "#5C6B84", textTransform: "uppercase", letterSpacing: 0.4 }}>
+          <Text size="xs" fw={600} style={{ color: INK.muted, textTransform: "uppercase", letterSpacing: 0.4 }}>
             Total Invoices
           </Text>
           <Title order={2} className="tabular" style={{ color: INK.text }}>{totalInvoices}</Title>
           <Text size="xs" c="dimmed" mt={4}>across all statuses</Text>
         </Card>
         <Card withBorder shadow="sm" padding="lg">
-          <Text size="xs" fw={600} style={{ color: "#5C6B84", textTransform: "uppercase", letterSpacing: 0.4 }}>
+          <Text size="xs" fw={600} style={{ color: INK.muted, textTransform: "uppercase", letterSpacing: 0.4 }}>
             Total Revenue
           </Text>
-          <Title order={2} className="tabular" style={{ color: INK.chart.navy }}>{paisaToDisplay(totalRevenue)}</Title>
+          <Title order={2} className="tabular" style={{ color: INK.text }}>{paisaToDisplay(totalRevenue)}</Title>
           <Text size="xs" c="dimmed" mt={4}>from finalized invoices</Text>
         </Card>
         <Card withBorder shadow="sm" padding="lg">
-          <Text size="xs" fw={600} style={{ color: "#5C6B84", textTransform: "uppercase", letterSpacing: 0.4 }}>
+          <Text size="xs" fw={600} style={{ color: INK.muted, textTransform: "uppercase", letterSpacing: 0.4 }}>
             Outstanding
           </Text>
           <Title order={2} className="tabular" c={totalOutstanding > 0 ? "orange" : "green"}>

@@ -382,7 +382,14 @@ export default function InteractiveTour({
           when an animated ancestor (e.g. a framer-motion transform) creates
           its own stacking context and traps the raised z-index. Four rects
           around the target leave the target's own clicks untouched.
-          Replay mode never blocks — no catchers at all. */}
+          Replay mode never blocks — no catchers at all.
+
+          IMPORTANT: when the target is not yet measured (hasTarget=false) but
+          still exists in the DOM (e.g. the480ms measurement delay), we do NOT
+          show any blocking catcher — that would freeze the entire app. We only
+          block when we are certain the target genuinely does not exist in the DOM.
+          The deadlock guard in OnboardingProvider handles auto-completion for
+          permanently missing targets. */}
       {!replay &&
         (hasTarget && !step.center ? (
         <>
@@ -419,16 +426,7 @@ export default function InteractiveTour({
             }}
           />
         </>
-      ) : (
-        <div
-          style={{
-            position: "absolute",
-            inset: 0,
-            background: "transparent",
-            pointerEvents: "auto",
-          }}
-        />
-      ))}
+      ) : null)}
 
       {/* Visual dim: spotlight hole + gold ring around the target */}
       {!replay && !modalOpen && hasTarget && !step.center && (
@@ -591,8 +589,8 @@ function TourCard({
       shadow="xl"
       style={{
         overflow: "hidden",
-        background: "#FFFFFF",
-        border: "1px solid rgba(19, 28, 57, 0.08)",
+        background: "var(--app-surface)",
+        border: "1px solid var(--app-border)",
       }}
     >
       {/* Gold accent strip */}
@@ -608,7 +606,7 @@ function TourCard({
           <Group gap="sm" wrap="nowrap">
             <IconBadge>{step.icon}</IconBadge>
             <Stack gap={2}>
-              <Text fw={800} size="sm" style={{ color: "#131C39", letterSpacing: -0.2 }}>
+              <Text fw={800} size="sm" style={{ color: "var(--app-text)", letterSpacing: -0.2 }}>
                 {t(step.titleKey)}
               </Text>
               <Text
@@ -633,7 +631,7 @@ function TourCard({
           )}
         </Group>
 
-        <Text size="sm" mt={10} style={{ color: "#4B5563", lineHeight: 1.65 }}>
+        <Text size="sm" mt={10} style={{ color: "var(--app-text-soft)", lineHeight: 1.65 }}>
           {t(step.contentKey)}
         </Text>
 
@@ -665,7 +663,7 @@ function TourCard({
                     animation: "ijaz-dot 1.2s ease-in-out infinite",
                   }}
                 />
-                <Text size="xs" fw={700} style={{ color: "#8A6214", lineHeight: 1.4 }}>
+                <Text size="xs" fw={700} style={{ color: "var(--app-gold-deep)", lineHeight: 1.4 }}>
                   {step.hintKey ? t(step.hintKey) : t("tour.waiting")}
                 </Text>
               </>

@@ -66,7 +66,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: "npm"
 
       - name: Install Rust
@@ -76,6 +76,11 @@ jobs:
         uses: swatinem/rust-cache@v2
         with:
           workspaces: "./src-tauri -> target"
+
+      - name: Security audit (cargo audit)
+        run: |
+          cargo install cargo-audit --locked
+          cargo audit
 
       - name: Install frontend dependencies
         run: npm ci
@@ -161,7 +166,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: "npm"
 
       - name: Install Rust
@@ -171,6 +176,11 @@ jobs:
         uses: swatinem/rust-cache@v2
         with:
           workspaces: "./src-tauri -> target"
+
+      - name: Security audit (cargo audit)
+        run: |
+          cargo install cargo-audit --locked
+          cargo audit
 
       - name: Install system dependencies
         run: |

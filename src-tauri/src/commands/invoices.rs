@@ -1,3 +1,5 @@
+#![allow(clippy::too_many_arguments)]
+
 // ==========================================
 // INVOICE COMMANDS
 // ==========================================
@@ -452,7 +454,7 @@ pub async fn delete_customer(
         "delete",
         "customer",
         Some(&customer_id),
-        &format!("Deleted customer"),
+        "Deleted customer",
     )
     .await;
 
@@ -744,7 +746,7 @@ pub async fn add_invoice_item(
         Some(&id),
         &format!(
             "Added item {}× '{}' ({} {})",
-            quantity, product.1, unit_price, &discount_type
+            quantity, product.1, unit_price, discount_type
         ),
     )
     .await;
@@ -1437,11 +1439,22 @@ async fn recalculate_invoice_totals(
     let discount_total = totals.2;
     let grand_total = round_to_rupee(subtotal - discount_total + tax_total);
 
+    // Compute balance_due in Rust — do NOT use `balance_due = grand_total - amount_paid`
+    // inside the same UPDATE that sets grand_total, because SQLite evaluates the
+    // right-hand side with the OLD value of grand_total, not the new one.
+    let balance_due = grand_total
+        - sqlx::query_as::<_, (i64,)>("SELECT amount_paid FROM invoices WHERE id = ?")
+            .bind(invoice_id)
+            .fetch_one(pool)
+            .await
+            .map_err(|e| format!("Amount paid lookup error: {e}"))?
+            .0;
+
     sqlx::query(
         r#"
         UPDATE invoices
         SET subtotal = ?, tax_total = ?, discount_total = ?,
-            grand_total = ?, balance_due = grand_total - amount_paid,
+            grand_total = ?, balance_due = ?,
             updated_at = CURRENT_TIMESTAMP
         WHERE id = ? AND company_id = ?
         "#,
@@ -1450,6 +1463,7 @@ async fn recalculate_invoice_totals(
     .bind(tax_total)
     .bind(discount_total)
     .bind(grand_total)
+    .bind(balance_due)
     .bind(invoice_id)
     .bind(company_id)
     .execute(pool)

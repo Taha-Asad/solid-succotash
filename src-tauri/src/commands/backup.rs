@@ -136,7 +136,7 @@ pub async fn list_backups(
     if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().map_or(false, |ext| ext == "db") {
+            if path.extension().is_some_and(|ext| ext == "db") {
                 let metadata = std::fs::metadata(&path).ok();
                 let size = metadata.as_ref().map(|m| m.len()).unwrap_or(0);
                 let modified = metadata
@@ -176,7 +176,7 @@ fn format_timestamp(secs: u64) -> String {
     let mut y = 1970u64;
     let mut rem = days;
     loop {
-        let d = if (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0) {
+        let d = if (y.is_multiple_of(4) && !y.is_multiple_of(100)) || y.is_multiple_of(400) {
             366
         } else {
             365
@@ -187,7 +187,7 @@ fn format_timestamp(secs: u64) -> String {
         rem -= d;
         y += 1;
     }
-    let leap = (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0);
+    let leap = (y.is_multiple_of(4) && !y.is_multiple_of(100)) || y.is_multiple_of(400);
     let md = [
         31,
         if leap { 29 } else { 28 },

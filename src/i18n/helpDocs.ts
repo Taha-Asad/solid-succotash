@@ -12,6 +12,7 @@ export type HelpBlock =
   | { type: "p"; text: string }
   | { type: "list"; items: string[] }
   | { type: "steps"; items: string[] }
+  | { type: "howto"; title: string; items: string[] }
   | { type: "tip"; text: string }
   | { type: "warn"; text: string };
 
@@ -32,20 +33,17 @@ const EN: HelpSection[] = [
     blocks: [
       {
         type: "p",
-        text: "Ijaz & Company ERP is a desktop application that keeps your whole business — inventory, invoicing, customers, purchasing and accounts — in one place. All data is stored locally on your computer, so it works offline and stays private.",
+        text: "Ijaz & Company ERP keeps your whole business — inventory, invoicing, customers, purchasing and accounts — in one place. All data is stored locally on your computer, so it works offline and stays private.",
       },
       {
-        type: "steps",
+        type: "howto",
+        title: "First-time setup: get your business running in 4 steps",
         items: [
-          "Create a company (first launch)",
-          "Add team members and sign in",
-          "Add your products in Inventory",
-          "Create your first invoice",
+          "On first launch, enter your company name, phone and address, then click Save.",
+          "Go to Team in the sidebar and click Add User to create accounts for your staff.",
+          "Sign in with your new username and password.",
+          "Open Inventory from the sidebar and click Add Product to list what you sell.",
         ],
-      },
-      {
-        type: "p",
-        text: "Use the sidebar to navigate between workspaces. The top bar gives you global search, notifications, backup and settings at all times.",
       },
       {
         type: "tip",
@@ -58,21 +56,18 @@ const EN: HelpSection[] = [
     title: "Dashboard",
     blocks: [
       {
-        type: "p",
-        text: "The Dashboard is your home screen. It summarizes the state of the business the moment you open the app.",
-      },
-      {
-        type: "list",
+        type: "howto",
+        title: "How to read your dashboard",
         items: [
-          "Today's sales and revenue",
-          "Overdue and due invoices",
-          "Low stock and expiring batches",
-          "Top products and recent activity",
+          "Open Dashboard from the sidebar to see today's sales, revenue and unpaid invoices at a glance.",
+          "Scroll down to find low-stock alerts — any product below its minimum stock level is flagged here.",
+          "Check the overdue invoices card to see who owes you money and how many days overdue.",
+          "Click any notification or stat card to jump straight to the relevant invoice, product or customer.",
         ],
       },
       {
         type: "tip",
-        text: "Click any notification to jump straight to the relevant invoice or product.",
+        text: "The dashboard refreshes every time you open the app. For the latest numbers, close and reopen the Dashboard.",
       },
     ],
   },
@@ -81,25 +76,39 @@ const EN: HelpSection[] = [
     title: "Inventory",
     blocks: [
       {
-        type: "p",
-        text: "Inventory is where you manage products, batches, stock levels and suppliers.",
-      },
-      {
-        type: "steps",
+        type: "howto",
+        title: "How to add a product",
         items: [
-          "Add a product with name, SKU, price and units",
-          "Optionally track batches with expiry dates",
-          "Record stock-in and stock-out movements",
-          "Set a minimum stock to receive low-stock alerts",
+          "Open Inventory from the sidebar.",
+          "Click the Add Product button above the product list.",
+          "Fill in the product name, SKU (stock-keeping unit), selling price and initial quantity.",
+          "Optionally set a category, supplier and minimum stock level for low-stock alerts.",
+          "Click Save. The product now appears in your inventory and is available when creating invoices.",
         ],
       },
       {
-        type: "p",
-        text: "You can import many products at once from an Excel file using the Import Wizard. It reads your columns, matches them to the app and reports any errors clearly.",
+        type: "howto",
+        title: "How to import products from Excel or CSV",
+        items: [
+          "Open Inventory and click Import from Excel / CSV.",
+          "Click Choose File and select your .xlsx or .csv file.",
+          "The wizard shows a preview — map each column to the matching app field (name, price, quantity, etc.).",
+          "Click Import. Any rows with errors are listed with clear messages so you can fix and re-import.",
+        ],
+      },
+      {
+        type: "howto",
+        title: "How to record a stock movement",
+        items: [
+          "Open Inventory and find the product you want to adjust.",
+          "Click the Stock Movement button (or open the product detail).",
+          "Choose the movement type: Stock In (received from supplier) or Stock Out (sold, damaged, or sample).",
+          "Enter the quantity and any notes, then click Save.",
+        ],
       },
       {
         type: "warn",
-        text: "Stock movements affect your ledger. Double-check the movement type before saving.",
+        text: "Stock movements affect your accounting ledger. Double-check the movement type (in vs. out) before saving.",
       },
     ],
   },
@@ -108,24 +117,49 @@ const EN: HelpSection[] = [
     title: "Invoices",
     blocks: [
       {
-        type: "p",
-        text: "Invoices follow a clear lifecycle: Draft → Finalized → Paid. Start a draft, add items, apply tax and discounts, then finalize to lock the numbers.",
-      },
-      {
-        type: "list",
+        type: "howto",
+        title: "How to create an invoice",
         items: [
-          "Draft — editable, not yet final",
-          "Finalized — locked and printable, can be marked as paid",
-          "Paid — transaction complete, counted in reports",
+          "Open Invoices from the sidebar.",
+          "Click New Invoice.",
+          "Select or type the customer name. The customer's details auto-fill.",
+          "Add line items: pick a product from the dropdown, set quantity and unit price.",
+          "Optionally set a discount percentage and tax rate.",
+          "Click Save to create the draft. The invoice is now editable.",
         ],
       },
       {
-        type: "p",
-        text: "Numbering, tax fields (NTN / STRN / CNIC), due days and the invoice design are configured in Settings → Invoice Settings.",
+        type: "howto",
+        title: "How to finalize an invoice",
+        items: [
+          "Open the invoice detail view by clicking on a draft invoice in the list.",
+          "Review all line items, quantities and totals to make sure everything is correct.",
+          "Click the green Finalize Invoice button. The invoice is now locked and cannot be edited.",
+          "To print, click the Print button in the top-right corner.",
+        ],
+      },
+      {
+        type: "howto",
+        title: "How to mark an invoice as paid",
+        items: [
+          "Open a finalized invoice from the Invoices list.",
+          "Click Mark as Paid. The invoice is now counted in your revenue reports.",
+        ],
+      },
+      {
+        type: "howto",
+        title: "How to configure invoice numbering and tax fields",
+        items: [
+          "Open Settings from the sidebar and click the Invoice Settings tab.",
+          "Set your invoice number prefix (e.g. INV-) and next number.",
+          "Enter your NTN, STRN or CNIC if applicable — these appear on printed invoices.",
+          "Choose the default number of due days and tax rate.",
+          "Click Save to apply.",
+        ],
       },
       {
         type: "tip",
-        text: "Use the Excel template option to produce invoices in your own layout. Placeholders such as {{customer_name}} and {{grand_total}} are filled automatically.",
+        text: "Use the Excel template option to produce invoices in your own layout. Placeholders like {{customer_name}} and {{grand_total}} are filled automatically.",
       },
     ],
   },
@@ -134,15 +168,23 @@ const EN: HelpSection[] = [
     title: "Customers",
     blocks: [
       {
-        type: "p",
-        text: "The Customers page stores your customer directory. Each customer can have contact details, a credit limit and their own pricing.",
+        type: "howto",
+        title: "How to add a customer",
+        items: [
+          "Open Customers from the sidebar.",
+          "Click Add Customer.",
+          "Enter the customer's name, phone number, email and address.",
+          "Optionally set a credit limit — the system warns you if an invoice exceeds this amount.",
+          "Click Save. The customer now appears in the customer list and in the invoice customer dropdown.",
+        ],
       },
       {
-        type: "list",
+        type: "howto",
+        title: "How to view a customer's balance",
         items: [
-          "Add and edit customers",
-          "See each customer's invoices and balances",
-          "Track receivables — what customers owe you",
+          "Open Customers from the sidebar.",
+          "Click on a customer name to open their detail view.",
+          "You'll see their outstanding balance, total invoices and payment history.",
         ],
       },
       {
@@ -156,21 +198,31 @@ const EN: HelpSection[] = [
     title: "Purchasing",
     blocks: [
       {
-        type: "p",
-        text: "Purchase orders track the orders you place with suppliers. Creating a PO records what you bought, at what cost and from whom.",
-      },
-      {
-        type: "steps",
+        type: "howto",
+        title: "How to create a purchase order",
         items: [
-          "Create a purchase order with a supplier",
-          "Add the products and quantities",
-          "Receive the order to update stock automatically",
-          "Mark it as paid when you settle the bill",
+          "Open Purchasing from the sidebar.",
+          "Click New Purchase Order.",
+          "Select or type the supplier name.",
+          "Add line items: pick a product, set quantity and cost price per unit.",
+          "Click Save to create the draft purchase order.",
         ],
       },
       {
-        type: "p",
-        text: "Receiving a purchase order increases your stock. Unreceived POs show the quantity still outstanding.",
+        type: "howto",
+        title: "How to receive a purchase order",
+        items: [
+          "Open an unreceived purchase order from the Purchasing list.",
+          "Click Receive Order. Stock levels for all line items are increased automatically.",
+        ],
+      },
+      {
+        type: "howto",
+        title: "How to mark a purchase order as paid",
+        items: [
+          "Open a received purchase order from the Purchasing list.",
+          "Click Mark as Paid when you've settled the bill with the supplier.",
+        ],
       },
     ],
   },
@@ -179,16 +231,22 @@ const EN: HelpSection[] = [
     title: "Reports & Analytics",
     blocks: [
       {
-        type: "p",
-        text: "Reports turn your data into decisions. Sales, stock, customers and profit analytics are all here, and every report can be exported.",
+        type: "howto",
+        title: "How to view reports",
+        items: [
+          "Open Reports from the sidebar to see the available report types.",
+          "Click a report card (Sales, Profit, Stock, Customers) to open it.",
+          "Use the date-range filter at the top to focus on a specific period (today, this week, this month, custom range).",
+          "Click Export to download the report as Excel or PDF.",
+        ],
       },
       {
-        type: "list",
+        type: "howto",
+        title: "How to check your profit",
         items: [
-          "Sales and revenue trends",
-          "Profit analysis",
-          "Stock valuation and movement",
-          "Top products and customers",
+          "Open Reports and click the Profit Analysis card.",
+          "Set the date range to the period you want to review.",
+          "The report shows revenue, cost of goods sold and net profit for the selected period.",
         ],
       },
       {
@@ -202,15 +260,21 @@ const EN: HelpSection[] = [
     title: "Accounts",
     blocks: [
       {
-        type: "p",
-        text: "The Accounts module is the bookkeeping side of the app: a chart of accounts and a journal of every financial movement.",
+        type: "howto",
+        title: "How to view the chart of accounts",
+        items: [
+          "Open Accounts from the sidebar.",
+          "You'll see the full chart of accounts — assets, liabilities, equity, income and expense categories.",
+          "Click any account to see its transaction history and current balance.",
+        ],
       },
       {
-        type: "list",
+        type: "howto",
+        title: "How to understand journal entries",
         items: [
-          "Chart of accounts",
-          "Journal entries for every transaction",
-          "Balances for each account",
+          "Journal entries are created automatically whenever you create an invoice, record a payment or move stock.",
+          "Open Accounts and click Journal Entries to see the full list.",
+          "Each entry shows the debit and credit sides, the date, and which transaction generated it.",
         ],
       },
       {
@@ -225,14 +289,27 @@ const EN: HelpSection[] = [
     blocks: [
       {
         type: "p",
-        text: "Only the owner and admins can manage team members. Add employees and choose the right role for each.",
+        text: "Only the owner and admins can manage team members.",
       },
       {
-        type: "list",
+        type: "howto",
+        title: "How to add a team member",
         items: [
-          "Owner — full access to everything",
-          "Admin — manages users and settings",
-          "Employee — day-to-day operations",
+          "Open Team from the sidebar.",
+          "Click Add User.",
+          "Enter the new user's name, email and password.",
+          "Choose a role: Owner (full access), Admin (manages users and settings), or Employee (day-to-day operations).",
+          "Click Save. The new user can now sign in with their credentials.",
+        ],
+      },
+      {
+        type: "howto",
+        title: "How to change a user's role",
+        items: [
+          "Open Team from the sidebar.",
+          "Find the user in the list and click the Edit (pencil) icon.",
+          "Change the Role dropdown to the new role.",
+          "Click Save.",
         ],
       },
       {
@@ -246,8 +323,32 @@ const EN: HelpSection[] = [
     title: "Settings",
     blocks: [
       {
-        type: "p",
-        text: "Settings is where you configure the company. Some tabs are available only to the owner.",
+        type: "howto",
+        title: "How to update your company profile",
+        items: [
+          "Open Settings from the sidebar.",
+          "On the Company Profile tab, update your company name, phone, address and currency.",
+          "Click Save Changes at the bottom of the tab.",
+        ],
+      },
+      {
+        type: "howto",
+        title: "How to change the invoice design",
+        items: [
+          "Open Settings and click the Invoice Settings tab.",
+          "Scroll to the Invoice Design section.",
+          "Choose a layout template and customize colors, fonts and the logo.",
+          "Click Save to apply the new design to all future invoices.",
+        ],
+      },
+      {
+        type: "howto",
+        title: "How to change the app language",
+        items: [
+          "Open Settings and click the Language tab.",
+          "Select your preferred language from the dropdown.",
+          "Click Save. The interface updates immediately.",
+        ],
       },
       {
         type: "list",
@@ -260,10 +361,6 @@ const EN: HelpSection[] = [
           "Language — choose the interface language",
         ],
       },
-      {
-        type: "tip",
-        text: "Each tab has its own Save button. Changes are applied per tab.",
-      },
     ],
   },
   {
@@ -271,20 +368,28 @@ const EN: HelpSection[] = [
     title: "Backup & Restore",
     blocks: [
       {
-        type: "p",
-        text: "Your database lives on your computer. Back it up regularly so you never lose your business data.",
+        type: "howto",
+        title: "How to create a backup",
+        items: [
+          "Open Settings from the sidebar and click the Backup & Restore tab.",
+          "Click Create Backup.",
+          "Choose a save location — use a USB drive or cloud folder (Google Drive, Dropbox) for safety.",
+          "The backup file is saved. Keep it in a safe place.",
+        ],
       },
       {
-        type: "steps",
+        type: "howto",
+        title: "How to restore from a backup",
         items: [
-          "Open Settings → Backup & Restore",
-          "Click Create Backup... and choose a location (USB drive or cloud folder)",
-          "Keep the backup file in a safe place",
+          "Open Settings and click the Backup & Restore tab.",
+          "Click Restore from Backup and select your backup file.",
+          "The app automatically creates a safety backup of your current data before restoring.",
+          "Confirm the restore. Your data is replaced with the backup contents.",
         ],
       },
       {
         type: "warn",
-        text: "Restoring replaces your current data. The app automatically creates a safety backup before restoring.",
+        text: "Restoring replaces your current data. The app automatically creates a safety backup before restoring, but always keep a recent backup file handy.",
       },
       {
         type: "tip",

@@ -366,8 +366,8 @@ export default function DashboardHome({ user }: { user: PublicUser }) {
                       </linearGradient>
                     </defs>
                     <CartesianGrid strokeDasharray="4 4" stroke="#E7ECF5" vertical={false} />
-                    <XAxis dataKey="name" tick={{ fontSize: 11, fill: "#5C6B84" }} tickLine={false} axisLine={false} />
-                    <YAxis tick={{ fontSize: 11, fill: "#5C6B84" }} tickLine={false} axisLine={false} tickFormatter={(v) => `${v >= 1000 ? `${(v / 1000).toFixed(1)}k` : v}`} />
+                    <XAxis dataKey="name" tick={{ fontSize: 11, fill: INK.muted }} tickLine={false} axisLine={false} />
+                    <YAxis tick={{ fontSize: 11, fill: INK.muted }} tickLine={false} axisLine={false} tickFormatter={(v) => `${v >= 1000 ? `${(v / 1000).toFixed(1)}k` : v}`} />
                     <Tooltip
                       formatter={(value) => [fmtMoney(value), ""]}
                       labelStyle={{ fontWeight: 700, color: INK.text }}
@@ -460,8 +460,8 @@ export default function DashboardHome({ user }: { user: PublicUser }) {
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={productData} layout="vertical" margin={{ top: 4, right: 16, left: 8, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="4 4" stroke="#E7ECF5" horizontal={false} />
-                    <XAxis type="number" tick={{ fontSize: 11, fill: "#5C6B84" }} tickLine={false} axisLine={false} tickFormatter={(v) => `${v >= 1000 ? `${(v / 1000).toFixed(1)}k` : v}`} />
-                    <YAxis type="category" dataKey="name" width={120} tick={{ fontSize: 11, fill: "#5C6B84" }} tickLine={false} axisLine={false} />
+                    <XAxis type="number" tick={{ fontSize: 11, fill: INK.muted }} tickLine={false} axisLine={false} tickFormatter={(v) => `${v >= 1000 ? `${(v / 1000).toFixed(1)}k` : v}`} />
+                    <YAxis type="category" dataKey="name" width={120} tick={{ fontSize: 11, fill: INK.muted }} tickLine={false} axisLine={false} />
                     <Tooltip
                       formatter={(value) => [fmtMoney(value), "Revenue"]}
                       contentStyle={{ borderRadius: 12, border: `1px solid ${INK.border}` }}
@@ -739,7 +739,7 @@ function StatCard({
       <Card withBorder shadow="sm" padding="lg">
         <Group justify="space-between" align="flex-start">
           <Stack gap={2}>
-            <Text size="xs" fw={600} style={{ color: "#5C6B84", letterSpacing: 0.4, textTransform: "uppercase" }}>
+            <Text size="xs" fw={600} style={{ color: INK.muted, letterSpacing: 0.4, textTransform: "uppercase" }}>
               {label}
             </Text>
             <Text fw={800} size="xl" style={{ color: INK.text, letterSpacing: -0.5 }} className="tabular">

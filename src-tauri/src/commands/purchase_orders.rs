@@ -1,3 +1,5 @@
+#![allow(clippy::too_many_arguments)]
+
 // ==========================================
 // PURCHASE ORDERS
 // ==========================================
@@ -616,7 +618,7 @@ pub async fn record_po_payment(
         .execute(&mut *tx).await.map_err(|e| format!("Error: {e}"))?;
 
     sqlx::query("UPDATE purchase_orders SET amount_paid = ?, balance_due = ?, status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
-        .bind(new_paid).bind(new_balance).bind(&new_status).bind(&po_id)
+        .bind(new_paid).bind(new_balance).bind(new_status).bind(&po_id)
         .execute(&mut *tx).await.map_err(|e| format!("Error: {e}"))?;
 
     tx.commit().await.map_err(|e| format!("Error: {e}"))?;
@@ -659,8 +661,20 @@ async fn recalc_po_totals(pool: &SqlitePool, po_id: &str, company_id: &str) -> R
     .map_err(|e| format!("Error: {e}"))?;
 
     let grand = subtotal + tax;
-    sqlx::query("UPDATE purchase_orders SET subtotal = ?, tax_total = ?, grand_total = ?, balance_due = grand_total - amount_paid, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND company_id = ?")
-        .bind(subtotal).bind(tax).bind(grand).bind(po_id).bind(company_id)
+
+    // Compute balance_due in Rust — do NOT use `balance_due = grand_total - amount_paid`
+    // inside the same UPDATE that sets grand_total, because SQLite evaluates the
+    // right-hand side with the OLD value of grand_total, not the new one.
+    let amount_paid = sqlx::query_as::<_, (i64,)>("SELECT amount_paid FROM purchase_orders WHERE id = ?")
+        .bind(po_id)
+        .fetch_one(pool)
+        .await
+        .map_err(|e| format!("Error: {e}"))?
+        .0;
+    let balance = grand - amount_paid;
+
+    sqlx::query("UPDATE purchase_orders SET subtotal = ?, tax_total = ?, grand_total = ?, balance_due = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND company_id = ?")
+        .bind(subtotal).bind(tax).bind(grand).bind(balance).bind(po_id).bind(company_id)
         .execute(pool).await.map_err(|e| format!("Error: {e}"))?;
 
     Ok(())

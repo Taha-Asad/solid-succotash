@@ -175,7 +175,7 @@ pub(crate) fn validate_password(password: &str) -> Result<(), String> {
 
     // Traditional bcrypt only considers up to 72 bytes.
     // Rejecting longer passwords prevents misleading password behavior.
-    if password.as_bytes().len() > 72 {
+    if password.len() > 72 {
         return Err("Password cannot exceed 72 bytes".to_string());
     }
 
@@ -299,8 +299,7 @@ pub async fn login_user(
 
     // Rate limit: 5 attempts per minute per email (PECA §16.2)
     tracker
-        .check(&email, 5, Duration::from_secs(60))
-        .map_err(|message| message)?;
+        .check(&email, 5, Duration::from_secs(60))?;
 
     let user_row = sqlx::query_as::<_, UserWithPassword>(
         r#"

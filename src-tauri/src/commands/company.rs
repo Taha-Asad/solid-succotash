@@ -1,3 +1,5 @@
+#![allow(clippy::too_many_arguments)]
+
 use serde::Serialize;
 use sqlx::{FromRow, SqlitePool};
 use tauri::State;

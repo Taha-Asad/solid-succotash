@@ -139,47 +139,48 @@ export const en: Dict = {
   "onb.login.title": "Sign in to your workspace",
   "onb.login.content":
     "Welcome! Before you can manage your business, sign in with your user name and password.",
-  "onb.login.hint": "Enter your sign-in details and press Sign In.",
+  "onb.login.hint": "Enter your username and password, then press Sign In.",
   "onb.welcome.title": "Welcome to your workspace",
   "onb.welcome.content":
-    "This tutorial shows you how to use the app by actually doing it. Complete each small task to unlock the next step — you've got this!",
+    "This tutorial teaches you the app by having you do the work yourself. Complete each small task to unlock the next step. Let's begin!",
   "onb.navInventory.title": "Open Inventory",
   "onb.navInventory.content":
-    "Inventory is where you store everything you sell or buy. Let's open it.",
-  "onb.navInventory.hint": "Click “Inventory” in the sidebar on the left.",
+    "Inventory is where you store everything you sell or buy. Let's open it now.",
+  "onb.navInventory.hint": "Click \u201CInventory\u201D in the sidebar on the left.",
   "onb.inventoryOverview.title": "Your inventory",
   "onb.inventoryOverview.content":
-    "This is your Inventory page. Here you can track products, stock levels, categories and suppliers. On the right you can search and add products, or import your existing Excel or CSV files.",
+    "This is your Inventory page. You can add products, import from Excel, and track stock levels here. On the right you can search and add products.",
   "onb.addProduct.title": "Add your first product",
   "onb.addProduct.content":
-    "Let's add a real product. Click “Add Product” and fill in the name, price and quantity — your inventory comes to life.",
-  "onb.addProduct.hint": "Click the “Add Product” button above the product list.",
+    "Let's add a real product to your inventory. Click the button below to open the form, then fill in the name, price and quantity.",
+  "onb.addProduct.hint": "Click the \u201CAdd Product\u201D button above the product list.",
   "onb.import.title": "Import your existing data",
   "onb.import.content":
-    "Already have your products in Excel or CSV? You don't have to re-type anything. Open the import wizard and it will read your file and map the columns for you.",
-  "onb.import.hint": "Click “Import from Excel / CSV”, then walk through the wizard.",
+    "If you already have products in Excel or CSV, you can import them all at once. Click the button below to open the import wizard, then select your file.",
+  "onb.import.hint": "Click \u201CImport from Excel / CSV\u201D, then select your file and complete the wizard.",
   "onb.navInvoices.title": "Open Invoices",
   "onb.navInvoices.content":
     "Next stop: billing. This is where you create the invoices your customers pay.",
-  "onb.navInvoices.hint": "Click “Invoices” in the sidebar on the left.",
+  "onb.navInvoices.hint": "Click \u201CInvoices\u201D in the sidebar on the left.",
   "onb.createInvoice.title": "Create an invoice",
   "onb.createInvoice.content":
-    "Create your first invoice: pick a customer, choose the products and press save. This draft will become your bill.",
-  "onb.createInvoice.hint": "Click “New Invoice” and fill in the form.",
-  "onb.finalizeInvoice.title": "The invoice detail",
+    "Create your first invoice now. Click the button below, pick a customer, add products and quantities, then save.",
+  "onb.createInvoice.hint": "Click \u201CNew Invoice\u201D, fill in the form, and click Save.",
+  "onb.finalizeInvoice.title": "Finalize your invoice",
   "onb.finalizeInvoice.content":
-    "This is the invoice view. When your draft is ready, click the green “Finalize Invoice” button to lock it in as a real, collectable invoice.",
+    "Your draft invoice is ready. Click the green \u201CFinalize Invoice\u201D button to lock it as a real, collectable invoice.",
+  "onb.finalizeInvoice.hint": "Click \u201CFinalize Invoice\u201D to complete this step.",
   "onb.navSettings.title": "Open Settings",
   "onb.navSettings.content":
     "Last stop: Settings. Here you manage your company profile, invoice look, backups and more.",
-  "onb.navSettings.hint": "Click “Settings” in the sidebar on the left.",
+  "onb.navSettings.hint": "Click \u201CSettings\u201D in the sidebar on the left.",
   "onb.updateCompany.title": "Update your company profile",
   "onb.updateCompany.content":
-    "Make sure your business looks professional: set your company name, phone number and address here.",
-  "onb.updateCompany.hint": "Type in the Company Profile form, then click “Save Changes”.",
+    "Make sure your business looks professional: enter your company name, phone number and address, then click Save.",
+  "onb.updateCompany.hint": "Type in the Company Profile form, then click \u201CSave Changes\u201D.",
   "onb.done.title": "You're all set!",
   "onb.done.content":
-    "That's it — you now know how to run the core of your business. You can replay this tutorial any time from the Help menu. Happy selling!",
+    "That's it \u2014 you now know how to run the core of your business. You can replay this tutorial any time from the Help menu. Happy selling!",
 
   // ---------- Help page ----------
   "help.title": "Help & Documentation",
@@ -527,9 +528,10 @@ export const ur: Dict = {
   "onb.createInvoice.content":
     "اپنی پہلی انوائس بنائیں: گاہک چنیں، مصنوعات منتخب کریں اور محفوظ کریں۔ یہ ڈرافٹ آپ کا بل بن جائے گا۔",
   "onb.createInvoice.hint": "'New Invoice' پر کلک کر کے فارم بھریں۔",
-  "onb.finalizeInvoice.title": "انوائس کی تفصیل",
+  "onb.finalizeInvoice.title": "اپنی انوائس حتمی کریں",
   "onb.finalizeInvoice.content":
-    "یہ انوائس کا منظر ہے۔ جب آپ کا ڈرافٹ تیار ہو تو سبز 'Finalize Invoice' بٹن دبائیں تاکہ یہ ایک حقیقی وصول شدنی انوائس بن جائے۔",
+    "آپ کی ڈرافٹ انوائس تیار ہے۔ سبز \u201CFinalize Invoice\u201D بٹن دبائیں تاکہ یہ ایک حقیقی وصول شدنی انوائس بن جائے۔",
+  "onb.finalizeInvoice.hint": "\u201CFinalize Invoice\u201D پر کلک کریں۔",
   "onb.navSettings.title": "ترتیبات کھولیں",
   "onb.navSettings.content":
     "آخری پڑاؤ: ترتیبات۔ یہاں آپ اپنی کمپنی کا پروفائل، انوائس کی شکل، بیک اپ وغیرہ کا انتظام کریں گے۔",

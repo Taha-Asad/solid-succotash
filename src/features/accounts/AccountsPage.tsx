@@ -245,7 +245,7 @@ function TrialBalance() {
             </Table.Tbody>
             <Table.Tfoot>
               <Table.Tr>
-                <Table.Th colSpan={3} ta="right">Totals</Table.Th>
+                <Table.Th colSpan={3} ta="right">Totals (all activity)</Table.Th>
                 <Table.Th ta="right">{p(totals.debit)}</Table.Th>
                 <Table.Th ta="right">{p(totals.credit)}</Table.Th>
                 <Table.Th />
@@ -254,6 +254,17 @@ function TrialBalance() {
             </Table.Tfoot>
           </Table>
         </ScrollArea>
+
+        <Alert color="blue" variant="light" mt="md" title="Reading the Trial Balance">
+          <b>Total Debits / Credits</b> sum every posting across all accounts — each double-entry
+          transaction contributes to both columns, so these totals will always match
+          (balanced books) but will be larger than your actual balances.
+          <br /><br />
+          <b>The Balance column shows the real net position</b> per account (debit minus credit).
+          For example, a Rs 30,000 sale posts Dr AR 30k / Cr Sales 30k, and its payment posts
+          Dr Cash 30k / Cr AR 30k. Total debits and credits are both 60k, but the balances
+          are: Cash +30k, AR 0 (paid off), Sales 30k.
+        </Alert>
       </Card>
 
       <SimpleGrid cols={{ base: 1, sm: 2 }} mt="md">

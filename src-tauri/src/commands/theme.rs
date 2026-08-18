@@ -150,3 +150,143 @@ pub fn read_file_base64(path: String) -> Result<String, String> {
     };
     Ok(format!("data:{mime};base64,{}", BASE64.encode(bytes)))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::test_helpers::{
+        insert_user, register_owner_full, set_session_user, setup_app,
+    };
+    use tauri::Manager;
+
+    #[tokio::test]
+    async fn get_theme_returns_defaults_for_new_company() {
+        let app = setup_app().await;
+        let _owner = register_owner_full(&app, "owner@test.com").await;
+
+        let theme = get_theme(app.state(), app.state()).await.expect("get_theme");
+        assert_eq!(theme.primary_color, "#1D2B54");
+        assert_eq!(theme.accent_color, "#C9952A");
+        assert_eq!(theme.color_scheme, "light");
+        assert!(theme.logo_base64.is_none());
+        assert_eq!(theme.erp_watermark, PLATFORM_WATERMARK);
+    }
+
+    #[tokio::test]
+    async fn update_theme_saves_and_returns_updated_values() {
+        let app = setup_app().await;
+        let _owner = register_owner_full(&app, "owner@test.com").await;
+
+        let input = UpdateThemeInput {
+            primary_color: "#FF0000".to_string(),
+            secondary_color: "#00FF00".to_string(),
+            accent_color: "#0000FF".to_string(),
+            color_scheme: "dark".to_string(),
+            logo_base64: None,
+            company_tagline: Some("Test tagline".to_string()),
+        };
+
+        let updated = update_theme(app.state(), app.state(), input)
+            .await
+            .expect("update_theme");
+        assert_eq!(updated.primary_color, "#FF0000");
+        assert_eq!(updated.secondary_color, "#00FF00");
+        assert_eq!(updated.accent_color, "#0000FF");
+        assert_eq!(updated.color_scheme, "dark");
+        assert_eq!(updated.company_tagline, Some("Test tagline".to_string()));
+    }
+
+    #[tokio::test]
+    async fn update_theme_always_forces_platform_watermark() {
+        let app = setup_app().await;
+        let _owner = register_owner_full(&app, "owner@test.com").await;
+
+        let input = UpdateThemeInput {
+            primary_color: "#111111".to_string(),
+            secondary_color: "#222222".to_string(),
+            accent_color: "#333333".to_string(),
+            color_scheme: "light".to_string(),
+            logo_base64: None,
+            company_tagline: None,
+        };
+
+        let updated = update_theme(app.state(), app.state(), input)
+            .await
+            .expect("update_theme");
+        assert_eq!(updated.erp_watermark, PLATFORM_WATERMARK);
+    }
+
+    #[tokio::test]
+    async fn update_theme_rejects_employee() {
+        let app = setup_app().await;
+        let owner = register_owner_full(&app, "owner@test.com").await;
+        let employee = insert_user(
+            app.state::<sqlx::SqlitePool>().inner(),
+            &owner.company.id,
+            "emp@test.com",
+            "Employee",
+            "employee",
+            true,
+        )
+        .await;
+        set_session_user(&app, employee).await;
+
+        let input = UpdateThemeInput {
+            primary_color: "#FF0000".to_string(),
+            secondary_color: "#00FF00".to_string(),
+            accent_color: "#0000FF".to_string(),
+            color_scheme: "light".to_string(),
+            logo_base64: None,
+            company_tagline: None,
+        };
+
+        let result = update_theme(app.state(), app.state(), input).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Only owner/admin"));
+    }
+
+    #[test]
+    fn read_file_base64_rejects_nonexistent_file() {
+        let result = read_file_base64("/tmp/this_does_not_exist.png".to_string());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Cannot read file"));
+    }
+
+    #[test]
+    fn read_file_base64_reads_png() {
+        let dir = std::env::temp_dir().join(format!("theme-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("test.png");
+        std::fs::write(&path, [0x89, 0x50, 0x4E, 0x47]).unwrap();
+
+        let result = read_file_base64(path.to_str().unwrap().to_string()).unwrap();
+        assert!(result.starts_with("data:image/png;base64,"));
+        assert!(result.len() >= 30);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn get_theme_persists_after_update() {
+        let app = setup_app().await;
+        let _owner = register_owner_full(&app, "owner@test.com").await;
+
+        let input = UpdateThemeInput {
+            primary_color: "#AABBCC".to_string(),
+            secondary_color: "#112233".to_string(),
+            accent_color: "#FF0000".to_string(),
+            color_scheme: "dark".to_string(),
+            logo_base64: None,
+            company_tagline: Some("Persisted".to_string()),
+        };
+
+        update_theme(app.state(), app.state(), input)
+            .await
+            .expect("update_theme");
+
+        let theme = get_theme(app.state(), app.state()).await.expect("get_theme");
+        assert_eq!(theme.primary_color, "#AABBCC");
+        assert_eq!(theme.color_scheme, "dark");
+        assert_eq!(theme.company_tagline, Some("Persisted".to_string()));
+    }
+}

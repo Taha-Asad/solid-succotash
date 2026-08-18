@@ -150,7 +150,7 @@ fn format_timestamp(secs: u64) -> String {
     let mut y = 1970u64;
     let mut rem = days;
     loop {
-        let d = if (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0) {
+        let d = if (y.is_multiple_of(4) && !y.is_multiple_of(100)) || y.is_multiple_of(400) {
             366
         } else {
             365
@@ -161,7 +161,7 @@ fn format_timestamp(secs: u64) -> String {
         rem -= d;
         y += 1;
     }
-    let leap = (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0);
+    let leap = (y.is_multiple_of(4) && !y.is_multiple_of(100)) || y.is_multiple_of(400);
     let md = [
         31,
         if leap { 29 } else { 28 },
@@ -185,4 +185,94 @@ fn format_timestamp(secs: u64) -> String {
         mo += 1;
     }
     format!("{:04}-{:02}-{:02}", y, mo, rem + 1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::test_helpers::{insert_user, register_owner_full, set_session_user, setup_app};
+    use sqlx::SqlitePool;
+    use tauri::Manager;
+
+    #[tokio::test]
+    async fn retention_summary_defaults_to_five_years() {
+        let app = setup_app().await;
+        let _owner = register_owner_full(&app, "owner@test.com").await;
+
+        let result = get_retention_summary(app.state(), app.state(), 0)
+            .await
+            .expect("should succeed with zero years");
+
+        assert_eq!(result.invoices_archivable, 0);
+        assert_eq!(result.po_archivable, 0);
+        assert_eq!(result.movements_archivable, 0);
+        assert!(result.oldest_invoice_date.is_none());
+        assert!(result.oldest_movement_date.is_none());
+    }
+
+    #[tokio::test]
+    async fn retention_summary_rejects_non_owner() {
+        let app = setup_app().await;
+        let owner = register_owner_full(&app, "owner@test.com").await;
+        let employee = insert_user(
+            app.state::<SqlitePool>().inner(),
+            &owner.company.id,
+            "emp@test.com",
+            "Employee",
+            "employee",
+            true,
+        )
+        .await;
+
+        set_session_user(&app, employee).await;
+
+        let result = get_retention_summary(app.state(), app.state(), 5).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Only owner"));
+    }
+
+    #[tokio::test]
+    async fn archive_old_records_rejects_non_owner() {
+        let app = setup_app().await;
+        let owner = register_owner_full(&app, "owner@test.com").await;
+        let admin = insert_user(
+            app.state::<SqlitePool>().inner(),
+            &owner.company.id,
+            "admin@test.com",
+            "Admin",
+            "admin",
+            true,
+        )
+        .await;
+
+        set_session_user(&app, admin).await;
+
+        let result = archive_old_records(app.state(), app.state(), 5).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Only owner"));
+    }
+
+    #[tokio::test]
+    async fn archive_old_records_with_no_data_succeeds() {
+        let app = setup_app().await;
+        let _owner = register_owner_full(&app, "owner@test.com").await;
+
+        let result = archive_old_records(app.state(), app.state(), 5)
+            .await
+            .expect("should succeed");
+
+        assert!(result.contains("0 invoices"));
+    }
+
+    #[test]
+    fn format_timestamp_handles_epoch() {
+        let ts = format_timestamp(0);
+        assert_eq!(ts, "1970-01-01");
+    }
+
+    #[test]
+    fn format_timestamp_handles_recent_date() {
+        let ts = format_timestamp(1_700_000_000);
+        assert!(ts.starts_with("2023-"));
+    }
 }

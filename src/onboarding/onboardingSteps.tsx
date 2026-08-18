@@ -132,7 +132,7 @@ export const APP_STEPS: OnboardingStep[] = [
     selector: '[data-tour="import-button"]',
     freeRegion: '[data-tour="import-wizard"]',
     roles: ["owner", "admin"],
-    completeOn: ["wizard-closed", "import-completed"],
+    completeOn: ["import-completed"],
   },
   {
     id: "nav-invoices",
@@ -157,11 +157,14 @@ export const APP_STEPS: OnboardingStep[] = [
   },
   {
     id: "finalize-invoice",
-    kind: "info",
+    kind: "task",
     titleKey: "onb.finalizeInvoice.title",
     contentKey: "onb.finalizeInvoice.content",
+    hintKey: "onb.finalizeInvoice.hint",
     icon: <CheckCircle2 size={18} />,
     selector: '[data-tour="invoice-detail"]',
+    roles: ["owner", "admin"],
+    completeOn: ["invoice-finalized"],
   },
   {
     id: "nav-settings",

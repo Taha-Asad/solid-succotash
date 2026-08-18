@@ -477,10 +477,9 @@ async fn ensure_import_columns(pool: &SqlitePool) -> Result<(), Box<dyn std::err
 ///
 /// - `target`        (migration 016): what kind of data the job imported.
 /// - `attempted_rows`: rows processed so far — drives the live progress bar
-///                     reported by `get_import_job`.
-/// - `result_json`   : the full `ImportResult` of a finished job, so a polled
-///                     client can render the same result screen as the old
-///                     synchronous flow.
+///   reported by `get_import_job`.
+/// - `result_json`: the full `ImportResult` of a finished job, so a polled
+///   client can render the same result screen as the old synchronous flow.
 async fn ensure_import_job_columns(pool: &SqlitePool) -> Result<(), Box<dyn std::error::Error>> {
     let columns: Vec<String> = sqlx::query("PRAGMA table_info(import_jobs)")
         .map(|row: sqlx::sqlite::SqliteRow| row.get::<String, _>(1))
@@ -514,10 +513,10 @@ async fn ensure_import_job_columns(pool: &SqlitePool) -> Result<(), Box<dyn std:
 /// column is added from Rust once. Idempotent — same PRAGMA check as the other
 /// ensure_* helpers.
 ///
-/// - `target`       : what the template maps ("products", "customers",
-///                    "suppliers", "invoices", "purchase_bills", ...). Templates
-///                    are matched against the current import target only.
-/// - `use_count`    : how many times the template has been auto-reused.
+/// - `target`: what the template maps ("products", "customers", "suppliers",
+///   "invoices", "purchase_bills", ...). Templates are matched against the
+///   current import target only.
+/// - `use_count`: how many times the template has been auto-reused.
 /// - `last_used_at`: ISO timestamp of the most recent reuse (NULL until used).
 async fn ensure_import_template_columns(pool: &SqlitePool) -> Result<(), Box<dyn std::error::Error>> {
     let columns: Vec<String> = sqlx::query("PRAGMA table_info(import_templates)")

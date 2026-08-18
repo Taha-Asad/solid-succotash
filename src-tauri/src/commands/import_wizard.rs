@@ -1,3 +1,5 @@
+#![allow(clippy::too_many_arguments)]
+
 // ==========================================
 // IMPORT WIZARD — Schema Discovery Engine
 // ==========================================
@@ -114,8 +116,10 @@ pub struct FieldMapping {
 /// (products are matched by SKU, customers by name). Defaults to Skip.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum ConflictStrategy {
     /// Skip the row silently (re-imports are idempotent).
+    #[default]
     Skip,
     /// Update the existing record with the file's values.
     Overwrite,
@@ -123,11 +127,6 @@ pub enum ConflictStrategy {
     Suffix,
 }
 
-impl Default for ConflictStrategy {
-    fn default() -> Self {
-        ConflictStrategy::Skip
-    }
-}
 
 /// What the frontend sends back when user confirms the mapping
 #[derive(Debug, Clone, Deserialize)]
@@ -290,9 +289,10 @@ struct TesseractBundle {
 }
 
 /// Initializes the app-wide services the import worker needs:
-///  1. captures the AppHandle so background tasks can emit push events,
-///  2. resolves the bundled Tesseract OCR engine (spec §23.2 Phase 2) so
-///     image/scanned-document import works without Tesseract on PATH.
+/// 1. captures the AppHandle so background tasks can emit push events,
+/// 2. resolves the bundled Tesseract OCR engine (spec §23.2 Phase 2) so
+///    image/scanned-document import works without Tesseract on PATH.
+///
 /// Called once from the Tauri setup hook in `lib.rs`.
 pub fn init_app_services(app: &AppHandle) {
     let _ = APP_HANDLE.set(app.clone());
@@ -777,7 +777,7 @@ async fn analyze_excel(
 
     let mut rows: Vec<Vec<String>> = Vec::new();
     for row in range.rows() {
-        let row_data: Vec<String> = row.iter().map(|cell| cell_to_string(cell)).collect();
+        let row_data: Vec<String> = row.iter().map(cell_to_string).collect();
         rows.push(row_data);
     }
 
@@ -1316,7 +1316,7 @@ async fn run_import_job(
         // Live progress: flush the counters every 10 rows so the frontend
         // sees a moving bar instead of a spinner. The final state is written
         // once by finish_import_job below.
-        if attempted % 10 == 0 {
+        if attempted.is_multiple_of(10) {
             let processed = (products_imported + customers_imported + items_imported) as i64;
             update_import_progress(&pool, &job_id, attempted, processed, rows_with_errors as i64)
                 .await;
@@ -4060,9 +4060,9 @@ fn parse_product_row(mappings: &[FieldMapping], row: &[String]) -> Result<Parsed
     let parsed_expiry: Option<String> = if expiry_raw.trim().is_empty() {
         None
     } else {
-        match crate::commands::inventory::parse_expiry_date(&expiry_raw) {
-            Ok(d) => Some(d),
-            Err(e) => return Err(e),
+        {
+            let d = crate::commands::inventory::parse_expiry_date(&expiry_raw)?;
+            Some(d)
         }
     };
 

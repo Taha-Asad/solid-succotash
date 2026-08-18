@@ -1,5 +1,14 @@
 # Multi-Tenant SaaS ERP — System Specification (v5.1)
 
+> **⚠️ SPECIFICATION FROZEN — v1.0 LAUNCH**
+> This document is frozen as the baseline for the v1.0 desktop release.
+> No new features or architectural changes will be merged into this spec
+> until v1.0 ships. Bug-fix clarifications and errata may still be added
+> with a revision note. Future features are documented separately in
+> [FUTURE_FEATURES.md](FUTURE_FEATURES.md).
+>
+> **Freeze date:** 2026-08-18
+
 > **Revision Notes (v5.1):** AI Trend Analysis & Demand Forecasting (§23) moved from Phase 6 to §25 (Future Enhancements). Phase roadmap simplified and tightened. Import system (§24) retained as Phase 2 feature — it removes immediate onboarding pain and is not ML-dependent. AI module references removed from the active module list; `ai_insights` feature flag kept in the schema as a zero-cost placeholder for when the feature arrives. Round 5 analysis findings incorporated: import rollback strategy added (§24.12), AI anonymization proxy pattern documented in §25.6, weighted data sufficiency scoring replaces fixed threshold (§25.4), ERP migration adapters added to future enhancements (§25.7). Score impact of deferral documented in §20.6.
 >
 > **Revision Notes (v5.0):** JWT module-list vulnerability fixed, permission cache, subscription race condition, optimistic locking, invoice sequence SELECT FOR UPDATE, archival lifecycle, database mode separation, full-text search, AI forecasting, import system.
@@ -2102,7 +2111,7 @@ Every AI recommendation must carry its reasoning. Unexplained recommendations ar
 | No notification system                      | Medium   | §18.1                                                                  | ⚠️ Planned           |
 | GDPR data residency                         | Medium   | Infrastructure decision §16.3                                          | ❓ Decision required |
 | CORS policy undefined                       | Medium   | Phase 5                                                                | ⚠️ Planned           |
-| Supply-chain security                       | Medium   | Phase 5 (cargo audit in CI)                                            | ⚠️ Planned           |
+| Supply-chain security                       | Medium   | cargo audit in CI (release.yml)                                        | ✅ Implemented       |
 | AI model bad predictions (future)           | Medium   | Weighted sufficiency §24.5, explainability §24.7, phased rollout §24.2 | 🔮 Documented        |
 | Multi-currency support                      | Medium   | Future                                                                 | ⏳ Deferred          |
 | Tenant sharding                             | Low      | Future                                                                 | ⏳ Deferred          |

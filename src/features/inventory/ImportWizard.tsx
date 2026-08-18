@@ -1727,7 +1727,7 @@ export default function ImportWizard({
               <Group>
                 <Button
                   variant="outline"
-                  color="dark"
+                  color="gold"
                   leftSection={<ClipboardCheck size={16} />}
                   loading={previewing}
                   onClick={handlePreview}

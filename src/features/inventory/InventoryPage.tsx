@@ -25,6 +25,8 @@
 
 import { useEffect, useMemo, useState, useCallback } from "react";
 
+import { listen } from "@tauri-apps/api/event";
+
 import { usePermissions } from "../permissions/PermissionsProvider";
 
 import {
@@ -99,6 +101,8 @@ import {
   updateUnit,
   deleteUnit,
   getErrorMessage,
+  listCustomFields,
+  IMPORT_COMPLETE_EVENT,
 } from "../../api/backend";
 
 import type {
@@ -1178,6 +1182,11 @@ function ProductsTab() {
     null,
   );
 
+  // Custom field definitions (created during import)
+  const [customFieldDefs, setCustomFieldDefs] = useState<
+    { fieldName: string; fieldLabel: string; fieldType: string }[]
+  >([]);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -1190,6 +1199,22 @@ function ProductsTab() {
       setCategories(cats);
       setSuppliers(sups);
       setError(null);
+
+      // Load custom field definitions (created by import wizard)
+      try {
+        const fields = await listCustomFields();
+        setCustomFieldDefs(
+          fields
+            .filter((f) => f.isVisible)
+            .map((f) => ({
+              fieldName: f.fieldName,
+              fieldLabel: f.fieldLabel,
+              fieldType: f.fieldType,
+            })),
+        );
+      } catch {
+        setCustomFieldDefs([]);
+      }
     } catch (err) {
       setError(getErrorMessage(err));
     } finally {
@@ -1207,6 +1232,18 @@ function ProductsTab() {
 
   useEffect(() => {
     load();
+  }, [load]);
+
+  // Re-fetch products when an import completes in the background.
+  // The import wizard runs as a fire-and-forget job; the inventory page
+  // may already be mounted and needs to refresh to show newly imported data.
+  useEffect(() => {
+    const unlisten = listen(IMPORT_COMPLETE_EVENT, () => {
+      load();
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
   }, [load]);
 
   // Lookup maps for displaying names
@@ -1578,6 +1615,9 @@ function ProductsTab() {
                     <Table.Th ta="right">Sell</Table.Th>
                     <Table.Th ta="right">Stock</Table.Th>
                     <Table.Th>Unit</Table.Th>
+                    {customFieldDefs.map((f) => (
+                      <Table.Th key={f.fieldName}>{f.fieldLabel}</Table.Th>
+                    ))}
                     <Table.Th>Expiry</Table.Th>
                     {(canEdit || canDelete) && <Table.Th>Actions</Table.Th>}
                   </Table.Tr>
@@ -1649,6 +1689,22 @@ function ProductsTab() {
                         <Table.Td>
                           <Text size="sm">{prod.unit}</Text>
                         </Table.Td>
+                        {customFieldDefs.map((f) => {
+                          let val = "—";
+                          if (prod.customFields) {
+                            try {
+                              const parsed = JSON.parse(prod.customFields);
+                              if (parsed[f.fieldName] != null) {
+                                val = String(parsed[f.fieldName]);
+                              }
+                            } catch { /* ignore */ }
+                          }
+                          return (
+                            <Table.Td key={f.fieldName}>
+                              <Text size="sm" c="dimmed">{val}</Text>
+                            </Table.Td>
+                          );
+                        })}
                         <Table.Td>
                           {prod.nextExpiryDate ? (
                             <ExpiryBadge date={prod.nextExpiryDate} />
