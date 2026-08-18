@@ -2547,7 +2547,7 @@ dependencies = [
 
 [[package]]
 name = "ijazandcompany"
-version = "1.0.6"
+version = "1.0.7"
 dependencies = [
  "base64 0.22.1",
  "bcrypt",
