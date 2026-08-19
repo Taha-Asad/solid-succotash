@@ -80,7 +80,7 @@ jobs:
       - name: Security audit (cargo audit)
         run: |
           cargo install cargo-audit --locked
-          cargo audit
+          cargo audit --manifest-path src-tauri/Cargo.toml
 
       - name: Install frontend dependencies
         run: npm ci
@@ -180,7 +180,7 @@ jobs:
       - name: Security audit (cargo audit)
         run: |
           cargo install cargo-audit --locked
-          cargo audit
+          cargo audit --manifest-path src-tauri/Cargo.toml
 
       - name: Install system dependencies
         run: |
