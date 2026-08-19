@@ -78,6 +78,7 @@ jobs:
           workspaces: "./src-tauri -> target"
 
       - name: Security audit (cargo audit)
+        shell: bash
         run: |
           cargo install cargo-audit --locked
           cd src-tauri && cargo audit || echo "::warning::cargo audit found issues (see above), continuing build"
