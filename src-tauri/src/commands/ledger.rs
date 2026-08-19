@@ -666,6 +666,8 @@ mod tests {
             "2026-02-10".to_string(),
             "PO-1".to_string(),
             "".to_string(),
+            None,
+            None,
         )
         .await
         .expect("create invoice")
@@ -761,6 +763,8 @@ mod tests {
             "2026-01-12".to_string(),
             "CHQ-1".to_string(),
             "".to_string(),
+            None,
+            None,
         )
         .await
         .expect("record payment");

@@ -25,6 +25,11 @@ pub struct PublicCompany {
     pub is_active: bool,
     pub created_at: String,
     pub updated_at: String,
+    pub ntn: Option<String>,
+    pub strn: Option<String>,
+    pub fbr_registered: bool,
+    pub fbr_registration_date: Option<String>,
+    pub province: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -107,7 +112,12 @@ async fn fetch_company(pool: &SqlitePool, company_id: &str) -> Result<PublicComp
             currency_code,
             is_active,
             created_at,
-            updated_at
+            updated_at,
+            ntn,
+            strn,
+            fbr_registered,
+            fbr_registration_date,
+            province
         FROM companies
         WHERE id = ?
         "#,
@@ -231,7 +241,12 @@ pub async fn register_company(
             currency_code,
             is_active,
             created_at,
-            updated_at
+            updated_at,
+            ntn,
+            strn,
+            fbr_registered,
+            fbr_registration_date,
+            province
         FROM companies
         WHERE id = ?
         "#,

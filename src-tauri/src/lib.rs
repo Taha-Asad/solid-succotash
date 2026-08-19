@@ -278,6 +278,22 @@ pub async fn run() {
             commands::saas::update_tenant_company,
             commands::saas::archive_company,
             commands::saas::activate_company,
+            // ---- Multi-Currency ----
+            commands::currency::get_all_currencies,
+            commands::currency::get_company_currency,
+            commands::currency::fetch_exchange_rates,
+            commands::currency::get_exchange_rate,
+            commands::currency::get_exchange_rate_history,
+            // ---- FBR / PRAL ----
+            commands::fbr::get_fbr_config,
+            commands::fbr::save_fbr_config,
+            commands::fbr::test_fbr_connection,
+            commands::fbr::get_fbr_queue_status,
+            commands::fbr::retry_fbr_submission,
+            commands::fbr::get_invoice_fbr_status,
+            commands::fbr::process_fbr_queue_now,
+            commands::fbr::create_credit_note,
+            commands::fbr::create_debit_note,
         ])
         .run(tauri::generate_context!())
         .expect("Error while running Tauri application");

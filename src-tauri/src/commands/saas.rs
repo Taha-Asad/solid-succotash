@@ -1147,7 +1147,8 @@ pub async fn get_tenant_company_detail(
         r#"
         SELECT
             id, name, email, phone, address, tax_number,
-            currency_code, is_active, created_at, updated_at
+            currency_code, is_active, created_at, updated_at,
+            ntn, strn, fbr_registered, fbr_registration_date, province
         FROM companies
         WHERE id = ? AND deleted_at IS NULL
         "#,
@@ -1373,7 +1374,8 @@ pub async fn register_tenant(
         r#"
         SELECT
             id, name, email, phone, address, tax_number,
-            currency_code, is_active, created_at, updated_at
+            currency_code, is_active, created_at, updated_at,
+            ntn, strn, fbr_registered, fbr_registration_date, province
         FROM companies
         WHERE id = ?
         "#,
@@ -1581,7 +1583,8 @@ pub async fn update_tenant_company(
     sqlx::query_as::<_, PublicCompany>(
         r#"
         SELECT id, name, email, phone, address, tax_number, currency_code,
-               is_active, created_at, updated_at
+               is_active, created_at, updated_at,
+               ntn, strn, fbr_registered, fbr_registration_date, province
         FROM companies
         WHERE id = ?
         "#,

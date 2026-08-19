@@ -34,8 +34,8 @@ async fn company_branding(pool: &SqlitePool, company_id: &str) -> (String, Strin
     (name, tagline)
 }
 
-fn pkr(paisa: i64) -> String {
-    format!("Rs {:.2}", paisa as f64 / 100.0)
+fn format_currency(paisa: i64, symbol: &str) -> String {
+    format!("{symbol} {:.2}", paisa as f64 / 100.0)
 }
 
 /// Exports the stock report as CSV
@@ -197,6 +197,16 @@ pub async fn export_report_pdf(
 
     let (company_name, tagline) = company_branding(pool.inner(), company_id).await;
 
+    let currency_symbol = sqlx::query_scalar::<_, String>(
+        "SELECT COALESCE(cc.symbol, 'Rs') FROM companies c LEFT JOIN currency_config cc ON cc.code = c.currency_code WHERE c.id = ?",
+    )
+    .bind(company_id)
+    .fetch_optional(pool.inner())
+    .await
+    .ok()
+    .flatten()
+    .unwrap_or_else(|| "Rs".to_string());
+
     let title = match report.as_str() {
         "sales" => "Sales Report",
         "stock" => "Stock Report",
@@ -271,9 +281,9 @@ pub async fn export_report_pdf(
                         n.clone(),
                         d.clone(),
                         c.clone(),
-                        pkr(*t),
-                        pkr(*p),
-                        pkr(*b),
+                        format_currency(*t, &currency_symbol),
+                        format_currency(*p, &currency_symbol),
+                        format_currency(*b, &currency_symbol),
                         s.clone(),
                     ]
                 })
@@ -330,8 +340,8 @@ pub async fn export_report_pdf(
                         n.clone(),
                         c.clone().unwrap_or_default(),
                         q.to_string(),
-                        pkr(*cost),
-                        pkr(*sell),
+                        format_currency(*cost, &currency_symbol),
+                        format_currency(*sell, &currency_symbol),
                     ]
                 })
                 .collect();
@@ -381,7 +391,7 @@ pub async fn export_report_pdf(
             let data: Vec<Vec<String>> = rows
                 .iter()
                 .map(|(n, p, inv, paid, bal)| {
-                    vec![n.clone(), p.clone(), pkr(*inv), pkr(*paid), pkr(*bal)]
+                    vec![n.clone(), p.clone(), format_currency(*inv, &currency_symbol), format_currency(*paid, &currency_symbol), format_currency(*bal, &currency_symbol)]
                 })
                 .collect();
             doc.add_table(&cols, &data);
@@ -476,6 +486,8 @@ mod tests {
             "2026-02-14".to_string(),
             "PO-1".to_string(),
             "note".to_string(),
+            None,
+            None,
         )
         .await
         .expect("create invoice");

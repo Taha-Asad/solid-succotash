@@ -109,6 +109,16 @@ fn get_embedded_migrations() -> Vec<(i64, &'static str, &'static str)> {
             "017_saas_infrastructure",
             include_str!("../../migrations/sqlite/017_saas_infrastructure.sql"),
         ),
+        (
+            18,
+            "018_multi_currency",
+            include_str!("../../migrations/sqlite/018_multi_currency.sql"),
+        ),
+        (
+            19,
+            "019_fbr_integration",
+            include_str!("../../migrations/sqlite/019_fbr_integration.sql"),
+        ),
     ]
 }
 
@@ -177,6 +187,8 @@ pub async fn run_sqlite_migrations(sqlite_url: &str) -> Result<(), Box<dyn std::
     ensure_import_job_columns(&pool).await?;
     ensure_import_template_columns(&pool).await?;
     ensure_saas_columns(&pool).await?;
+    ensure_multi_currency_columns(&pool).await?;
+    ensure_fbr_columns(&pool).await?;
 
     let _ = applied;
 
@@ -539,6 +551,127 @@ async fn ensure_import_template_columns(pool: &SqlitePool) -> Result<(), Box<dyn
     if !columns.iter().any(|c| c == "last_used_at") {
         println!("Adding import_templates.last_used_at column (old database)");
         sqlx::raw_sql("ALTER TABLE import_templates ADD COLUMN last_used_at TEXT")
+            .execute(pool)
+            .await?;
+    }
+
+    Ok(())
+}
+
+/// Adds the multi-currency columns introduced by migration 018.
+/// - `invoices.currency_code`, `invoices.exchange_rate`
+/// - `invoice_items.original_unit_price`, `invoice_items.original_line_total`
+/// - `payment_records.currency_code`, `payment_records.exchange_rate`, `payment_records.base_currency_amount`
+async fn ensure_multi_currency_columns(pool: &SqlitePool) -> Result<(), Box<dyn std::error::Error>> {
+    // invoices: currency code + exchange rate
+    let invoice_columns: Vec<String> = sqlx::query("PRAGMA table_info(invoices)")
+        .map(|row: sqlx::sqlite::SqliteRow| row.get::<String, _>(1))
+        .fetch_all(pool)
+        .await?;
+
+    if !invoice_columns.iter().any(|c| c == "currency_code") {
+        println!("Adding invoices.currency_code column (old database)");
+        sqlx::raw_sql("ALTER TABLE invoices ADD COLUMN currency_code TEXT NOT NULL DEFAULT ''")
+            .execute(pool)
+            .await?;
+    }
+    if !invoice_columns.iter().any(|c| c == "exchange_rate") {
+        println!("Adding invoices.exchange_rate column (old database)");
+        sqlx::raw_sql("ALTER TABLE invoices ADD COLUMN exchange_rate REAL NOT NULL DEFAULT 1.0")
+            .execute(pool)
+            .await?;
+    }
+
+    // invoice_items: original price in invoice currency
+    let item_columns: Vec<String> = sqlx::query("PRAGMA table_info(invoice_items)")
+        .map(|row: sqlx::sqlite::SqliteRow| row.get::<String, _>(1))
+        .fetch_all(pool)
+        .await?;
+
+    if !item_columns.iter().any(|c| c == "original_unit_price") {
+        println!("Adding invoice_items.original_unit_price column (old database)");
+        sqlx::raw_sql("ALTER TABLE invoice_items ADD COLUMN original_unit_price INTEGER NOT NULL DEFAULT 0")
+            .execute(pool)
+            .await?;
+    }
+    if !item_columns.iter().any(|c| c == "original_line_total") {
+        println!("Adding invoice_items.original_line_total column (old database)");
+        sqlx::raw_sql("ALTER TABLE invoice_items ADD COLUMN original_line_total INTEGER NOT NULL DEFAULT 0")
+            .execute(pool)
+            .await?;
+    }
+
+    // payment_records: currency info
+    let payment_columns: Vec<String> = sqlx::query("PRAGMA table_info(payment_records)")
+        .map(|row: sqlx::sqlite::SqliteRow| row.get::<String, _>(1))
+        .fetch_all(pool)
+        .await?;
+
+    if !payment_columns.iter().any(|c| c == "currency_code") {
+        println!("Adding payment_records.currency_code column (old database)");
+        sqlx::raw_sql("ALTER TABLE payment_records ADD COLUMN currency_code TEXT NOT NULL DEFAULT ''")
+            .execute(pool)
+            .await?;
+    }
+    if !payment_columns.iter().any(|c| c == "exchange_rate") {
+        println!("Adding payment_records.exchange_rate column (old database)");
+        sqlx::raw_sql("ALTER TABLE payment_records ADD COLUMN exchange_rate REAL NOT NULL DEFAULT 1.0")
+            .execute(pool)
+            .await?;
+    }
+    if !payment_columns.iter().any(|c| c == "base_currency_amount") {
+        println!("Adding payment_records.base_currency_amount column (old database)");
+        sqlx::raw_sql("ALTER TABLE payment_records ADD COLUMN base_currency_amount INTEGER NOT NULL DEFAULT 0")
+            .execute(pool)
+            .await?;
+    }
+
+    // Ensure FX accounts exist for all companies
+    sqlx::raw_sql(
+        r#"
+        INSERT OR IGNORE INTO accounts (id, company_id, code, name, account_type, is_system, is_active)
+        SELECT hex(randomblob(16)), c.id, '7000', 'Foreign Exchange Gain', 'revenue', 1, 1
+        FROM companies c
+        WHERE c.is_active = 1
+        AND NOT EXISTS (SELECT 1 FROM accounts a WHERE a.company_id = c.id AND a.code = '7000')
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::raw_sql(
+        r#"
+        INSERT OR IGNORE INTO accounts (id, company_id, code, name, account_type, is_system, is_active)
+        SELECT hex(randomblob(16)), c.id, '7100', 'Foreign Exchange Loss', 'expense', 1, 1
+        FROM companies c
+        WHERE c.is_active = 1
+        AND NOT EXISTS (SELECT 1 FROM accounts a WHERE a.company_id = c.id AND a.code = '7100')
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
+/// Adds the FBR integration columns introduced by migration 019.
+/// - `invoices.irn`: Invoice Reference Number from FBR
+/// - `invoices.fbr_status`: validation status (pending, validated, failed, dead)
+async fn ensure_fbr_columns(pool: &SqlitePool) -> Result<(), Box<dyn std::error::Error>> {
+    let invoice_columns: Vec<String> = sqlx::query("PRAGMA table_info(invoices)")
+        .map(|row: sqlx::sqlite::SqliteRow| row.get::<String, _>(1))
+        .fetch_all(pool)
+        .await?;
+
+    if !invoice_columns.iter().any(|c| c == "irn") {
+        println!("Adding invoices.irn column (old database)");
+        sqlx::raw_sql("ALTER TABLE invoices ADD COLUMN irn TEXT")
+            .execute(pool)
+            .await?;
+    }
+    if !invoice_columns.iter().any(|c| c == "fbr_status") {
+        println!("Adding invoices.fbr_status column (old database)");
+        sqlx::raw_sql("ALTER TABLE invoices ADD COLUMN fbr_status TEXT NOT NULL DEFAULT ''")
             .execute(pool)
             .await?;
     }

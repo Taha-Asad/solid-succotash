@@ -70,6 +70,10 @@ pub struct PublicInvoice {
     pub finalized_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    pub currency_code: String,
+    pub exchange_rate: f64,
+    pub irn: Option<String>,
+    pub fbr_status: String,
 }
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
@@ -90,6 +94,8 @@ pub struct PublicInvoiceItem {
     pub discount_type: String,
     pub line_total: i64,
     pub created_at: String,
+    pub original_unit_price: i64,
+    pub original_line_total: i64,
 }
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
@@ -105,6 +111,9 @@ pub struct PublicPayment {
     pub notes: Option<String>,
     pub received_by: String,
     pub created_at: String,
+    pub currency_code: String,
+    pub exchange_rate: f64,
+    pub base_currency_amount: i64,
 }
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
@@ -479,7 +488,10 @@ pub async fn list_invoices(
                customer_id, status, subtotal, tax_total, discount_total,
                grand_total, fbr_invoice_number, po_number, reference_note,
                amount_paid, balance_due, created_by, finalized_at,
-               created_at, updated_at
+               created_at, updated_at,
+               COALESCE(currency_code, '') AS currency_code,
+               COALESCE(exchange_rate, 1.0) AS exchange_rate,
+               irn, fbr_status
         FROM invoices
         WHERE company_id = ?
         ORDER BY created_at DESC
@@ -561,6 +573,8 @@ pub async fn create_invoice(
     due_date: String,
     po_number: String,
     reference_note: String,
+    currency_code: Option<String>,
+    exchange_rate: Option<f64>,
 ) -> Result<PublicInvoice, String> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
 
@@ -590,13 +604,16 @@ pub async fn create_invoice(
 
     let id = uuid::Uuid::new_v4().to_string();
     let due = clean_optional(&due_date);
+    let cur_code = currency_code.unwrap_or_default();
+    let ex_rate = exchange_rate.unwrap_or(1.0);
 
     sqlx::query(
         r#"
         INSERT INTO invoices
             (id, company_id, invoice_number, invoice_date, due_date,
-             customer_id, status, po_number, reference_note, created_by)
-        VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?)
+             customer_id, status, po_number, reference_note, created_by,
+             currency_code, exchange_rate)
+        VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?)
         "#,
     )
     .bind(&id)
@@ -608,6 +625,8 @@ pub async fn create_invoice(
     .bind(clean_optional(&po_number))
     .bind(clean_optional(&reference_note))
     .bind(&current_user.id)
+    .bind(&cur_code)
+    .bind(ex_rate)
     .execute(&mut *tx)
     .await
     .map_err(|e| format!("Database error: {e}"))?;
@@ -673,6 +692,33 @@ pub async fn add_invoice_item(
         return Err("Discount cannot be negative".to_string());
     }
 
+    // Get invoice currency info for conversion
+    let invoice_info = sqlx::query_as::<_, (String, String, f64)>(
+        "SELECT status, COALESCE(currency_code, ''), COALESCE(exchange_rate, 1.0) FROM invoices WHERE id = ? AND company_id = ?",
+    )
+    .bind(&invoice_id)
+    .bind(company_id)
+    .fetch_one(pool.inner())
+    .await
+    .map_err(|_| "Invoice not found".to_string())?;
+
+    if invoice_info.0 != "draft" {
+        return Err("Can only add items to draft invoices".to_string());
+    }
+
+    let inv_currency = &invoice_info.1;
+    let inv_rate = invoice_info.2;
+    let has_foreign_currency = !inv_currency.is_empty() && inv_rate != 1.0;
+
+    // When foreign currency: unit_price from user is in invoice currency
+    // We store original (invoice currency) and compute base currency equivalent
+    let (base_unit_price, original_unit_price) = if has_foreign_currency {
+        let base = crate::commands::currency::convert_amount(unit_price, inv_rate, 2);
+        (base, unit_price)
+    } else {
+        (unit_price, unit_price)
+    };
+
     // Get product details (snapshot)
     let product = sqlx::query_as::<_, (String, String, String)>(
         "SELECT id, name, sku FROM products WHERE id = ? AND company_id = ?",
@@ -684,14 +730,27 @@ pub async fn add_invoice_item(
     .map_err(|e| format!("Product lookup error: {e}"))?
     .ok_or("Product not found")?;
 
-    // Calculate amounts
+    // Calculate amounts (using base currency unit_price for accounting)
     let (discount_rate, tax_amount, discount_amount, line_total) = compute_line_amounts(
         quantity,
-        unit_price,
+        base_unit_price,
         tax_rate,
         &discount_type,
         discount_value,
     );
+
+    // Calculate original amounts in invoice currency (for display)
+    let (_, _, _, original_line_total) = if has_foreign_currency {
+        compute_line_amounts(
+            quantity,
+            original_unit_price,
+            tax_rate,
+            &discount_type,
+            discount_value,
+        )
+    } else {
+        (discount_rate, tax_amount, discount_amount, line_total)
+    };
 
     let id = uuid::Uuid::new_v4().to_string();
 
@@ -700,8 +759,9 @@ pub async fn add_invoice_item(
         INSERT INTO invoice_items
             (id, invoice_id, company_id, product_id, product_name, product_sku,
              quantity, unit_price, tax_rate, tax_amount,
-             discount_rate, discount_amount, discount_type, line_total)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             discount_rate, discount_amount, discount_type, line_total,
+             original_unit_price, original_line_total)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#,
     )
     .bind(&id)
@@ -711,13 +771,15 @@ pub async fn add_invoice_item(
     .bind(&product.1) // name
     .bind(&product.2) // sku (String)
     .bind(quantity)
-    .bind(unit_price)
+    .bind(base_unit_price)
     .bind(tax_rate)
     .bind(tax_amount)
     .bind(discount_rate)
     .bind(discount_amount)
     .bind(&discount_type)
     .bind(line_total)
+    .bind(original_unit_price)
+    .bind(original_line_total)
     .execute(pool.inner())
     .await
     .map_err(|e| format!("Database error: {e}"))?;
@@ -817,31 +879,57 @@ pub async fn update_invoice_item(
         return Err("Item not found on this invoice".to_string());
     }
 
-    // Calculate amounts
+    // Get invoice currency info for conversion
+    let inv_info = sqlx::query_as::<_, (String, f64)>(
+        "SELECT COALESCE(currency_code, ''), COALESCE(exchange_rate, 1.0) FROM invoices WHERE id = ?",
+    )
+    .bind(&invoice_id)
+    .fetch_one(pool.inner())
+    .await
+    .map_err(|e| format!("Invoice lookup error: {e}"))?;
+
+    let has_foreign_currency = !inv_info.0.is_empty() && inv_info.1 != 1.0;
+    let (base_unit_price, original_unit_price) = if has_foreign_currency {
+        let base = crate::commands::currency::convert_amount(unit_price, inv_info.1, 2);
+        (base, unit_price)
+    } else {
+        (unit_price, unit_price)
+    };
+
+    // Calculate amounts (using base currency for accounting)
     let (discount_rate, tax_amount, discount_amount, line_total) = compute_line_amounts(
         quantity,
-        unit_price,
+        base_unit_price,
         tax_rate,
         &discount_type,
         discount_value,
     );
 
+    let (_, _, _, original_line_total) = if has_foreign_currency {
+        compute_line_amounts(quantity, original_unit_price, tax_rate, &discount_type, discount_value)
+    } else {
+        (discount_rate, tax_amount, discount_amount, line_total)
+    };
+
     sqlx::query(
         r#"
         UPDATE invoice_items
         SET quantity = ?, unit_price = ?, tax_rate = ?, tax_amount = ?,
-            discount_rate = ?, discount_amount = ?, discount_type = ?, line_total = ?
+            discount_rate = ?, discount_amount = ?, discount_type = ?, line_total = ?,
+            original_unit_price = ?, original_line_total = ?
         WHERE id = ? AND invoice_id = ?
         "#,
     )
     .bind(quantity)
-    .bind(unit_price)
+    .bind(base_unit_price)
     .bind(tax_rate)
     .bind(tax_amount)
     .bind(discount_rate)
     .bind(discount_amount)
     .bind(&discount_type)
     .bind(line_total)
+    .bind(original_unit_price)
+    .bind(original_line_total)
     .bind(&item_id)
     .bind(&invoice_id)
     .execute(pool.inner())
@@ -1088,6 +1176,14 @@ pub async fn finalize_invoice(
     )
     .await?;
 
+    // FBR outbox: enqueue for PRAL submission (spec section 17.4).
+    // Inserted inside the same transaction so the queue row is committed atomically.
+    if let Err(e) = crate::commands::fbr::enqueue_fbr_submission(&mut tx, pool.inner(), company_id, &invoice_id).await {
+        // Non-fatal: FBR submission failure should not block invoice finalization.
+        // The error is logged but the invoice is still finalized.
+        eprintln!("FBR enqueue warning: {e}");
+    }
+
     tx.commit()
         .await
         .map_err(|e| format!("Commit error: {e}"))?;
@@ -1128,6 +1224,8 @@ pub async fn record_payment(
     payment_date: String,
     reference: String,
     notes: String,
+    payment_currency_code: Option<String>,
+    payment_exchange_rate: Option<f64>,
 ) -> Result<PublicInvoice, String> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
 
@@ -1153,9 +1251,9 @@ pub async fn record_payment(
         .await
         .map_err(|e| format!("Transaction error: {e}"))?;
 
-    // Get current invoice
-    let invoice = sqlx::query_as::<_, (String, i64, i64)>(
-        "SELECT status, grand_total, amount_paid FROM invoices WHERE id = ? AND company_id = ?",
+    // Get current invoice + its currency info
+    let invoice = sqlx::query_as::<_, (String, i64, i64, String, f64)>(
+        "SELECT status, grand_total, amount_paid, COALESCE(currency_code, ''), COALESCE(exchange_rate, 1.0) FROM invoices WHERE id = ? AND company_id = ?",
     )
     .bind(&invoice_id)
     .bind(company_id)
@@ -1168,13 +1266,18 @@ pub async fn record_payment(
         return Err("Cannot record payment for draft or cancelled invoices".to_string());
     }
 
-    let new_amount_paid = invoice.2 + amount;
+    // Compute base currency amount for accounting
+    let pay_currency = payment_currency_code.unwrap_or_else(|| invoice.3.clone());
+    let pay_rate = payment_exchange_rate.unwrap_or(invoice.4);
+    let base_currency_amount = crate::commands::currency::convert_amount(amount, pay_rate, 2);
+
+    let new_amount_paid = invoice.2 + base_currency_amount;
     let new_balance = invoice.1 - new_amount_paid;
 
     if new_balance < 0 {
         return Err(format!(
             "Payment ({}) exceeds balance due ({}). Overpayment not allowed.",
-            amount,
+            base_currency_amount,
             invoice.1 - invoice.2
         ));
     }
@@ -1191,19 +1294,23 @@ pub async fn record_payment(
         r#"
         INSERT INTO payment_records
             (id, invoice_id, company_id, amount, payment_method,
-             payment_date, reference, notes, received_by)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+             payment_date, reference, notes, received_by,
+             currency_code, exchange_rate, base_currency_amount)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#,
     )
     .bind(&payment_id)
     .bind(&invoice_id)
     .bind(company_id)
-    .bind(amount)
+    .bind(base_currency_amount)
     .bind(&payment_method)
     .bind(&payment_date)
     .bind(clean_optional(&reference))
     .bind(clean_optional(&notes))
     .bind(&current_user.id)
+    .bind(&pay_currency)
+    .bind(pay_rate)
+    .bind(base_currency_amount)
     .execute(&mut *tx)
     .await
     .map_err(|e| format!("Payment record error: {e}"))?;
@@ -1238,10 +1345,51 @@ pub async fn record_payment(
         &payment_id,
         &payment_date,
         &invoice_number,
-        amount,
+        base_currency_amount,
         &current_user.id,
     )
     .await?;
+
+    // Post FX gain/loss if payment currency differs from invoice currency
+    // or if the payment rate differs from the invoice rate
+    let expected_base = crate::commands::currency::convert_amount(amount, invoice.4, 2);
+    let fx_gain_loss = expected_base - base_currency_amount;
+
+    if fx_gain_loss.abs() > 1 {
+        let (debit_code, credit_code, description) = if fx_gain_loss > 0 {
+            // We received LESS than expected → FX Loss
+            ("7100", "1000", format!("FX loss on payment for invoice {invoice_number}"))
+        } else {
+            // We received MORE than expected → FX Gain
+            ("1000", "7000", format!("FX gain on payment for invoice {invoice_number}"))
+        };
+        let abs_diff = fx_gain_loss.abs() as i64;
+
+        crate::commands::ledger::post_journal_entry(
+            &mut tx,
+            company_id,
+            &payment_date,
+            "fx_adjustment",
+            Some(&payment_id),
+            &description,
+            vec![
+                crate::commands::ledger::JournalLineInput {
+                    account_code: debit_code.to_string(),
+                    debit: abs_diff,
+                    credit: 0,
+                    description: Some(format!("Payment {payment_id}")),
+                },
+                crate::commands::ledger::JournalLineInput {
+                    account_code: credit_code.to_string(),
+                    debit: 0,
+                    credit: abs_diff,
+                    description: Some(format!("Payment {payment_id}")),
+                },
+            ],
+            Some(&current_user.id),
+        )
+        .await?;
+    }
 
     tx.commit()
         .await
@@ -1796,18 +1944,34 @@ fn build_invoice_html(doc: &InvoiceDoc) -> String {
     let show_fbr = doc.settings.show_qr
         && (doc.settings.company_ntn.is_some() || doc.settings.company_strn.is_some());
     if show_fbr {
-        let fbr_payload = serde_json::json!({
-            "InvoiceNo": doc.invoice.invoice_number,
-            "Date": doc.invoice.invoice_date,
-            "Total": fmt_paisa(doc.invoice.grand_total),
-            "Tax": fmt_paisa(doc.invoice.tax_total),
-            "Type": "INVOICE",
-        });
-        let qr_svg = qr_svg(&serde_json::to_string(&fbr_payload).unwrap_or_default(), 100);
+        // FBR-compliant QR: {IRN}|{InvoiceDate}|{STRN}|{TotalBillAmount} (spec section 17.5)
+        // Falls back to local JSON payload when no IRN is available yet.
+        let qr_content = if let Some(ref irn) = doc.invoice.irn {
+            let strn = doc.settings.company_strn.as_deref().unwrap_or("");
+            crate::commands::fbr::fbr_qr_content(
+                irn,
+                &doc.invoice.invoice_date,
+                strn,
+                doc.invoice.grand_total as f64 / 100.0,
+            )
+        } else {
+            let fbr_payload = serde_json::json!({
+                "InvoiceNo": doc.invoice.invoice_number,
+                "Date": doc.invoice.invoice_date,
+                "Total": fmt_paisa(doc.invoice.grand_total),
+                "Tax": fmt_paisa(doc.invoice.tax_total),
+                "Type": "INVOICE",
+            });
+            serde_json::to_string(&fbr_payload).unwrap_or_default()
+        };
+        let qr_svg = qr_svg(&qr_content, 100);
         if !qr_svg.is_empty() {
             fbr_section.push_str(
                 r#"<div class="fbr-box"><div class="fbr-info"><strong>FBR Tax Information</strong><br>"#,
             );
+            if let Some(ref irn) = doc.invoice.irn {
+                fbr_section.push_str(&format!("IRN: {}<br>", html_escape(irn)));
+            }
             if let Some(ref ntn) = doc.settings.company_ntn {
                 fbr_section.push_str(&format!("Company NTN: {}<br>", html_escape(ntn)));
             }
@@ -2911,6 +3075,8 @@ mod tests {
             "2026-02-14".to_string(),
             "PO-1".to_string(),
             "note".to_string(),
+            None,
+            None,
         )
         .await
         .expect("create invoice")
@@ -3158,6 +3324,8 @@ mod tests {
             discount_type: "percent".to_string(),
             line_total: 3510,
             created_at: "2026-01-01".to_string(),
+            original_unit_price: 0,
+            original_line_total: 0,
         };
         let doc = InvoiceDoc {
             invoice: PublicInvoice {
@@ -3181,6 +3349,10 @@ mod tests {
                 finalized_at: None,
                 created_at: "2026-01-01".to_string(),
                 updated_at: "2026-01-01".to_string(),
+                currency_code: "PKR".to_string(),
+                exchange_rate: 1.0,
+                irn: None,
+                fbr_status: String::new(),
             },
             customer: PublicCustomer {
                 id: "cu1".to_string(),
@@ -3433,6 +3605,8 @@ mod tests {
             "2026-02-14".to_string(),
             "PO-9".to_string(),
             "hello".to_string(),
+            None,
+            None,
         )
         .await
         .expect("create");
@@ -3455,6 +3629,8 @@ mod tests {
             "".to_string(),
             "".to_string(),
             "".to_string(),
+            None,
+            None,
         )
         .await
         .unwrap_err();
@@ -3485,6 +3661,8 @@ mod tests {
             "".to_string(),
             "".to_string(),
             "".to_string(),
+            None,
+            None,
         )
         .await
         .unwrap_err();
@@ -3900,6 +4078,8 @@ mod tests {
             "2026-01-20".to_string(),
             "ref-1".to_string(),
             "advance".to_string(),
+            None,
+            None,
         )
         .await
         .expect("partial");
@@ -3915,6 +4095,8 @@ mod tests {
             "2026-01-25".to_string(),
             "".to_string(),
             "".to_string(),
+            None,
+            None,
         )
         .await
         .expect("full");
@@ -3939,6 +4121,8 @@ mod tests {
             "2026-01-20".to_string(),
             "".to_string(),
             "".to_string(),
+            None,
+            None,
         )
         .await
         .unwrap_err();
@@ -3962,6 +4146,8 @@ mod tests {
             "2026-01-20".to_string(),
             "".to_string(),
             "".to_string(),
+            None,
+            None,
         )
         .await
         .unwrap_err();
@@ -3984,6 +4170,8 @@ mod tests {
             "2026-01-20".to_string(),
             "".to_string(),
             "".to_string(),
+            None,
+            None,
         )
         .await
         .unwrap_err();
@@ -4006,6 +4194,8 @@ mod tests {
             "2026-01-20".to_string(),
             "".to_string(),
             "".to_string(),
+            None,
+            None,
         )
         .await
         .unwrap_err();
