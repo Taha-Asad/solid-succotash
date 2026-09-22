@@ -5,6 +5,7 @@
 // These commands check for and install updates from GitHub Releases.
 // The database is NEVER touched — updates only replace program files.
 
+use crate::error::AppError;
 use serde::Serialize;
 use tauri::AppHandle;
 use tauri_plugin_updater::{Error as UpdaterError, UpdaterExt};
@@ -28,8 +29,8 @@ pub struct UpdateResult {
 
 /// Checks if a new version is available from GitHub Releases.
 #[tauri::command]
-pub async fn check_for_updates(app: AppHandle) -> Result<UpdateResult, String> {
-    let updater = app.updater().map_err(|e| format!("Updater error: {e}"))?;
+pub async fn check_for_updates(app: AppHandle) -> Result<UpdateResult, AppError> {
+    let updater = app.updater().map_err(|e| AppError::internal(format!("Updater error: {e}")))?;
 
     let current_version = app.package_info().version.to_string();
 
@@ -75,8 +76,8 @@ pub async fn check_for_updates(app: AppHandle) -> Result<UpdateResult, String> {
 /// Downloads and installs the update.
 /// The app will restart automatically after installation.
 #[tauri::command]
-pub async fn install_update(app: AppHandle) -> Result<(), String> {
-    let updater = app.updater().map_err(|e| format!("Updater error: {e}"))?;
+pub async fn install_update(app: AppHandle) -> Result<(), AppError> {
+    let updater = app.updater().map_err(|e| AppError::internal(format!("Updater error: {e}")))?;
 
     match updater.check().await {
         Ok(Some(update)) => {
@@ -94,11 +95,11 @@ pub async fn install_update(app: AppHandle) -> Result<(), String> {
                     },
                 )
                 .await
-                .map_err(|e| format!("Update install error: {e}"))?;
+                .map_err(|e| AppError::internal(format!("Update install error: {e}")))?;
 
             Ok(())
         }
-        Ok(None) => Err("No update available".to_string()),
-        Err(e) => Err(format!("Update check error: {e}")),
+        Ok(None) => Err(AppError::internal("No update available".to_string())),
+        Err(e) => Err(AppError::internal(format!("Update check error: {e}"))),
     }
 }

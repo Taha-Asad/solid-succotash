@@ -7,6 +7,9 @@
 // everyone else is matched against their role's `role_permissions` rows —
 // including custom roles granted module permissions by the owner.
 //
+// Also fetches enabled modules from `get_my_modules` (company_modules table)
+// so the sidebar can hide disabled modules.
+//
 // Pages used to hard-code `role === "owner" || role === "admin"` (canManage),
 // which made the Roles & Permissions matrix cosmetic: granting an employee
 // `invoices:create` did nothing because the button was hidden by the role
@@ -22,7 +25,7 @@ import {
   type ReactNode,
 } from "react";
 
-import { getMyPermissions } from "../../api/backend";
+import { getMyPermissions, getMyModules } from "../../api/backend";
 import type { RolePermission } from "../../types/backend";
 
 interface PermissionsContextValue {
@@ -36,6 +39,10 @@ interface PermissionsContextValue {
   /** True when the current role allows `module:permission`. */
   can: (module: string, permission: string) => boolean;
   permissions: RolePermission[];
+  /** Enabled module keys from company_modules table. */
+  enabledModules: string[];
+  /** True if the given module key is enabled. Owner always returns true. */
+  isModuleEnabled: (moduleKey: string) => boolean;
 }
 
 const PermissionsCtx = createContext<PermissionsContextValue | null>(null);
@@ -43,15 +50,17 @@ const PermissionsCtx = createContext<PermissionsContextValue | null>(null);
 export function PermissionsProvider({ children }: { children: ReactNode }) {
   const [permissions, setPermissions] = useState<RolePermission[]>([]);
   const [role, setRole] = useState<string | null>(null);
+  const [enabledModules, setEnabledModules] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
-    getMyPermissions()
-      .then((r) => {
+    Promise.all([getMyPermissions(), getMyModules().catch(() => [])])
+      .then(([permResult, modules]) => {
         if (cancelled) return;
-        setRole(r.role);
-        setPermissions(r.permissions);
+        setRole(permResult.role);
+        setPermissions(permResult.permissions);
+        setEnabledModules(modules);
       })
       .catch(() => {
         // Fall back to a safe empty matrix; navigation collapses to the
@@ -59,6 +68,7 @@ export function PermissionsProvider({ children }: { children: ReactNode }) {
         if (cancelled) return;
         setRole(null);
         setPermissions([]);
+        setEnabledModules([]);
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -79,6 +89,14 @@ export function PermissionsProvider({ children }: { children: ReactNode }) {
     [role, permissions],
   );
 
+  const isModuleEnabled = useCallback(
+    (moduleKey: string) => {
+      if (role === "owner") return true;
+      return enabledModules.includes(moduleKey);
+    },
+    [role, enabledModules],
+  );
+
   const value = useMemo<PermissionsContextValue>(
     () => ({
       loading,
@@ -87,8 +105,10 @@ export function PermissionsProvider({ children }: { children: ReactNode }) {
       canManage: role === "owner" || role === "admin",
       can,
       permissions,
+      enabledModules,
+      isModuleEnabled,
     }),
-    [loading, role, can, permissions],
+    [loading, role, can, permissions, enabledModules, isModuleEnabled],
   );
 
   return (

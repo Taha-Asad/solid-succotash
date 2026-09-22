@@ -6,6 +6,7 @@
 // The frontend calls saveFileDialog() to let the user pick where to save.
 
 use crate::commands::auth::{require_current_user, SessionState};
+use crate::error::AppError;
 use crate::commands::permissions::check_permission;
 use crate::pdf::{PdfColumn, PdfDoc};
 use sqlx::SqlitePool;
@@ -44,7 +45,7 @@ pub async fn export_stock_csv(
     pool: State<'_, SqlitePool>,
     session: State<'_, SessionState>,
     save_path: String,
-) -> Result<String, String> {
+) -> Result<String, AppError> {
     let user = require_current_user(pool.inner(), session.inner()).await?;
     check_permission(pool.inner(), &user.role, "reports", "export").await?;
     let company_id = user.company_id.as_ref().ok_or("Not assigned")?;
@@ -63,7 +64,7 @@ pub async fn export_stock_csv(
     .bind(company_id)
     .fetch_all(pool.inner())
     .await
-    .map_err(|e| format!("Error: {e}"))?;
+    .map_err(|e| AppError::internal(format!("Error: {e}")))?;
 
     let mut csv =
         String::from("SKU,Product Name,Category,Stock,Cost Price,Sell Price,Stock Value (Cost)\n");
@@ -81,7 +82,7 @@ pub async fn export_stock_csv(
         ));
     }
 
-    std::fs::write(&save_path, &csv).map_err(|e| format!("Write error: {e}"))?;
+    std::fs::write(&save_path, &csv).map_err(|e| AppError::internal(format!("Write error: {e}")))?;
     Ok(save_path)
 }
 
@@ -91,7 +92,7 @@ pub async fn export_customer_ledger_csv(
     pool: State<'_, SqlitePool>,
     session: State<'_, SessionState>,
     save_path: String,
-) -> Result<String, String> {
+) -> Result<String, AppError> {
     let user = require_current_user(pool.inner(), session.inner()).await?;
     check_permission(pool.inner(), &user.role, "reports", "export").await?;
     let company_id = user.company_id.as_ref().ok_or("Not assigned")?;
@@ -112,7 +113,7 @@ pub async fn export_customer_ledger_csv(
     .bind(company_id)
     .fetch_all(pool.inner())
     .await
-    .map_err(|e| format!("Error: {e}"))?;
+    .map_err(|e| AppError::internal(format!("Error: {e}")))?;
 
     let mut csv = String::from("Customer Name,Phone,Total Invoiced,Total Paid,Balance Due\n");
     for (name, phone, invoiced, paid, balance) in &rows {
@@ -126,7 +127,7 @@ pub async fn export_customer_ledger_csv(
         ));
     }
 
-    std::fs::write(&save_path, &csv).map_err(|e| format!("Write error: {e}"))?;
+    std::fs::write(&save_path, &csv).map_err(|e| AppError::internal(format!("Write error: {e}")))?;
     Ok(save_path)
 }
 
@@ -136,7 +137,7 @@ pub async fn export_sales_csv(
     pool: State<'_, SqlitePool>,
     session: State<'_, SessionState>,
     save_path: String,
-) -> Result<String, String> {
+) -> Result<String, AppError> {
     let user = require_current_user(pool.inner(), session.inner()).await?;
     check_permission(pool.inner(), &user.role, "reports", "export").await?;
     let company_id = user.company_id.as_ref().ok_or("Not assigned")?;
@@ -154,7 +155,7 @@ pub async fn export_sales_csv(
     .bind(company_id)
     .fetch_all(pool.inner())
     .await
-    .map_err(|e| format!("Error: {e}"))?;
+    .map_err(|e| AppError::internal(format!("Error: {e}")))?;
 
     let mut csv = String::from("Invoice #,Date,Customer,Total,Paid,Balance,Status\n");
     for (num, date, cust, total, paid, balance, status) in &rows {
@@ -170,7 +171,7 @@ pub async fn export_sales_csv(
         ));
     }
 
-    std::fs::write(&save_path, &csv).map_err(|e| format!("Write error: {e}"))?;
+    std::fs::write(&save_path, &csv).map_err(|e| AppError::internal(format!("Write error: {e}")))?;
     Ok(save_path)
 }
 
@@ -190,7 +191,7 @@ pub async fn export_report_pdf(
     session: State<'_, SessionState>,
     report: String,
     save_path: String,
-) -> Result<String, String> {
+) -> Result<String, AppError> {
     let user = require_current_user(pool.inner(), session.inner()).await?;
     check_permission(pool.inner(), &user.role, "reports", "export").await?;
     let company_id = user.company_id.as_ref().ok_or("Not assigned")?;
@@ -211,7 +212,7 @@ pub async fn export_report_pdf(
         "sales" => "Sales Report",
         "stock" => "Stock Report",
         "ledger" => "Customer Ledger",
-        _ => return Err("Unknown report type".to_string()),
+        _ => return Err(AppError::internal("Unknown report type".to_string())),
     };
 
     let mut doc = PdfDoc::new(title, &company_name, &tagline);
@@ -242,7 +243,7 @@ pub async fn export_report_pdf(
             .bind(company_id)
             .fetch_all(pool.inner())
             .await
-            .map_err(|e| format!("Error: {e}"))?;
+            .map_err(|e| AppError::internal(format!("Error: {e}")))?;
 
             let cols = vec![
                 PdfColumn {
@@ -304,7 +305,7 @@ pub async fn export_report_pdf(
             .bind(company_id)
             .fetch_all(pool.inner())
             .await
-            .map_err(|e| format!("Error: {e}"))?;
+            .map_err(|e| AppError::internal(format!("Error: {e}")))?;
 
             let cols = vec![
                 PdfColumn {
@@ -364,7 +365,7 @@ pub async fn export_report_pdf(
             .bind(company_id)
             .fetch_all(pool.inner())
             .await
-            .map_err(|e| format!("Error: {e}"))?;
+            .map_err(|e| AppError::internal(format!("Error: {e}")))?;
 
             let cols = vec![
                 PdfColumn {
@@ -400,7 +401,7 @@ pub async fn export_report_pdf(
     }
 
     let bytes = doc.finish();
-    std::fs::write(&save_path, bytes).map_err(|e| format!("Write error: {e}"))?;
+    std::fs::write(&save_path, bytes).map_err(|e| AppError::internal(format!("Write error: {e}")))?;
     Ok(save_path)
 }
 

@@ -8,6 +8,7 @@
 // The user picks the save/load location via Tauri dialog.
 
 use crate::commands::audit::log_audit;
+use crate::error::AppError;
 use crate::commands::auth::{require_current_user, SessionState};
 use serde::Serialize;
 use sqlx::SqlitePool;
@@ -32,6 +33,39 @@ fn current_db_path(pool: &SqlitePool) -> String {
         .to_string()
 }
 
+/// Atomically backs up the live SQLite database to the specified target path.
+/// Uses SQLite's native `VACUUM INTO 'filename'` which guarantees a clean, consistent,
+/// unfragmented snapshot capturing all committed WAL pages without interrupting active readers/writers.
+pub async fn execute_atomic_backup(pool: &SqlitePool, save_path: &str) -> Result<(), AppError> {
+    let target = std::path::Path::new(save_path);
+
+    // Ensure destination directory exists
+    if let Some(parent) = target.parent() {
+        if !parent.exists() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| AppError::internal(format!("Failed to create backup directory: {e}")))?;
+        }
+    }
+
+    // SQLite VACUUM INTO requires the target file not to exist already.
+    // If it exists (e.g. overwriting an older backup), remove it first.
+    if target.exists() {
+        std::fs::remove_file(target)
+            .map_err(|e| AppError::internal(format!("Failed to overwrite existing backup file: {e}")))?;
+    }
+
+    // Escape single quotes in save_path to prevent SQL syntax errors
+    let escaped_path = save_path.replace('\'', "''");
+    let vacuum_sql = format!("VACUUM INTO '{escaped_path}'");
+
+    sqlx::query(sqlx::AssertSqlSafe(vacuum_sql))
+        .execute(pool)
+        .await
+        .map_err(|e| AppError::internal(format!("Online backup failed via VACUUM INTO: {e}")))?;
+
+    Ok(())
+}
+
 /// Creates a backup at a user-specified path.
 /// The frontend opens a Save dialog, user picks where to save.
 #[tauri::command]
@@ -39,13 +73,11 @@ pub async fn create_backup(
     pool: State<'_, SqlitePool>,
     session: State<'_, SessionState>,
     save_path: String,
-) -> Result<String, String> {
+) -> Result<String, AppError> {
     let user = require_current_user(pool.inner(), session.inner()).await?;
 
-    let db_file = current_db_path(pool.inner());
-
-    // Copy the database file
-    std::fs::copy(db_file, &save_path).map_err(|e| format!("Backup failed: {e}"))?;
+    // Perform atomic live backup
+    execute_atomic_backup(pool.inner(), &save_path).await?;
 
     // Audit log
     let company_id = user.company_id.as_deref().unwrap_or("system");
@@ -72,32 +104,42 @@ pub async fn restore_backup(
     pool: State<'_, SqlitePool>,
     session: State<'_, SessionState>,
     backup_path: String,
-) -> Result<String, String> {
+) -> Result<String, AppError> {
     let user = require_current_user(pool.inner(), session.inner()).await?;
 
     if user.role != "owner" {
-        return Err("Only the owner can restore backups".to_string());
+        return Err(AppError::internal("Only the owner can restore backups".to_string()));
     }
 
     // Verify the backup file exists and is a valid SQLite file
     if !std::path::Path::new(&backup_path).exists() {
-        return Err("Backup file not found".to_string());
+        return Err(AppError::internal("Backup file not found".to_string()));
     }
 
     // Check it's a SQLite file (starts with "SQLite format 3")
-    let header = std::fs::read(&backup_path).map_err(|e| format!("Cannot read backup: {e}"))?;
+    let header = std::fs::read(&backup_path).map_err(|e| AppError::internal(format!("Cannot read backup: {e}")))?;
     if header.len() < 16 || &header[0..16] != b"SQLite format 3\0" {
-        return Err("Not a valid SQLite database file".to_string());
+        return Err(AppError::internal("Not a valid SQLite database file".to_string()));
     }
 
     let db_file = current_db_path(pool.inner());
 
     // Create a safety backup of current DB before overwriting
     let safety_backup = format!("{db_file}.before_restore");
-    let _ = std::fs::copy(&db_file, &safety_backup);
+    if let Err(e) = execute_atomic_backup(pool.inner(), &safety_backup).await {
+        eprintln!("Warning: atomic safety backup failed ({e}), falling back to file copy");
+        let _ = std::fs::copy(&db_file, &safety_backup);
+    }
+
+    // In WAL mode, stale -wal and -shm files must be removed before restoring
+    // so the newly replaced DB file is not corrupted by old WAL replay.
+    let wal_file = format!("{db_file}-wal");
+    let shm_file = format!("{db_file}-shm");
+    let _ = std::fs::remove_file(wal_file);
+    let _ = std::fs::remove_file(shm_file);
 
     // Overwrite with the chosen backup
-    std::fs::copy(&backup_path, db_file).map_err(|e| format!("Restore failed: {e}"))?;
+    std::fs::copy(&backup_path, db_file).map_err(|e| AppError::internal(format!("Restore failed: {e}")))?;
 
     // Audit log
     let company_id = user.company_id.as_deref().unwrap_or("system");
@@ -123,7 +165,7 @@ pub async fn list_backups(
     pool: State<'_, SqlitePool>,
     session: State<'_, SessionState>,
     directory: String,
-) -> Result<Vec<BackupInfo>, String> {
+) -> Result<Vec<BackupInfo>, AppError> {
     let _user = require_current_user(pool.inner(), session.inner()).await?;
 
     let dir = std::path::Path::new(&directory);
@@ -166,6 +208,78 @@ pub async fn list_backups(
 
     backups.sort_by(|a, b| b.created_at.cmp(&a.created_at));
     Ok(backups)
+}
+
+/// Runs an automatic daily backup snapshot upon application startup.
+/// - Saves to `{app_data}/ijazandcompany-erp/backups/daily_YYYY-MM-DD.db`
+/// - Skips if today's backup already exists.
+/// - Automatically prunes backups to keep only the most recent `max_snapshots` (default 7 days).
+pub async fn run_automatic_daily_backup(pool: &SqlitePool) -> Result<(), AppError> {
+    let app_data = dirs::data_dir()
+        .or_else(|| dirs::home_dir().map(|h| h.join(".local/share")))
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+
+    let backup_dir = app_data.join("ijazandcompany-erp").join("backups");
+    if !backup_dir.exists() {
+        if let Err(e) = std::fs::create_dir_all(&backup_dir) {
+            eprintln!("Failed to create automatic backups directory: {e}");
+            return Ok(());
+        }
+    }
+
+    // Current date format YYYY-MM-DD
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let today_stamp = format_timestamp(now);
+    let date_prefix = today_stamp.split(' ').next().unwrap_or("backup");
+
+    let today_filename = format!("daily_{date_prefix}.db");
+    let today_backup_path = backup_dir.join(&today_filename);
+
+    if today_backup_path.exists() {
+        println!("Daily backup for {date_prefix} already exists. Skipping.");
+        return Ok(());
+    }
+
+    println!("Creating automatic daily backup: {}", today_backup_path.display());
+    if let Err(e) = execute_atomic_backup(pool, &today_backup_path.to_string_lossy()).await {
+        eprintln!("Automatic daily backup failed: {e}");
+        return Ok(());
+    }
+    println!("Daily backup created successfully.");
+
+    // Rotate: Keep only the most recent 7 daily backups
+    prune_old_backups(&backup_dir, 7);
+
+    Ok(())
+}
+
+fn prune_old_backups(dir: &std::path::Path, max_keep: usize) {
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        let mut daily_files: Vec<(std::path::PathBuf, std::time::SystemTime)> = Vec::new();
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                if name.starts_with("daily_") && name.ends_with(".db") {
+                    let modified = entry.metadata().and_then(|m| m.modified()).unwrap_or(std::time::UNIX_EPOCH);
+                    daily_files.push((path, modified));
+                }
+            }
+        }
+
+        // Sort newest first
+        daily_files.sort_by(|a, b| b.1.cmp(&a.1));
+
+        // Delete any beyond max_keep
+        if daily_files.len() > max_keep {
+            for (path_to_delete, _) in &daily_files[max_keep..] {
+                println!("Pruning old backup: {}", path_to_delete.display());
+                let _ = std::fs::remove_file(path_to_delete);
+            }
+        }
+    }
 }
 
 fn format_timestamp(secs: u64) -> String {
@@ -503,5 +617,41 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err, "You must log in first");
+    }
+
+    #[tokio::test]
+    async fn atomic_backup_and_daily_rotation_works() {
+        let app = owner_app().await;
+        seed_product(&app).await;
+
+        let pool = app.state::<SqlitePool>();
+        let dir = temp_dir_path();
+        std::fs::create_dir_all(&dir).expect("create dir");
+
+        let backup_file = dir.join("atomic_test.db");
+        let res = execute_atomic_backup(&pool, &backup_file.to_string_lossy()).await;
+        assert!(res.is_ok(), "execute_atomic_backup failed: {:?}", res.err());
+        assert!(backup_file.exists(), "backup file should exist");
+
+        // Overwrite should also succeed cleanly (removes old file first)
+        let res2 = execute_atomic_backup(&pool, &backup_file.to_string_lossy()).await;
+        assert!(res2.is_ok(), "execute_atomic_backup overwrite failed: {:?}", res2.err());
+
+        // Test pruning helper: create 5 mock daily backups, prune to 3
+        for i in 1..=5 {
+            let p = dir.join(format!("daily_2026-09-0{i}.db"));
+            std::fs::write(&p, b"mock").unwrap();
+            // Small sleep to ensure different mtime on filesystems with low resolution
+            std::thread::sleep(std::time::Duration::from_millis(15));
+        }
+        prune_old_backups(&dir, 3);
+        let count = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().starts_with("daily_"))
+            .count();
+        assert_eq!(count, 3, "pruning should retain exactly 3 files");
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

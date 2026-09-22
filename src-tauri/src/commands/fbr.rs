@@ -15,13 +15,31 @@
 //   6. 5 failures: status = 'dead'
 
 use crate::commands::audit::log_audit;
+use crate::error::AppError;
 use crate::commands::auth::{require_current_user, SessionState};
 use crate::commands::invoices::PublicInvoice;
 use crate::commands::permissions::check_permission;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
-use tauri::State;
+use std::sync::OnceLock;
+use tauri::{AppHandle, Emitter, State};
 use uuid::Uuid;
+
+/// Desktop SSE analogue (§18.5): emitted whenever the FBR submission
+/// queue changes. The frontend listens and refreshes its queue table.
+pub const FBR_QUEUE_UPDATED_EVENT: &str = "fbr:queue:updated";
+
+static FBR_APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
+
+pub fn init_fbr(app: &AppHandle) {
+    let _ = FBR_APP_HANDLE.set(app.clone());
+}
+
+fn emit_fbr_queue_updated() {
+    if let Some(app) = FBR_APP_HANDLE.get() {
+        let _ = app.emit(FBR_QUEUE_UPDATED_EVENT, ());
+    }
+}
 
 // ==========================================
 // TYPES
@@ -184,7 +202,7 @@ async fn build_fbr_payload(
     company_id: &str,
     invoice_id: &str,
     invoice_type: &str,
-) -> Result<String, String> {
+) -> Result<String, AppError> {
     let company: (Option<String>, Option<String>, Option<String>, Option<String>) =
         sqlx::query_as(
             "SELECT ntn, strn, province, name FROM companies WHERE id = ?",
@@ -192,7 +210,7 @@ async fn build_fbr_payload(
         .bind(company_id)
         .fetch_optional(pool)
         .await
-        .map_err(|e| format!("Company lookup error: {e}"))?
+        .map_err(|e| AppError::internal(format!("Company lookup error: {e}")))?
         .ok_or("Company not found")?;
 
     let company_ntn = company.0;
@@ -206,7 +224,7 @@ async fn build_fbr_payload(
     .bind(company_id)
     .fetch_optional(pool)
     .await
-    .map_err(|e| format!("Settings lookup error: {e}"))?
+    .map_err(|e| AppError::internal(format!("Settings lookup error: {e}")))?
     .unwrap_or((None, None));
 
     let ntn = company_ntn.or(settings.0);
@@ -220,7 +238,7 @@ async fn build_fbr_payload(
     .bind(company_id)
     .fetch_optional(pool)
     .await
-    .map_err(|e| format!("Invoice lookup error: {e}"))?
+    .map_err(|e| AppError::internal(format!("Invoice lookup error: {e}")))?
     .ok_or("Invoice not found")?;
 
     let customer: (Option<String>, Option<String>, Option<String>, String) = sqlx::query_as(
@@ -230,7 +248,7 @@ async fn build_fbr_payload(
     .bind(company_id)
     .fetch_optional(pool)
     .await
-    .map_err(|e| format!("Customer lookup error: {e}"))?
+    .map_err(|e| AppError::internal(format!("Customer lookup error: {e}")))?
     .ok_or("Customer not found")?;
 
     let raw_items: Vec<(Option<String>, String, i64, i64, i64, i64)> = sqlx::query_as(
@@ -240,7 +258,7 @@ async fn build_fbr_payload(
     .bind(invoice_id)
     .fetch_all(pool)
     .await
-    .map_err(|e| format!("Items lookup error: {e}"))?;
+    .map_err(|e| AppError::internal(format!("Items lookup error: {e}")))?;
 
     let mut total_quantity: i64 = 0;
     let items: Vec<FbrInvoiceItem> = raw_items
@@ -293,7 +311,34 @@ async fn build_fbr_payload(
     };
 
     serde_json::to_string_pretty(&payload)
-        .map_err(|e| format!("Payload serialization error: {e}"))
+        .map_err(|e| AppError::internal(format!("Payload serialization error: {e}")))
+}
+
+static FBR_HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+
+fn get_fbr_client() -> &'static reqwest::Client {
+    FBR_HTTP_CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .pool_idle_timeout(std::time::Duration::from_secs(90))
+            .user_agent("IjazAndCompany-ERP/1.0 (FBR-Digital-Invoicing)")
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new())
+    })
+}
+
+fn format_fbr_error_body(status: reqwest::StatusCode, body: &str) -> String {
+    let trimmed = body.trim();
+    if trimmed.starts_with('<') || trimmed.contains("<html") || trimmed.contains("<!DOCTYPE") {
+        format!("FBR gateway returned HTTP {status} (HTML error page from PRAL/Cloudflare, portal may be down)")
+    } else if trimmed.len() > 300 {
+        format!("FBR gateway returned HTTP {status}: {}...", &trimmed[..300])
+    } else if trimmed.is_empty() {
+        format!("FBR gateway returned HTTP {status} with empty response")
+    } else {
+        format!("FBR gateway returned HTTP {status}: {trimmed}")
+    }
 }
 
 /// POST invoice payload to the FBR PRAL DI API.
@@ -301,8 +346,8 @@ async fn submit_to_fbr(
     url: &str,
     payload: &str,
     token: &Option<String>,
-) -> Result<FbrApiResponse, String> {
-    let client = reqwest::Client::new();
+) -> Result<FbrApiResponse, AppError> {
+    let client = get_fbr_client();
 
     let mut builder = client
         .post(url)
@@ -318,16 +363,24 @@ async fn submit_to_fbr(
         .body(payload.to_string())
         .send()
         .await
-        .map_err(|e| format!("FBR API request failed: {e}"))?;
+        .map_err(|e| {
+            if e.is_timeout() {
+                AppError::internal("FBR API request timed out after 30 seconds. PRAL servers may be under heavy load.".to_string())
+            } else if e.is_connect() {
+                AppError::internal(format!("Failed to connect to FBR server at {url}: {e}"))
+            } else {
+                AppError::internal(format!("FBR API request failed: {e}"))
+            }
+        })?;
 
     let status = response.status();
     let body = response
         .text()
         .await
-        .map_err(|e| format!("Failed to read FBR response body: {e}"))?;
+        .map_err(|e| AppError::internal(format!("Failed to read FBR response body: {e}")))?;
 
     if !status.is_success() {
-        return Err(format!("FBR API returned HTTP {status}: {body}"));
+        return Err(AppError::internal(format_fbr_error_body(status, &body)));
     }
 
     let parsed: Result<serde_json::Value, _> = serde_json::from_str(&body);
@@ -366,12 +419,24 @@ async fn submit_to_fbr(
                 message,
             })
         }
-        Err(_) => Ok(FbrApiResponse {
-            status: "unknown".to_string(),
-            irn: None,
-            qr_data: None,
-            message: Some(body),
-        }),
+        Err(_) => {
+            if body.trim().starts_with('<') || body.contains("<html") {
+                Err(AppError::internal(
+                    "FBR returned an HTML response instead of JSON. PRAL gateway may be undergoing maintenance.".to_string(),
+                ))
+            } else {
+                Ok(FbrApiResponse {
+                    status: "unknown".to_string(),
+                    irn: None,
+                    qr_data: None,
+                    message: Some(if body.len() > 300 {
+                        format!("{}...", &body[..300])
+                    } else {
+                        body
+                    }),
+                })
+            }
+        }
     }
 }
 
@@ -383,7 +448,7 @@ async fn mark_queue_failed(
     invoice_id: &str,
     item: &FbrQueueItem,
     error: &str,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
     let new_attempt = item.attempt_count + 1;
 
     if new_attempt >= item.max_attempts {
@@ -395,7 +460,7 @@ async fn mark_queue_failed(
         .bind(queue_id)
         .execute(pool)
         .await
-        .map_err(|e| format!("Queue update error: {e}"))?;
+        .map_err(|e| AppError::internal(format!("Queue update error: {e}")))?;
 
         sqlx::query(
             "UPDATE invoices SET fbr_status = 'dead', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
@@ -403,7 +468,7 @@ async fn mark_queue_failed(
         .bind(invoice_id)
         .execute(pool)
         .await
-        .map_err(|e| format!("Invoice update error: {e}"))?;
+        .map_err(|e| AppError::internal(format!("Invoice update error: {e}")))?;
     } else {
         let backoff_seconds: i64 = match new_attempt {
             1 => 0,
@@ -430,7 +495,7 @@ async fn mark_queue_failed(
         .bind(queue_id)
         .execute(pool)
         .await
-        .map_err(|e| format!("Queue update error: {e}"))?;
+        .map_err(|e| AppError::internal(format!("Queue update error: {e}")))?;
     }
 
     Ok(())
@@ -441,7 +506,7 @@ async fn mark_queue_failed(
 // ==========================================
 
 /// Process queued FBR submissions. Returns number of items processed.
-pub async fn process_fbr_queue(pool: &SqlitePool) -> Result<u32, String> {
+pub async fn process_fbr_queue(pool: &SqlitePool) -> Result<u32, AppError> {
     let now = chrono::Utc::now()
         .format("%Y-%m-%dT%H:%M:%SZ")
         .to_string();
@@ -454,7 +519,7 @@ pub async fn process_fbr_queue(pool: &SqlitePool) -> Result<u32, String> {
     .bind(&now)
     .fetch_all(pool)
     .await
-    .map_err(|e| format!("Queue fetch error: {e}"))?;
+    .map_err(|e| AppError::internal(format!("Queue fetch error: {e}")))?;
 
     let mut processed: u32 = 0;
 
@@ -466,7 +531,7 @@ pub async fn process_fbr_queue(pool: &SqlitePool) -> Result<u32, String> {
         .bind(&item.id)
         .execute(pool)
         .await
-        .map_err(|e| format!("Queue update error: {e}"))?;
+        .map_err(|e| AppError::internal(format!("Queue update error: {e}")))?;
 
         let config: Option<(String, String, Option<String>, bool)> = sqlx::query_as(
             "SELECT environment, sandbox_url, pral_token, is_active FROM fbr_config WHERE company_id = ?",
@@ -474,7 +539,7 @@ pub async fn process_fbr_queue(pool: &SqlitePool) -> Result<u32, String> {
         .bind(&item.company_id)
         .fetch_optional(pool)
         .await
-        .map_err(|e| format!("FBR config lookup error: {e}"))?;
+        .map_err(|e| AppError::internal(format!("FBR config lookup error: {e}")))?;
 
         let (env_type, api_url, token, is_active) = match config {
             Some(c) => c,
@@ -509,7 +574,7 @@ pub async fn process_fbr_queue(pool: &SqlitePool) -> Result<u32, String> {
                     .bind(&item.id)
                     .execute(pool)
                     .await
-                    .map_err(|e| format!("Queue update error: {e}"))?;
+                    .map_err(|e| AppError::internal(format!("Queue update error: {e}")))?;
 
                     sqlx::query(
                         "UPDATE invoices \
@@ -521,18 +586,22 @@ pub async fn process_fbr_queue(pool: &SqlitePool) -> Result<u32, String> {
                     .bind(&item.invoice_id)
                     .execute(pool)
                     .await
-                    .map_err(|e| format!("Invoice update error: {e}"))?;
+                    .map_err(|e| AppError::internal(format!("Invoice update error: {e}")))?;
                 } else {
                     let msg = response.message.unwrap_or_else(|| "Unknown FBR error".to_string());
                     mark_queue_failed(pool, &item.id, &item.company_id, &item.invoice_id, &item, &msg).await?;
                 }
             }
             Err(err) => {
-                mark_queue_failed(pool, &item.id, &item.company_id, &item.invoice_id, &item, &err).await?;
+                mark_queue_failed(pool, &item.id, &item.company_id, &item.invoice_id, &item, &err.to_string()).await?;
             }
         }
 
         processed += 1;
+    }
+
+    if processed > 0 {
+        emit_fbr_queue_updated();
     }
 
     Ok(processed)
@@ -552,11 +621,11 @@ pub fn fbr_qr_content(irn: &str, invoice_date: &str, strn: &str, total_bill: f64
 pub async fn get_fbr_config(
     pool: State<'_, SqlitePool>,
     session: State<'_, SessionState>,
-) -> Result<Option<FbrConfigRow>, String> {
+) -> Result<Option<FbrConfigRow>, AppError> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
     let company_id = current_user
         .company_id
-        .ok_or_else(|| "User is not assigned to a company".to_string())?;
+        .ok_or_else(|| AppError::internal("User is not assigned to a company".to_string()))?;
 
     let config = sqlx::query_as::<_, FbrConfigRow>(
         "SELECT * FROM fbr_config WHERE company_id = ?",
@@ -564,7 +633,7 @@ pub async fn get_fbr_config(
     .bind(&company_id)
     .fetch_optional(pool.inner())
     .await
-    .map_err(|e| format!("Database error: {e}"))?;
+    .map_err(|e| AppError::internal(format!("Database error: {e}")))?;
 
     Ok(config)
 }
@@ -577,16 +646,16 @@ pub async fn save_fbr_config(
     environment: String,
     is_active: bool,
     pral_token: Option<String>,
-) -> Result<FbrConfigRow, String> {
+) -> Result<FbrConfigRow, AppError> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
     check_permission(pool.inner(), &current_user.role, "settings", "edit").await?;
 
     let company_id = current_user
         .company_id
-        .ok_or_else(|| "User is not assigned to a company".to_string())?;
+        .ok_or_else(|| AppError::internal("User is not assigned to a company".to_string()))?;
 
     if environment != "sandbox" && environment != "production" {
-        return Err("Environment must be 'sandbox' or 'production'".to_string());
+        return Err(AppError::internal("Environment must be 'sandbox' or 'production'".to_string()));
     }
 
     let sandbox_url = "https://gw.fbr.gov.pk/di_data/v1/di/validateinvoicedata".to_string();
@@ -598,7 +667,7 @@ pub async fn save_fbr_config(
     .bind(&company_id)
     .fetch_optional(pool.inner())
     .await
-    .map_err(|e| format!("Database error: {e}"))?;
+    .map_err(|e| AppError::internal(format!("Database error: {e}")))?;
 
     let id = match existing {
         Some(id) => {
@@ -613,7 +682,7 @@ pub async fn save_fbr_config(
             .bind(&company_id)
             .execute(pool.inner())
             .await
-            .map_err(|e| format!("Database error: {e}"))?;
+            .map_err(|e| AppError::internal(format!("Database error: {e}")))?;
             id
         }
         None => {
@@ -631,7 +700,7 @@ pub async fn save_fbr_config(
             .bind(&pral_token)
             .execute(pool.inner())
             .await
-            .map_err(|e| format!("Database error: {e}"))?;
+            .map_err(|e| AppError::internal(format!("Database error: {e}")))?;
             id
         }
     };
@@ -653,7 +722,7 @@ pub async fn save_fbr_config(
         .bind(&company_id)
         .fetch_one(pool.inner())
         .await
-        .map_err(|e| format!("Database error: {e}"))
+        .map_err(|e| AppError::internal(format!("Database error: {e}")))
 }
 
 /// Test the FBR sandbox connection by submitting a test payload.
@@ -661,13 +730,13 @@ pub async fn save_fbr_config(
 pub async fn test_fbr_connection(
     pool: State<'_, SqlitePool>,
     session: State<'_, SessionState>,
-) -> Result<FbrConnectionTestResult, String> {
+) -> Result<FbrConnectionTestResult, AppError> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
     check_permission(pool.inner(), &current_user.role, "settings", "edit").await?;
 
     let company_id = current_user
         .company_id
-        .ok_or_else(|| "User is not assigned to a company".to_string())?;
+        .ok_or_else(|| AppError::internal("User is not assigned to a company".to_string()))?;
 
     let config = sqlx::query_as::<_, FbrConfigRow>(
         "SELECT * FROM fbr_config WHERE company_id = ?",
@@ -675,7 +744,7 @@ pub async fn test_fbr_connection(
     .bind(&company_id)
     .fetch_optional(pool.inner())
     .await
-    .map_err(|e| format!("Database error: {e}"))?
+    .map_err(|e| AppError::internal(format!("Database error: {e}")))?
     .ok_or("FBR configuration not found. Save configuration first.")?;
 
     let url = if config.environment == "production" {
@@ -726,7 +795,7 @@ pub async fn test_fbr_connection(
         }
         Err(e) => FbrConnectionTestResult {
             success: false,
-            message: e,
+            message: e.to_string(),
             timestamp,
         },
     };
@@ -740,7 +809,7 @@ pub async fn test_fbr_connection(
     .bind(&company_id)
     .execute(pool.inner())
     .await
-    .map_err(|e| format!("Database error: {e}"))?;
+    .map_err(|e| AppError::internal(format!("Database error: {e}")))?;
 
     Ok(test_result)
 }
@@ -750,11 +819,11 @@ pub async fn test_fbr_connection(
 pub async fn get_fbr_queue_status(
     pool: State<'_, SqlitePool>,
     session: State<'_, SessionState>,
-) -> Result<FbrQueueStatus, String> {
+) -> Result<FbrQueueStatus, AppError> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
     let company_id = current_user
         .company_id
-        .ok_or_else(|| "User is not assigned to a company".to_string())?;
+        .ok_or_else(|| AppError::internal("User is not assigned to a company".to_string()))?;
 
     let counts: (i64, i64, i64, i64, i64, i64) = sqlx::query_as(
         "SELECT \
@@ -769,7 +838,7 @@ pub async fn get_fbr_queue_status(
     .bind(&company_id)
     .fetch_one(pool.inner())
     .await
-    .map_err(|e| format!("Database error: {e}"))?;
+    .map_err(|e| AppError::internal(format!("Database error: {e}")))?;
 
     let raw_items: Vec<FbrQueueItem> = sqlx::query_as::<_, FbrQueueItem>(
         "SELECT * FROM fbr_submission_queue WHERE company_id = ? ORDER BY created_at DESC LIMIT 50",
@@ -777,7 +846,7 @@ pub async fn get_fbr_queue_status(
     .bind(&company_id)
     .fetch_all(pool.inner())
     .await
-    .map_err(|e| format!("Database error: {e}"))?;
+    .map_err(|e| AppError::internal(format!("Database error: {e}")))?;
 
     let items: Vec<PublicFbrQueueItem> = raw_items
         .into_iter()
@@ -813,13 +882,13 @@ pub async fn retry_fbr_submission(
     pool: State<'_, SqlitePool>,
     session: State<'_, SessionState>,
     queue_id: String,
-) -> Result<FbrQueueItem, String> {
+) -> Result<FbrQueueItem, AppError> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
     check_permission(pool.inner(), &current_user.role, "invoices", "finalize").await?;
 
     let company_id = current_user
         .company_id
-        .ok_or_else(|| "User is not assigned to a company".to_string())?;
+        .ok_or_else(|| AppError::internal("User is not assigned to a company".to_string()))?;
 
     let item = sqlx::query_as::<_, FbrQueueItem>(
         "SELECT * FROM fbr_submission_queue WHERE id = ? AND company_id = ?",
@@ -828,11 +897,11 @@ pub async fn retry_fbr_submission(
     .bind(&company_id)
     .fetch_optional(pool.inner())
     .await
-    .map_err(|e| format!("Database error: {e}"))?
+    .map_err(|e| AppError::internal(format!("Database error: {e}")))?
     .ok_or("Queue item not found")?;
 
     if item.status != "failed" && item.status != "dead" {
-        return Err("Can only retry failed or dead submissions".to_string());
+        return Err(AppError::internal("Can only retry failed or dead submissions".to_string()));
     }
 
     let now = chrono::Utc::now()
@@ -848,7 +917,7 @@ pub async fn retry_fbr_submission(
     .bind(&queue_id)
     .execute(pool.inner())
     .await
-    .map_err(|e| format!("Database error: {e}"))?;
+    .map_err(|e| AppError::internal(format!("Database error: {e}")))?;
 
     sqlx::query(
         "UPDATE invoices SET fbr_status = 'pending', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
@@ -856,7 +925,7 @@ pub async fn retry_fbr_submission(
     .bind(&item.invoice_id)
     .execute(pool.inner())
     .await
-    .map_err(|e| format!("Database error: {e}"))?;
+    .map_err(|e| AppError::internal(format!("Database error: {e}")))?;
 
     log_audit(
         pool.inner(),
@@ -875,7 +944,7 @@ pub async fn retry_fbr_submission(
         .bind(&queue_id)
         .fetch_one(pool.inner())
         .await
-        .map_err(|e| format!("Database error: {e}"))
+        .map_err(|e| AppError::internal(format!("Database error: {e}")))
 }
 
 /// Get FBR status for a specific invoice.
@@ -884,11 +953,11 @@ pub async fn get_invoice_fbr_status(
     pool: State<'_, SqlitePool>,
     session: State<'_, SessionState>,
     invoice_id: String,
-) -> Result<InvoiceFbrStatus, String> {
+) -> Result<InvoiceFbrStatus, AppError> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
     let company_id = current_user
         .company_id
-        .ok_or_else(|| "User is not assigned to a company".to_string())?;
+        .ok_or_else(|| AppError::internal("User is not assigned to a company".to_string()))?;
 
     let invoice: (Option<String>, String, Option<String>) = sqlx::query_as(
         "SELECT irn, fbr_status, fbr_invoice_number FROM invoices WHERE id = ? AND company_id = ?",
@@ -897,7 +966,7 @@ pub async fn get_invoice_fbr_status(
     .bind(&company_id)
     .fetch_optional(pool.inner())
     .await
-    .map_err(|e| format!("Database error: {e}"))?
+    .map_err(|e| AppError::internal(format!("Database error: {e}")))?
     .ok_or("Invoice not found")?;
 
     let queue_item: Option<FbrQueueItem> = sqlx::query_as::<_, FbrQueueItem>(
@@ -906,7 +975,7 @@ pub async fn get_invoice_fbr_status(
     .bind(&invoice_id)
     .fetch_optional(pool.inner())
     .await
-    .map_err(|e| format!("Database error: {e}"))?;
+    .map_err(|e| AppError::internal(format!("Database error: {e}")))?;
 
     let public_queue = queue_item.map(|i| PublicFbrQueueItem {
         id: i.id,
@@ -935,7 +1004,7 @@ pub async fn get_invoice_fbr_status(
 pub async fn process_fbr_queue_now(
     pool: State<'_, SqlitePool>,
     session: State<'_, SessionState>,
-) -> Result<u32, String> {
+) -> Result<u32, AppError> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
     check_permission(pool.inner(), &current_user.role, "settings", "edit").await?;
 
@@ -952,14 +1021,14 @@ pub async fn enqueue_fbr_submission(
     pool: &SqlitePool,
     company_id: &str,
     invoice_id: &str,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
     let config: Option<bool> = sqlx::query_scalar(
         "SELECT is_active FROM fbr_config WHERE company_id = ?",
     )
     .bind(company_id)
     .fetch_optional(&mut **tx)
     .await
-    .map_err(|e| format!("FBR config lookup error: {e}"))?;
+    .map_err(|e| AppError::internal(format!("FBR config lookup error: {e}")))?;
 
     let is_active = config.unwrap_or(false);
     if !is_active {
@@ -984,7 +1053,7 @@ pub async fn enqueue_fbr_submission(
     .bind(&now)
     .execute(&mut **tx)
     .await
-    .map_err(|e| format!("Queue insert error: {e}"))?;
+    .map_err(|e| AppError::internal(format!("Queue insert error: {e}")))?;
 
     sqlx::query(
         "UPDATE invoices SET fbr_status = 'pending', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
@@ -992,7 +1061,7 @@ pub async fn enqueue_fbr_submission(
     .bind(invoice_id)
     .execute(&mut **tx)
     .await
-    .map_err(|e| format!("Invoice update error: {e}"))?;
+    .map_err(|e| AppError::internal(format!("Invoice update error: {e}")))?;
 
     Ok(())
 }
@@ -1010,7 +1079,7 @@ pub async fn create_credit_note(
     reason: String,
     credit_amount: i64,
     items_json: Option<String>,
-) -> Result<PublicInvoice, String> {
+) -> Result<PublicInvoice, AppError> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
     check_permission(pool.inner(), &current_user.role, "invoices", "finalize").await?;
 
@@ -1027,7 +1096,7 @@ pub async fn create_credit_note(
     .bind(company_id)
     .fetch_optional(pool.inner())
     .await
-    .map_err(|e| format!("Database error: {e}"))?
+    .map_err(|e| AppError::internal(format!("Database error: {e}")))?
     .ok_or("Original invoice not found")?;
 
     let orig_irn = orig.3;
@@ -1035,20 +1104,20 @@ pub async fn create_credit_note(
     let customer_id = orig.5;
 
     if credit_amount <= 0 {
-        return Err("Credit amount must be positive".to_string());
+        return Err(AppError::internal("Credit amount must be positive".to_string()));
     }
     if credit_amount > orig_total {
-        return Err("Credit amount cannot exceed original invoice total".to_string());
+        return Err(AppError::internal("Credit amount cannot exceed original invoice total".to_string()));
     }
 
     let orig_date = chrono::NaiveDate::parse_from_str(&orig.2, "%Y-%m-%d")
-        .map_err(|e| format!("Invalid original invoice date: {e}"))?;
+        .map_err(|e| AppError::internal(format!("Invalid original invoice date: {e}")))?;
     let today = chrono::Utc::now().date_naive();
     let days_diff = (today - orig_date).num_days();
     if days_diff > 180 {
-        return Err(format!(
+        return Err(AppError::internal(format!(
             "Credit note window exceeded. Original invoice is {days_diff} days old (limit: 180 days)"
-        ));
+        )));
     }
 
     let settings = sqlx::query_as::<_, (String, i64)>(
@@ -1057,7 +1126,7 @@ pub async fn create_credit_note(
     .bind(company_id)
     .fetch_optional(pool.inner())
     .await
-    .map_err(|e| format!("Database error: {e}"))?
+    .map_err(|e| AppError::internal(format!("Database error: {e}")))?
     .unwrap_or(("INV-CN".to_string(), 1));
 
     let invoice_number = format!("{}-{:05}", settings.0, settings.1);
@@ -1068,7 +1137,7 @@ pub async fn create_credit_note(
     .bind(company_id)
     .execute(pool.inner())
     .await
-    .map_err(|e| format!("Database error: {e}"))?;
+    .map_err(|e| AppError::internal(format!("Database error: {e}")))?;
 
     let cn_id = Uuid::new_v4().to_string();
     let today_str = today.format("%Y-%m-%d").to_string();
@@ -1091,7 +1160,7 @@ pub async fn create_credit_note(
     .bind(&orig_irn)
     .execute(pool.inner())
     .await
-    .map_err(|e| format!("Database error: {e}"))?;
+    .map_err(|e| AppError::internal(format!("Database error: {e}")))?;
 
     if let Some(items_str) = items_json {
         if let Ok(items) = serde_json::from_str::<Vec<serde_json::Value>>(&items_str) {
@@ -1120,7 +1189,7 @@ pub async fn create_credit_note(
                 .bind(-line_total)
                 .execute(pool.inner())
                 .await
-                .map_err(|e| format!("Database error: {e}"))?;
+                .map_err(|e| AppError::internal(format!("Database error: {e}")))?;
             }
         }
     }
@@ -1144,7 +1213,7 @@ pub async fn create_credit_note(
         .bind(&cn_id)
         .fetch_one(pool.inner())
         .await
-        .map_err(|e| format!("Database error: {e}"))
+        .map_err(|e| AppError::internal(format!("Database error: {e}")))
 }
 
 /// Create a debit note referencing an original invoice's IRN (spec section 17.6).
@@ -1156,7 +1225,7 @@ pub async fn create_debit_note(
     reason: String,
     debit_amount: i64,
     items_json: Option<String>,
-) -> Result<PublicInvoice, String> {
+) -> Result<PublicInvoice, AppError> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
     check_permission(pool.inner(), &current_user.role, "invoices", "finalize").await?;
 
@@ -1173,24 +1242,24 @@ pub async fn create_debit_note(
     .bind(company_id)
     .fetch_optional(pool.inner())
     .await
-    .map_err(|e| format!("Database error: {e}"))?
+    .map_err(|e| AppError::internal(format!("Database error: {e}")))?
     .ok_or("Original invoice not found")?;
 
     let orig_irn = orig.3;
     let customer_id = orig.5;
 
     if debit_amount <= 0 {
-        return Err("Debit amount must be positive".to_string());
+        return Err(AppError::internal("Debit amount must be positive".to_string()));
     }
 
     let orig_date = chrono::NaiveDate::parse_from_str(&orig.2, "%Y-%m-%d")
-        .map_err(|e| format!("Invalid original invoice date: {e}"))?;
+        .map_err(|e| AppError::internal(format!("Invalid original invoice date: {e}")))?;
     let today = chrono::Utc::now().date_naive();
     let days_diff = (today - orig_date).num_days();
     if days_diff > 180 {
-        return Err(format!(
+        return Err(AppError::internal(format!(
             "Debit note window exceeded. Original invoice is {days_diff} days old (limit: 180 days)"
-        ));
+        )));
     }
 
     let settings = sqlx::query_as::<_, (String, i64)>(
@@ -1199,7 +1268,7 @@ pub async fn create_debit_note(
     .bind(company_id)
     .fetch_optional(pool.inner())
     .await
-    .map_err(|e| format!("Database error: {e}"))?
+    .map_err(|e| AppError::internal(format!("Database error: {e}")))?
     .unwrap_or(("INV-DN".to_string(), 1));
 
     let invoice_number = format!("{}-{:05}", settings.0, settings.1);
@@ -1210,7 +1279,7 @@ pub async fn create_debit_note(
     .bind(company_id)
     .execute(pool.inner())
     .await
-    .map_err(|e| format!("Database error: {e}"))?;
+    .map_err(|e| AppError::internal(format!("Database error: {e}")))?;
 
     let dn_id = Uuid::new_v4().to_string();
     let today_str = today.format("%Y-%m-%d").to_string();
@@ -1233,7 +1302,7 @@ pub async fn create_debit_note(
     .bind(&orig_irn)
     .execute(pool.inner())
     .await
-    .map_err(|e| format!("Database error: {e}"))?;
+    .map_err(|e| AppError::internal(format!("Database error: {e}")))?;
 
     if let Some(items_str) = items_json {
         if let Ok(items) = serde_json::from_str::<Vec<serde_json::Value>>(&items_str) {
@@ -1262,7 +1331,7 @@ pub async fn create_debit_note(
                 .bind(line_total)
                 .execute(pool.inner())
                 .await
-                .map_err(|e| format!("Database error: {e}"))?;
+                .map_err(|e| AppError::internal(format!("Database error: {e}")))?;
             }
         }
     }
@@ -1286,5 +1355,5 @@ pub async fn create_debit_note(
         .bind(&dn_id)
         .fetch_one(pool.inner())
         .await
-        .map_err(|e| format!("Database error: {e}"))
+        .map_err(|e| AppError::internal(format!("Database error: {e}")))
 }

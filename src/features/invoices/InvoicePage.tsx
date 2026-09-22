@@ -54,6 +54,11 @@ import {
   generateInvoiceExcel,
   saveFileDialog,
   getErrorMessage,
+  getCompanyCurrency,
+  fetchExchangeRates,
+  getInvoiceFbrStatus,
+  createCreditNote,
+  createDebitNote,
 } from "../../api/backend";
 
 import type {
@@ -62,6 +67,8 @@ import type {
   PublicInvoiceItem,
   PublicProduct,
   InvoiceWithDetails,
+  CurrencyConfig,
+  InvoiceFbrStatus,
 } from "../../types/backend";
 
 import { INK } from "../../theme";
@@ -74,22 +81,23 @@ import { usePermissions } from "../permissions/PermissionsProvider";
 // HELPERS
 // ==========================================
 
-function paisaToDisplay(paisa: number): string {
-  return (paisa / 100).toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
+import {
+  formatPaisa as fmtPaisa,
+  displayToPaisa as dtp,
+  roundToCurrency,
+} from "../../utils/currency";
+
+function paisaToDisplay(paisa: number, config?: CurrencyConfig | null): string {
+  return fmtPaisa(paisa, config);
 }
 
 function displayToPaisa(display: string | number): number {
-  const num = typeof display === "number" ? display : parseFloat(display);
-  if (isNaN(num)) return 0;
-  return Math.round(num * 100);
+  return dtp(display);
 }
 
-// Rounds paisa to the nearest whole rupee (matches the backend).
+// Rounds paisa to the nearest whole currency unit (matches the backend).
 function roundToRupee(paisa: number): number {
-  return Math.round(paisa / 100) * 100;
+  return roundToCurrency(paisa);
 }
 
 // Mirrors the backend's line item math so the modal preview matches the saved values.
@@ -120,6 +128,16 @@ const STATUS_COLORS: Record<string, string> = {
   finalized: "blue",
   paid: "green",
   cancelled: "red",
+};
+
+const FBR_STATUS_COLORS: Record<string, string> = {
+  not_submitted: "gray",
+  pending: "yellow",
+  queued: "blue",
+  submitting: "blue",
+  validated: "green",
+  failed: "orange",
+  dead: "red",
 };
 
 // ==========================================
@@ -170,13 +188,15 @@ function InvoiceListView({ onOpenInvoice }: { onOpenInvoice: (id: string) => voi
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [createModalOpen, setCreateModalOpen] = useState(false);
+  const [currencyConfig, setCurrencyConfig] = useState<CurrencyConfig | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [inv, cust] = await Promise.all([listInvoices(), listCustomers()]);
+      const [inv, cust, curConfig] = await Promise.all([listInvoices(), listCustomers(), getCompanyCurrency()]);
       setInvoices(inv);
       setCustomers(cust);
+      setCurrencyConfig(curConfig);
       setError(null);
     } catch (err) {
       setError(getErrorMessage(err));
@@ -206,6 +226,8 @@ function InvoiceListView({ onOpenInvoice }: { onOpenInvoice: (id: string) => voi
     dueDate: string;
     poNumber: string;
     referenceNote: string;
+    currencyCode?: string;
+    exchangeRate?: number;
   }) {
     try {
       const invoice = await createInvoice(values);
@@ -325,6 +347,7 @@ function InvoiceListView({ onOpenInvoice }: { onOpenInvoice: (id: string) => voi
                   <Table.Th>Customer</Table.Th>
                   <Table.Th>Date</Table.Th>
                   <Table.Th>Status</Table.Th>
+                  <Table.Th>FBR</Table.Th>
                   <Table.Th ta="right">Total</Table.Th>
                   <Table.Th ta="right">Paid</Table.Th>
                   <Table.Th ta="right">Balance</Table.Th>
@@ -358,6 +381,19 @@ function InvoiceListView({ onOpenInvoice }: { onOpenInvoice: (id: string) => voi
                         {inv.status}
                       </Badge>
                     </Table.Td>
+                    <Table.Td>
+                      {inv.fbrStatus && inv.fbrStatus !== "not_submitted" ? (
+                        <Badge
+                          color={FBR_STATUS_COLORS[inv.fbrStatus] ?? "gray"}
+                          variant="light"
+                          size="sm"
+                        >
+                          {inv.fbrStatus}
+                        </Badge>
+                      ) : (
+                        <Text size="xs" c="dimmed">—</Text>
+                      )}
+                    </Table.Td>
                     <Table.Td ta="right">
                       <Text size="sm" fw={600} className="tabular">
                         {paisaToDisplay(inv.grandTotal)}
@@ -390,6 +426,7 @@ function InvoiceListView({ onOpenInvoice }: { onOpenInvoice: (id: string) => voi
         onCreate={handleCreateInvoice}
         customers={customers}
         onCustomerCreated={load}
+        currencyConfig={currencyConfig}
       />
     </Stack>
   );
@@ -399,12 +436,28 @@ function InvoiceListView({ onOpenInvoice }: { onOpenInvoice: (id: string) => voi
 // CREATE INVOICE MODAL
 // ==========================================
 
+const CURRENCY_OPTIONS = [
+  { value: "", label: "Base currency (default)" },
+  { value: "USD", label: "USD - US Dollar" },
+  { value: "EUR", label: "EUR - Euro" },
+  { value: "GBP", label: "GBP - British Pound" },
+  { value: "AED", label: "AED - UAE Dirham" },
+  { value: "SAR", label: "SAR - Saudi Riyal" },
+  { value: "INR", label: "INR - Indian Rupee" },
+  { value: "JPY", label: "JPY - Japanese Yen" },
+  { value: "CNY", label: "CNY - Chinese Yuan" },
+  { value: "CAD", label: "CAD - Canadian Dollar" },
+  { value: "AUD", label: "AUD - Australian Dollar" },
+  { value: "CHF", label: "CHF - Swiss Franc" },
+];
+
 function CreateInvoiceModal({
   opened,
   onClose,
   onCreate,
   customers,
   onCustomerCreated,
+  currencyConfig,
 }: {
   opened: boolean;
   onClose: () => void;
@@ -414,13 +467,19 @@ function CreateInvoiceModal({
     dueDate: string;
     poNumber: string;
     referenceNote: string;
+    currencyCode?: string;
+    exchangeRate?: number;
   }) => Promise<void>;
   customers: PublicCustomer[];
   onCustomerCreated: () => Promise<void>;
+  currencyConfig?: CurrencyConfig | null;
 }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showNewCustomer, setShowNewCustomer] = useState(false);
+  const [selectedCurrency, setSelectedCurrency] = useState("");
+  const [exchangeRate, setExchangeRate] = useState<number>(1);
+  const [rateLoading, setRateLoading] = useState(false);
 
   const form = useForm({
     initialValues: {
@@ -455,8 +514,14 @@ function CreateInvoiceModal({
     setError(null);
     setLoading(true);
     try {
-      await onCreate(values);
+      await onCreate({
+        ...values,
+        currencyCode: selectedCurrency || undefined,
+        exchangeRate: selectedCurrency ? exchangeRate : undefined,
+      });
       form.reset();
+      setSelectedCurrency("");
+      setExchangeRate(1);
     } catch (err) {
       setError(getErrorMessage(err));
     } finally {
@@ -537,6 +602,53 @@ function CreateInvoiceModal({
                 {...form.getInputProps("referenceNote")}
               />
             </SimpleGrid>
+
+            {currencyConfig && currencyConfig.code !== "PKR" && (
+              <SimpleGrid cols={2}>
+                <Select
+                  label="Invoice Currency"
+                  placeholder="Base currency"
+                  data={CURRENCY_OPTIONS}
+                  value={selectedCurrency}
+                  onChange={async (v) => {
+                    setSelectedCurrency(v || "");
+                    if (v && v !== currencyConfig?.code) {
+                      setRateLoading(true);
+                      try {
+                        const rates = await fetchExchangeRates({
+                          baseCurrency: currencyConfig?.code || "PKR",
+                          targetCurrencies: [v],
+                        });
+                        if (rates.length > 0) setExchangeRate(rates[0].rate);
+                      } catch { /* ignore */ }
+                      setRateLoading(false);
+                    } else {
+                      setExchangeRate(1);
+                    }
+                  }}
+                  searchable
+                  clearable
+                />
+                {selectedCurrency && selectedCurrency !== currencyConfig?.code && (
+                  <NumberInput
+                    label={`Exchange Rate (1 ${currencyConfig?.code || "PKR"} = X ${selectedCurrency})`}
+                    value={exchangeRate}
+                    onChange={(v) => setExchangeRate(typeof v === "number" ? v : 1)}
+                    min={0.0001}
+                    step={0.01}
+                    decimalScale={6}
+                    loading={rateLoading}
+                    disabled={rateLoading}
+                  />
+                )}
+              </SimpleGrid>
+            )}
+
+            {selectedCurrency && selectedCurrency !== currencyConfig?.code && exchangeRate > 0 && (
+              <Text size="sm" c="dimmed">
+                Invoice will be in {selectedCurrency}. Amounts will be converted to {currencyConfig?.code || "PKR"} at rate {exchangeRate}.
+              </Text>
+            )}
 
             {error && (
               <Text c="red" size="sm">
@@ -640,6 +752,13 @@ function InvoiceDetailView({
   const [addItemModalOpen, setAddItemModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<PublicInvoiceItem | null>(null);
   const [paymentModalOpen, setPaymentModalOpen] = useState(false);
+  const [fbrStatus, setFbrStatus] = useState<InvoiceFbrStatus | null>(null);
+  const [creditNoteModalOpen, setCreditNoteModalOpen] = useState(false);
+  const [debitNoteModalOpen, setDebitNoteModalOpen] = useState(false);
+  const [creditNoteReason, setCreditNoteReason] = useState("");
+  const [creditNoteAmount, setCreditNoteAmount] = useState(0);
+  const [debitNoteReason, setDebitNoteReason] = useState("");
+  const [debitNoteAmount, setDebitNoteAmount] = useState(0);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -651,6 +770,12 @@ function InvoiceDetailView({
       setDetails(det);
       setProducts(prods);
       setError(null);
+      try {
+        const fbr = await getInvoiceFbrStatus(invoiceId);
+        setFbrStatus(fbr);
+      } catch {
+        // FBR status not available (non-critical)
+      }
     } catch (err) {
       setError(getErrorMessage(err));
     } finally {
@@ -733,6 +858,42 @@ function InvoiceDetailView({
     }
   }
 
+  async function handleCreateCreditNote() {
+    if (!details) return;
+    try {
+      await createCreditNote(
+        invoiceId,
+        creditNoteReason,
+        creditNoteAmount,
+        null,
+      );
+      setCreditNoteModalOpen(false);
+      setCreditNoteReason("");
+      setCreditNoteAmount(0);
+      await load();
+    } catch (err) {
+      setError(getErrorMessage(err));
+    }
+  }
+
+  async function handleCreateDebitNote() {
+    if (!details) return;
+    try {
+      await createDebitNote(
+        invoiceId,
+        debitNoteReason,
+        debitNoteAmount,
+        null,
+      );
+      setDebitNoteModalOpen(false);
+      setDebitNoteReason("");
+      setDebitNoteAmount(0);
+      await load();
+    } catch (err) {
+      setError(getErrorMessage(err));
+    }
+  }
+
   async function handlePrint() {
     try {
       await generateInvoiceHtml(invoiceId);
@@ -797,6 +958,15 @@ function InvoiceDetailView({
           >
             {invoice.status.toUpperCase()}
           </Badge>
+          {fbrStatus && fbrStatus.fbrStatus !== "not_submitted" && (
+            <Badge
+              color={FBR_STATUS_COLORS[fbrStatus.fbrStatus] ?? "gray"}
+              variant="outline"
+              size="lg"
+            >
+              FBR: {fbrStatus.fbrStatus}
+            </Badge>
+          )}
         </Group>
         <Group>
           <Menu position="bottom-end" withinPortal>
@@ -811,6 +981,24 @@ function InvoiceDetailView({
               <Menu.Item onClick={handleExportExcel}>Export Excel file</Menu.Item>
             </Menu.Dropdown>
           </Menu>
+          {isFinalized && canEdit && (
+            <>
+              <Button
+                variant="outline"
+                color="teal"
+                onClick={() => setCreditNoteModalOpen(true)}
+              >
+                Credit Note
+              </Button>
+              <Button
+                variant="outline"
+                color="orange"
+                onClick={() => setDebitNoteModalOpen(true)}
+              >
+                Debit Note
+              </Button>
+            </>
+          )}
           {isDraft && canFinalize && (
             <Button color="green" onClick={handleFinalize}>
               ✓ Finalize Invoice
@@ -884,6 +1072,40 @@ function InvoiceDetailView({
               >
                 {invoice.status}
               </Badge>
+              {fbrStatus && fbrStatus.fbrStatus !== "not_submitted" && (
+                <>
+                  <Text size="sm" fw={500}>
+                    FBR Status:
+                  </Text>
+                  <Badge
+                    color={FBR_STATUS_COLORS[fbrStatus.fbrStatus] ?? "gray"}
+                    variant="light"
+                    size="sm"
+                  >
+                    {fbrStatus.fbrStatus}
+                  </Badge>
+                </>
+              )}
+              {fbrStatus?.irn && (
+                <>
+                  <Text size="sm" fw={500}>
+                    IRN:
+                  </Text>
+                  <Text size="sm" style={{ fontFamily: "monospace" }}>
+                    {fbrStatus.irn}
+                  </Text>
+                </>
+              )}
+              {fbrStatus?.queueItem?.lastError && (
+                <>
+                  <Text size="sm" fw={500}>
+                    Last Error:
+                  </Text>
+                  <Text size="xs" c="red" lineClamp={2}>
+                    {fbrStatus.queueItem.lastError}
+                  </Text>
+                </>
+              )}
             </SimpleGrid>
           </Card>
         </Grid.Col>
@@ -1111,6 +1333,92 @@ function InvoiceDetailView({
         onRecord={handleRecordPayment}
         balanceDue={invoice.balanceDue}
       />
+
+      {/* Credit Note Modal */}
+      <Modal
+        opened={creditNoteModalOpen}
+        onClose={() => setCreditNoteModalOpen(false)}
+        title="Create Credit Note"
+        size="md"
+      >
+        <Stack gap="md">
+          <Text size="sm" c="dimmed">
+            Creates a credit note referencing this invoice&apos;s FBR IRN. The
+            credit amount reduces what the buyer owes.
+          </Text>
+          <TextInput
+            label="Reason for credit note"
+            placeholder="e.g. Goods returned, pricing correction"
+            value={creditNoteReason}
+            onChange={(e) => setCreditNoteReason(e.currentTarget.value)}
+          />
+          <NumberInput
+            label="Credit amount"
+            prefix={details?.invoice.currencyCode === "PKR" ? "PKR " : ""}
+            value={creditNoteAmount}
+            onChange={(v) => setCreditNoteAmount(typeof v === "number" ? v : 0)}
+            min={0}
+          />
+          <Group justify="flex-end">
+            <Button
+              variant="subtle"
+              onClick={() => setCreditNoteModalOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              color="teal"
+              onClick={() => void handleCreateCreditNote()}
+              disabled={!creditNoteReason || creditNoteAmount <= 0}
+            >
+              Create Credit Note
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+
+      {/* Debit Note Modal */}
+      <Modal
+        opened={debitNoteModalOpen}
+        onClose={() => setDebitNoteModalOpen(false)}
+        title="Create Debit Note"
+        size="md"
+      >
+        <Stack gap="md">
+          <Text size="sm" c="dimmed">
+            Creates a debit note referencing this invoice&apos;s FBR IRN. The
+            debit amount increases what the buyer owes.
+          </Text>
+          <TextInput
+            label="Reason for debit note"
+            placeholder="e.g. Additional charges, undercharged"
+            value={debitNoteReason}
+            onChange={(e) => setDebitNoteReason(e.currentTarget.value)}
+          />
+          <NumberInput
+            label="Debit amount"
+            prefix={details?.invoice.currencyCode === "PKR" ? "PKR " : ""}
+            value={debitNoteAmount}
+            onChange={(v) => setDebitNoteAmount(typeof v === "number" ? v : 0)}
+            min={0}
+          />
+          <Group justify="flex-end">
+            <Button
+              variant="subtle"
+              onClick={() => setDebitNoteModalOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              color="orange"
+              onClick={() => void handleCreateDebitNote()}
+              disabled={!debitNoteReason || debitNoteAmount <= 0}
+            >
+              Create Debit Note
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
     </Stack>
   );
 }

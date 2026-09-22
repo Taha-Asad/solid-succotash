@@ -8,6 +8,7 @@
 // Deleting a unit never touches products — it only removes it from the list.
 
 use crate::commands::audit::log_audit;
+use crate::error::AppError;
 use crate::commands::auth::{require_current_user, SessionState};
 use crate::commands::permissions::check_permission;
 use serde::Serialize;
@@ -35,7 +36,7 @@ pub struct PublicUnit {
 pub async fn list_units(
     pool: State<'_, SqlitePool>,
     session: State<'_, SessionState>,
-) -> Result<Vec<PublicUnit>, String> {
+) -> Result<Vec<PublicUnit>, AppError> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
 
     let units = sqlx::query_as::<_, PublicUnit>(
@@ -49,7 +50,7 @@ pub async fn list_units(
     .bind(&current_user.company_id)
     .fetch_all(pool.inner())
     .await
-    .map_err(|e| format!("Database error: {e}"))?;
+    .map_err(|e| AppError::internal(format!("Database error: {e}")))?;
 
     Ok(units)
 }
@@ -62,7 +63,7 @@ pub async fn create_unit(
     name: String,
     symbol: Option<String>,
     is_default: bool,
-) -> Result<PublicUnit, String> {
+) -> Result<PublicUnit, AppError> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
 
     check_permission(pool.inner(), &current_user.role, "inventory", "create").await?;
@@ -74,7 +75,7 @@ pub async fn create_unit(
 
     let trimmed_name = name.trim().to_string();
     if trimmed_name.is_empty() {
-        return Err("Unit name cannot be empty".to_string());
+        return Err(AppError::internal("Unit name cannot be empty".to_string()));
     }
 
     let symbol = symbol
@@ -114,7 +115,7 @@ pub async fn create_unit(
         .bind(&id)
         .fetch_one(pool.inner())
         .await
-        .map_err(|e| format!("Database error: {e}"))?;
+        .map_err(|e| AppError::internal(format!("Database error: {e}")))?;
 
     let company_id = current_user.company_id.as_deref().unwrap_or("system");
     log_audit(
@@ -142,7 +143,7 @@ pub async fn update_unit(
     name: String,
     symbol: Option<String>,
     is_default: bool,
-) -> Result<PublicUnit, String> {
+) -> Result<PublicUnit, AppError> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
 
     check_permission(pool.inner(), &current_user.role, "inventory", "edit").await?;
@@ -154,7 +155,7 @@ pub async fn update_unit(
 
     let trimmed_name = name.trim().to_string();
     if trimmed_name.is_empty() {
-        return Err("Unit name cannot be empty".to_string());
+        return Err(AppError::internal("Unit name cannot be empty".to_string()));
     }
 
     let symbol = symbol
@@ -169,9 +170,9 @@ pub async fn update_unit(
     .bind(company_id)
     .fetch_one(pool.inner())
     .await
-    .map_err(|e| format!("Database error: {e}"))?;
+    .map_err(|e| AppError::internal(format!("Database error: {e}")))?;
     if !owned {
-        return Err("Unit not found".to_string());
+        return Err(AppError::internal("Unit not found".to_string()));
     }
 
     if is_default {
@@ -205,7 +206,7 @@ pub async fn update_unit(
         .bind(&unit_id)
         .fetch_one(pool.inner())
         .await
-        .map_err(|e| format!("Database error: {e}"))?;
+        .map_err(|e| AppError::internal(format!("Database error: {e}")))?;
 
     let company_id = current_user.company_id.as_deref().unwrap_or("system");
     log_audit(
@@ -231,7 +232,7 @@ pub async fn delete_unit(
     pool: State<'_, SqlitePool>,
     session: State<'_, SessionState>,
     unit_id: String,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
 
     check_permission(pool.inner(), &current_user.role, "inventory", "delete").await?;
@@ -246,11 +247,11 @@ pub async fn delete_unit(
         .bind(company_id)
         .execute(pool.inner())
         .await
-        .map_err(|e| format!("Database error: {e}"))?
+        .map_err(|e| AppError::internal(format!("Database error: {e}")))?
         .rows_affected();
 
     if rows_affected == 0 {
-        return Err("Unit not found".to_string());
+        return Err(AppError::internal("Unit not found".to_string()));
     }
 
     let company_id = current_user.company_id.as_deref().unwrap_or("system");
@@ -272,12 +273,12 @@ pub async fn delete_unit(
 
 /// Clears the default flag on every unit of a company, so only one can be the
 /// default at a time.
-async fn clear_default_unit(pool: &SqlitePool, company_id: &str) -> Result<(), String> {
+async fn clear_default_unit(pool: &SqlitePool, company_id: &str) -> Result<(), AppError> {
     sqlx::query("UPDATE units SET is_default = 0, updated_at = CURRENT_TIMESTAMP WHERE company_id = ?")
         .bind(company_id)
         .execute(pool)
         .await
-        .map_err(|e| format!("Database error: {e}"))?;
+        .map_err(|e| AppError::internal(format!("Database error: {e}")))?;
     Ok(())
 }
 

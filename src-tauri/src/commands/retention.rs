@@ -11,6 +11,7 @@
 // Automatic scheduling comes later.
 
 use crate::commands::auth::{require_current_user, SessionState};
+use crate::error::AppError;
 use serde::Serialize;
 use sqlx::SqlitePool;
 use tauri::State;
@@ -31,10 +32,10 @@ pub async fn get_retention_summary(
     pool: State<'_, SqlitePool>,
     session: State<'_, SessionState>,
     retention_years: i64,
-) -> Result<RetentionSummary, String> {
+) -> Result<RetentionSummary, AppError> {
     let user = require_current_user(pool.inner(), session.inner()).await?;
     if user.role != "owner" {
-        return Err("Only owner can manage retention".to_string());
+        return Err(AppError::internal("Only owner can manage retention".to_string()));
     }
     let company_id = user.company_id.as_ref().ok_or("Not assigned")?;
 
@@ -104,10 +105,10 @@ pub async fn archive_old_records(
     pool: State<'_, SqlitePool>,
     session: State<'_, SessionState>,
     retention_years: i64,
-) -> Result<String, String> {
+) -> Result<String, AppError> {
     let user = require_current_user(pool.inner(), session.inner()).await?;
     if user.role != "owner" {
-        return Err("Only owner can archive data".to_string());
+        return Err(AppError::internal("Only owner can archive data".to_string()));
     }
     let company_id = user.company_id.as_ref().ok_or("Not assigned")?;
 
@@ -128,14 +129,14 @@ pub async fn archive_old_records(
         "UPDATE invoices SET deleted_at = CURRENT_TIMESTAMP WHERE company_id = ? AND status IN ('paid','cancelled') AND invoice_date < ? AND deleted_at IS NULL"
     )
     .bind(company_id).bind(&cutoff)
-    .execute(pool.inner()).await.map_err(|e| format!("Error: {e}"))?;
+    .execute(pool.inner()).await.map_err(|e| AppError::internal(format!("Error: {e}")))?;
 
     // Soft-delete old paid/cancelled POs
     let po = sqlx::query(
         "UPDATE purchase_orders SET deleted_at = CURRENT_TIMESTAMP WHERE company_id = ? AND status IN ('paid','cancelled') AND po_date < ? AND deleted_at IS NULL"
     )
     .bind(company_id).bind(&cutoff)
-    .execute(pool.inner()).await.map_err(|e| format!("Error: {e}"))?;
+    .execute(pool.inner()).await.map_err(|e| AppError::internal(format!("Error: {e}")))?;
 
     Ok(format!(
         "Archived {} invoices and {} purchase orders older than {} years.",

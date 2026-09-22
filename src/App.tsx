@@ -39,6 +39,7 @@ import {
 
 import LoginPage from "./features/auth/LoginPage";
 import SetupPage from "./features/auth/SetupPage";
+import ChangePasswordPage from "./features/auth/ChangePasswordPage";
 import AppShell from "./components/AppShell";
 import SuperAdminShell from "./features/superadmin/SuperAdminShell";
 
@@ -56,6 +57,7 @@ type AppScreen =
   | "loading" // checking database on startup
   | "setup" // no company yet → first-time setup form
   | "login" // company exists but nobody logged in
+  | "change-password" // mustChangePassword = true → force password change
   | "dashboard" // logged in → main app
   | "fatal-error"; // something went very wrong
 
@@ -87,7 +89,9 @@ function App() {
         try {
           const currentUser = await getCurrentUser();
           setUser(currentUser);
-          setScreen("dashboard");
+          setScreen(
+            currentUser.mustChangePassword ? "change-password" : "dashboard",
+          );
           return;
         } catch {
           // No in-memory session — that's normal after restart
@@ -97,7 +101,9 @@ function App() {
         try {
           const savedUser = await loadSavedSession();
           setUser(savedUser);
-          setScreen("dashboard");
+          setScreen(
+            savedUser.mustChangePassword ? "change-password" : "dashboard",
+          );
           return;
         } catch {
           // No saved session — show login
@@ -118,7 +124,9 @@ function App() {
   async function handleLogin(loggedInUser: PublicUser) {
     reportOnboardingEvent({ type: "logged-in" });
     setUser(loggedInUser);
-    setScreen("dashboard");
+    setScreen(
+      loggedInUser.mustChangePassword ? "change-password" : "dashboard",
+    );
     // Save session to SQLite so it survives restart
     try {
       await saveSession();
@@ -148,6 +156,11 @@ function App() {
     }
     setUser(null);
     setScreen("login");
+  }
+
+  function handleChangePasswordComplete(updatedUser: PublicUser) {
+    setUser(updatedUser);
+    setScreen("dashboard");
   }
 
   // ---- RENDER THE CORRECT SCREEN ----
@@ -192,6 +205,12 @@ function App() {
       <OnboardingProvider screen={screen} user={null}>
         <LoginPage onLogin={handleLogin} />
       </OnboardingProvider>
+    );
+  }
+
+  if (screen === "change-password" && user) {
+    return (
+      <ChangePasswordPage user={user} onComplete={handleChangePasswordComplete} />
     );
   }
 

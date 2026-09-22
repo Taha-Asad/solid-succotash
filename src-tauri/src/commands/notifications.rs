@@ -11,6 +11,7 @@
 use std::sync::OnceLock;
 
 use crate::commands::auth::{require_current_user, SessionState};
+use crate::error::AppError;
 use serde::Serialize;
 use sqlx::SqlitePool;
 use tauri::{AppHandle, Emitter, State};
@@ -66,7 +67,7 @@ pub struct Notification {
 pub async fn get_notifications(
     pool: State<'_, SqlitePool>,
     session: State<'_, SessionState>,
-) -> Result<Vec<Notification>, String> {
+) -> Result<Vec<Notification>, AppError> {
     let user = require_current_user(pool.inner(), session.inner()).await?;
     let company_id = user.company_id.as_ref().ok_or("Not assigned")?;
 

@@ -6,6 +6,27 @@
 export type UserRole = "owner" | "admin" | "employee" | "super_admin";
 
 // ==========================================
+// CURRENCY TYPES (migration 018)
+// ==========================================
+
+export type CurrencyConfig = {
+  code: string;
+  symbol: string;
+  name: string;
+  decimalPlaces: number;
+  thousandsSep: string;
+  decimalSep: string;
+};
+
+export type ExchangeRate = {
+  baseCurrency: string;
+  targetCurrency: string;
+  rate: number;
+  source: string;
+  fetchedAt: string;
+};
+
+// ==========================================
 // RETURN TYPES (what Rust sends back to us)
 // ==========================================
 
@@ -37,6 +58,11 @@ export type PublicCompany = {
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
+  ntn: string | null;
+  strn: string | null;
+  fbrRegistered: boolean;
+  fbrRegistrationDate: string | null;
+  province: string | null;
 };
 
 // What register_company returns (company + owner user)
@@ -416,6 +442,10 @@ export type PublicInvoice = {
   finalizedAt: string | null;
   createdAt: string;
   updatedAt: string;
+  currencyCode: string;
+  exchangeRate: number;
+  irn: string | null;
+  fbrStatus: string;
 };
 
 export type PublicInvoiceItem = {
@@ -434,6 +464,8 @@ export type PublicInvoiceItem = {
   discountType: string;
   lineTotal: number;
   createdAt: string;
+  originalUnitPrice: number;
+  originalLineTotal: number;
 };
 
 export type PublicPayment = {
@@ -447,6 +479,9 @@ export type PublicPayment = {
   notes: string | null;
   receivedBy: string;
   createdAt: string;
+  currencyCode: string;
+  exchangeRate: number;
+  baseCurrencyAmount: number;
 };
 
 export type InvoiceWithDetails = {
@@ -876,4 +911,77 @@ export type UpdateTenantCompanyInput = {
   ntn?: string | null;
   strn?: string | null;
   province?: string | null;
+};
+
+// ==========================================
+// FBR / PRAL TYPES
+// ==========================================
+
+export type FbrConfig = {
+  id: string;
+  companyId: string;
+  pralToken: string | null;
+  tokenExpiresAt: string | null;
+  environment: string;
+  sandboxUrl: string;
+  productionUrl: string;
+  isActive: boolean;
+  lastTestedAt: string | null;
+  lastTestResult: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type FbrQueueItem = {
+  id: string;
+  companyId: string;
+  invoiceId: string;
+  invoiceType: string;
+  payload: string;
+  attemptCount: number;
+  maxAttempts: number;
+  status: string;
+  scheduledAt: string;
+  lastAttemptedAt: string | null;
+  lastError: string | null;
+  irn: string | null;
+  qrData: string | null;
+  createdAt: string;
+};
+
+export type PublicFbrQueueItem = {
+  id: string;
+  invoiceId: string;
+  invoiceType: string;
+  status: string;
+  attemptCount: number;
+  maxAttempts: number;
+  scheduledAt: string;
+  lastAttemptedAt: string | null;
+  lastError: string | null;
+  irn: string | null;
+  createdAt: string;
+};
+
+export type FbrQueueStatus = {
+  total: number;
+  queued: number;
+  submitting: number;
+  validated: number;
+  failed: number;
+  dead: number;
+  items: PublicFbrQueueItem[];
+};
+
+export type InvoiceFbrStatus = {
+  fbrStatus: string;
+  irn: string | null;
+  fbrInvoiceNumber: string | null;
+  queueItem: PublicFbrQueueItem | null;
+};
+
+export type FbrConnectionTestResult = {
+  success: boolean;
+  message: string;
+  timestamp: string;
 };

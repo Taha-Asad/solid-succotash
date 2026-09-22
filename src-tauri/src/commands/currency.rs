@@ -6,6 +6,7 @@
 // fetching/caching, and formatting utilities.
 
 use crate::commands::auth::{require_current_user, SessionState};
+use crate::error::AppError;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use tauri::State;
@@ -43,14 +44,14 @@ pub struct ExchangeRate {
 pub async fn get_currency_config(
     pool: &SqlitePool,
     code: &str,
-) -> Result<CurrencyConfig, String> {
+) -> Result<CurrencyConfig, AppError> {
     let config = sqlx::query_as::<_, CurrencyConfig>(
         "SELECT code, symbol, name, decimal_places, thousands_sep, decimal_sep FROM currency_config WHERE code = ?",
     )
     .bind(code)
     .fetch_optional(pool)
     .await
-    .map_err(|e| format!("Currency lookup error: {e}"))?
+    .map_err(|e| AppError::internal(format!("Currency lookup error: {e}")))?
     .unwrap_or_else(|| CurrencyConfig {
         code: code.to_string(),
         symbol: code.to_string(),
@@ -117,7 +118,7 @@ pub fn format_currency_with_symbol(paisa: i64, config: &CurrencyConfig) -> Strin
 
 /// Converts a display string (e.g., "1,234.56") back to paisa/smallest unit.
 #[allow(dead_code)]
-pub fn parse_display_to_paisa(display: &str, config: &CurrencyConfig) -> Result<i64, String> {
+pub fn parse_display_to_paisa(display: &str, config: &CurrencyConfig) -> Result<i64, AppError> {
     // Remove currency symbols and whitespace
     let cleaned: String = display
         .chars()
@@ -132,7 +133,7 @@ pub fn parse_display_to_paisa(display: &str, config: &CurrencyConfig) -> Result<
 
     let value: f64 = normalized
         .parse()
-        .map_err(|_| format!("Invalid amount: {}", display))?;
+        .map_err(|_| AppError::internal(format!("Invalid amount: {}", display)))?;
 
     let multiplier = 10.0_f64.powi(config.decimal_places);
     Ok((value * multiplier).round() as i64)
@@ -174,7 +175,7 @@ pub fn convert_amount(amount: i64, rate: f64, decimal_places: i32) -> i64 {
 pub async fn get_all_currencies(
     pool: State<'_, SqlitePool>,
     session: State<'_, SessionState>,
-) -> Result<Vec<CurrencyConfig>, String> {
+) -> Result<Vec<CurrencyConfig>, AppError> {
     let _user = require_current_user(pool.inner(), session.inner()).await?;
 
     let currencies = sqlx::query_as::<_, CurrencyConfig>(
@@ -182,7 +183,7 @@ pub async fn get_all_currencies(
     )
     .fetch_all(pool.inner())
     .await
-    .map_err(|e| format!("Currency list error: {e}"))?;
+    .map_err(|e| AppError::internal(format!("Currency list error: {e}")))?;
 
     Ok(currencies)
 }
@@ -192,7 +193,7 @@ pub async fn get_all_currencies(
 pub async fn get_company_currency(
     pool: State<'_, SqlitePool>,
     session: State<'_, SessionState>,
-) -> Result<CurrencyConfig, String> {
+) -> Result<CurrencyConfig, AppError> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
     let company_id = current_user
         .company_id
@@ -203,7 +204,7 @@ pub async fn get_company_currency(
         .bind(company_id)
         .fetch_one(pool.inner())
         .await
-        .map_err(|e| format!("Company lookup error: {e}"))?;
+        .map_err(|e| AppError::internal(format!("Company lookup error: {e}")))?;
 
     get_currency_config(pool.inner(), &code).await
 }
@@ -216,7 +217,7 @@ pub async fn fetch_exchange_rates(
     session: State<'_, SessionState>,
     base_currency: String,
     target_currencies: Vec<String>,
-) -> Result<Vec<ExchangeRate>, String> {
+) -> Result<Vec<ExchangeRate>, AppError> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
     let _company_id = current_user
         .company_id
@@ -281,9 +282,9 @@ pub async fn get_exchange_rate(
     _session: State<'_, SessionState>,
     base_currency: String,
     target_currency: String,
-) -> Result<ExchangeRate, String> {
+) -> Result<ExchangeRate, AppError> {
     let rates = get_cached_rates(pool.inner(), &base_currency, &[target_currency]).await?;
-    rates.into_iter().next().ok_or_else(|| "No exchange rate found. Please fetch rates first.".to_string())
+    rates.into_iter().next().ok_or_else(|| AppError::internal("No exchange rate found. Please fetch rates first.".to_string()))
 }
 
 /// Gets exchange rate history for display (last N days).
@@ -294,7 +295,7 @@ pub async fn get_exchange_rate_history(
     base_currency: String,
     target_currency: String,
     days: Option<i64>,
-) -> Result<Vec<ExchangeRate>, String> {
+) -> Result<Vec<ExchangeRate>, AppError> {
     let limit = days.unwrap_or(30).clamp(1, 365);
 
     let rates = sqlx::query_as::<_, ExchangeRate>(
@@ -311,7 +312,7 @@ pub async fn get_exchange_rate_history(
     .bind(limit)
     .fetch_all(pool.inner())
     .await
-    .map_err(|e| format!("Rate history error: {e}"))?;
+    .map_err(|e| AppError::internal(format!("Rate history error: {e}")))?;
 
     Ok(rates)
 }
@@ -321,21 +322,21 @@ pub async fn get_exchange_rate_history(
 // ==========================================
 
 /// Fetches rates from the exchangerate-api.com API.
-async fn fetch_rates_from_api(url: &str) -> Result<std::collections::HashMap<String, f64>, String> {
+async fn fetch_rates_from_api(url: &str) -> Result<std::collections::HashMap<String, f64>, AppError> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .build()
-        .map_err(|e| format!("HTTP client error: {e}"))?;
+        .map_err(|e| AppError::internal(format!("HTTP client error: {e}")))?;
 
     let resp = client
         .get(url)
         .header("User-Agent", "IjazAndCompany-ERP/1.0")
         .send()
         .await
-        .map_err(|e| format!("API request failed: {e}"))?;
+        .map_err(|e| AppError::internal(format!("API request failed: {e}")))?;
 
     if !resp.status().is_success() {
-        return Err(format!("API returned status {}", resp.status()));
+        return Err(AppError::internal(format!("API returned status {}", resp.status())));
     }
 
     #[derive(Deserialize)]
@@ -346,7 +347,7 @@ async fn fetch_rates_from_api(url: &str) -> Result<std::collections::HashMap<Str
     let body: ApiResponse = resp
         .json()
         .await
-        .map_err(|e| format!("API response parse error: {e}"))?;
+        .map_err(|e| AppError::internal(format!("API response parse error: {e}")))?;
 
     Ok(body.rates)
 }
@@ -356,7 +357,7 @@ async fn get_cached_rates(
     pool: &SqlitePool,
     base_currency: &str,
     target_currencies: &[String],
-) -> Result<Vec<ExchangeRate>, String> {
+) -> Result<Vec<ExchangeRate>, AppError> {
     let mut rates = Vec::new();
     for target in target_currencies {
         let rate = sqlx::query_as::<_, ExchangeRate>(
@@ -372,7 +373,7 @@ async fn get_cached_rates(
         .bind(target)
         .fetch_optional(pool)
         .await
-        .map_err(|e| format!("Rate lookup error: {e}"))?;
+        .map_err(|e| AppError::internal(format!("Rate lookup error: {e}")))?;
 
         if let Some(r) = rate {
             rates.push(r);

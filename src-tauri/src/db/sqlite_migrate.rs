@@ -1,5 +1,6 @@
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool};
 use sqlx::Row;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::str::FromStr;
 
@@ -125,7 +126,12 @@ fn get_embedded_migrations() -> Vec<(i64, &'static str, &'static str)> {
 pub async fn run_sqlite_migrations(sqlite_url: &str) -> Result<(), Box<dyn std::error::Error>> {
     println!("SQLite URL: {sqlite_url}");
 
-    let options = SqliteConnectOptions::from_str(sqlite_url)?.create_if_missing(true);
+    let options = SqliteConnectOptions::from_str(sqlite_url)?
+        .create_if_missing(true)
+        .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
+        .synchronous(sqlx::sqlite::SqliteSynchronous::Normal)
+        .busy_timeout(std::time::Duration::from_secs(5))
+        .foreign_keys(true);
 
     let pool = SqlitePool::connect_with(options).await?;
 
@@ -141,31 +147,35 @@ pub async fn run_sqlite_migrations(sqlite_url: &str) -> Result<(), Box<dyn std::
     .execute(&pool)
     .await?;
 
-    let applied: Vec<i64> = sqlx::query_scalar("SELECT version FROM _migrations ORDER BY version")
-        .fetch_all(&pool)
-        .await?;
+    let applied_versions: Vec<i64> =
+        sqlx::query_scalar("SELECT version FROM _migrations ORDER BY version")
+            .fetch_all(&pool)
+            .await?;
+    let applied_set: HashSet<i64> = applied_versions.into_iter().collect();
 
-    // Every migration file is idempotent (all statements use
-    // CREATE ... IF NOT EXISTS), so it is safe to re-run them on every
-    // startup. This self-heals databases where the _migrations table
-    // recorded a version without the schema actually being created.
+    let mut new_migrations_applied: usize = 0;
+
     for (version, name, sql) in get_embedded_migrations() {
+        if applied_set.contains(&version) {
+            continue;
+        }
+
         println!("==============================");
-        println!("Applying migration {version}");
-        println!("{name}");
+        println!("Applying migration {version}: {name}");
         println!("==============================");
 
         // Execute ENTIRE migration file.
         // Do NOT split on ';'
         sqlx::raw_sql(sql).execute(&pool).await?;
 
-        sqlx::query("INSERT OR REPLACE INTO _migrations(version,name) VALUES(?,?)")
+        sqlx::query("INSERT INTO _migrations (version, name) VALUES (?, ?)")
             .bind(version)
             .bind(name)
             .execute(&pool)
             .await?;
 
         println!("Migration {version} applied successfully.");
+        new_migrations_applied += 1;
 
         // Migrations 010/011 (FTS5 search, theme) reference the soft-delete
         // columns declared by migration 009, so the ALTER-based helpers must
@@ -182,15 +192,19 @@ pub async fn run_sqlite_migrations(sqlite_url: &str) -> Result<(), Box<dyn std::
         }
     }
 
-    ensure_batch_number_column(&pool).await?;
-    ensure_invoice_design_columns(&pool).await?;
-    ensure_import_job_columns(&pool).await?;
-    ensure_import_template_columns(&pool).await?;
-    ensure_saas_columns(&pool).await?;
-    ensure_multi_currency_columns(&pool).await?;
-    ensure_fbr_columns(&pool).await?;
-
-    let _ = applied;
+    if new_migrations_applied > 0 {
+        println!("Applied {new_migrations_applied} new migration(s). Running post-migration schema integrity checks...");
+        ensure_batch_number_column(&pool).await?;
+        ensure_invoice_design_columns(&pool).await?;
+        ensure_import_job_columns(&pool).await?;
+        ensure_import_template_columns(&pool).await?;
+        ensure_saas_columns(&pool).await?;
+        ensure_multi_currency_columns(&pool).await?;
+        ensure_fbr_columns(&pool).await?;
+        ensure_company_modules_seeded(&pool).await?;
+    } else {
+        println!("Database schema is up to date (no pending migrations).");
+    }
 
     pool.close().await;
 
@@ -679,6 +693,52 @@ async fn ensure_fbr_columns(pool: &SqlitePool) -> Result<(), Box<dyn std::error:
     Ok(())
 }
 
+/// Seeds `company_modules` for any existing company that has no rows yet.
+/// This covers desktop installs created before the module system was wired.
+async fn ensure_company_modules_seeded(pool: &SqlitePool) -> Result<(), Box<dyn std::error::Error>> {
+    let companies: Vec<String> = sqlx::query_scalar("SELECT id FROM companies")
+        .fetch_all(pool)
+        .await?;
+
+    for company_id in companies {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM company_modules WHERE company_id = ?",
+        )
+        .bind(&company_id)
+        .fetch_one(pool)
+        .await?;
+
+        if count == 0 {
+            println!("Seeding company_modules for company {company_id}");
+            let core_modules = [
+                "inventory",
+                "invoices",
+                "purchase_orders",
+                "reports",
+                "ledger",
+                "users",
+                "settings",
+                "import",
+            ];
+            for module_key in &core_modules {
+                sqlx::query(
+                    r#"
+                    INSERT INTO company_modules (id, company_id, module_key, is_enabled, settings)
+                    VALUES (?, ?, ?, 1, '{}')
+                    "#,
+                )
+                .bind(uuid::Uuid::new_v4().to_string())
+                .bind(&company_id)
+                .bind(module_key)
+                .execute(pool)
+                .await?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -783,5 +843,40 @@ mod tests {
         .execute(&pool)
         .await
         .expect("super_admin role should be accepted by the trigger");
+    }
+
+    #[tokio::test]
+    async fn test_migrations_are_idempotent_and_skip_when_already_applied() {
+        // Step 1: Initialize a brand new temporary database.
+        let path = std::env::temp_dir().join(format!("ijaz-idempotency-test-{}.db", uuid::Uuid::new_v4()));
+        let url = format!("sqlite:{}", path.display());
+
+        // First run: all migrations should be applied cleanly.
+        let first_run = run_sqlite_migrations(&url).await;
+        assert!(first_run.is_ok(), "First migration run failed: {:?}", first_run.err());
+
+        // Second run: should safely skip all migrations without error or duplicating data.
+        let second_run = run_sqlite_migrations(&url).await;
+        assert!(second_run.is_ok(), "Second migration run failed to skip: {:?}", second_run.err());
+
+        // Verify that the migration count matches the total embedded migrations.
+        let pool = SqlitePoolOptions::new()
+            .connect(&url)
+            .await
+            .expect("Failed to connect to test pool");
+
+        let total_applied: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _migrations")
+            .fetch_one(&pool)
+            .await
+            .expect("Failed to count applied migrations");
+
+        assert_eq!(
+            total_applied as usize,
+            get_embedded_migrations().len(),
+            "Total recorded migrations should exactly match embedded migrations count"
+        );
+
+        pool.close().await;
+        let _ = std::fs::remove_file(path);
     }
 }

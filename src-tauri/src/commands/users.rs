@@ -3,6 +3,7 @@ use tauri::State;
 use uuid::Uuid;
 
 use crate::commands::audit::log_audit;
+use crate::error::AppError;
 use crate::commands::auth::{
     hash_password, map_user_write_error, normalize_email, require_current_user, validate_password,
     validate_person_name, PublicUser, SessionState,
@@ -10,17 +11,17 @@ use crate::commands::auth::{
 use crate::commands::permissions::check_permission;
 use crate::commands::roles::{is_builtin_role, resolve_role};
 
-fn get_company_id(user: &PublicUser) -> Result<String, String> {
+fn get_company_id(user: &PublicUser) -> Result<String, AppError> {
     user.company_id
         .clone()
-        .ok_or_else(|| "User is not assigned to a company".to_string())
+        .ok_or_else(|| AppError::internal("User is not assigned to a company".to_string()))
 }
 
 async fn fetch_company_user(
     pool: &SqlitePool,
     company_id: &str,
     user_id: &str,
-) -> Result<PublicUser, String> {
+) -> Result<PublicUser, AppError> {
     sqlx::query_as::<_, PublicUser>(
         r#"
         SELECT
@@ -41,7 +42,7 @@ async fn fetch_company_user(
     .fetch_optional(pool)
     .await
     .map_err(|error| format!("Database error: {error}"))?
-    .ok_or_else(|| "Company user was not found".to_string())
+    .ok_or_else(|| AppError::internal("Company user was not found".to_string()))
 }
 
 // ==========================================
@@ -52,7 +53,7 @@ async fn fetch_company_user(
 pub async fn list_company_users(
     pool: State<'_, SqlitePool>,
     session: State<'_, SessionState>,
-) -> Result<Vec<PublicUser>, String> {
+) -> Result<Vec<PublicUser>, AppError> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
 
     check_permission(pool.inner(), &current_user.role, "users", "view").await?;
@@ -84,7 +85,7 @@ pub async fn list_company_users(
     .bind(&company_id)
     .fetch_all(pool.inner())
     .await
-    .map_err(|error| format!("Database error: {error}"))
+    .map_err(|error| AppError::database(format!("Database error: {error}")))
 }
 
 // ==========================================
@@ -99,7 +100,7 @@ pub async fn create_company_user(
     password: String,
     full_name: String,
     role: String,
-) -> Result<PublicUser, String> {
+) -> Result<PublicUser, AppError> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
 
     check_permission(pool.inner(), &current_user.role, "users", "create").await?;
@@ -110,10 +111,10 @@ pub async fn create_company_user(
     // Admins may create employees, but only the owner may create
     // admins or assign custom roles.
     if current_user.role == "admin" && role != "employee" && !is_builtin_role(&role) {
-        return Err("An admin may only create employee accounts".to_string());
+        return Err(AppError::internal("An admin may only create employee accounts".to_string()));
     }
     if current_user.role == "admin" && role == "admin" {
-        return Err("An admin may only create employee accounts".to_string());
+        return Err(AppError::internal("An admin may only create employee accounts".to_string()));
     }
 
     let email = normalize_email(&email)?;
@@ -173,12 +174,12 @@ pub async fn update_company_user_role(
     session: State<'_, SessionState>,
     user_id: String,
     role: String,
-) -> Result<PublicUser, String> {
+) -> Result<PublicUser, AppError> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
 
     // Only the owner can promote/demote admins.
     if current_user.role != "owner" {
-        return Err("Only the company owner can change user roles".to_string());
+        return Err(AppError::internal("Only the company owner can change user roles".to_string()));
     }
 
     let company_id = get_company_id(&current_user)?;
@@ -187,11 +188,11 @@ pub async fn update_company_user_role(
     let target_user = fetch_company_user(pool.inner(), &company_id, &user_id).await?;
 
     if target_user.role == "owner" {
-        return Err("The company owner role cannot be changed by this command".to_string());
+        return Err(AppError::internal("The company owner role cannot be changed by this command".to_string()));
     }
 
     if role == "owner" {
-        return Err("You cannot assign the owner role to another user".to_string());
+        return Err(AppError::internal("You cannot assign the owner role to another user".to_string()));
     }
 
     sqlx::query(
@@ -240,7 +241,7 @@ pub async fn set_company_user_active(
     session: State<'_, SessionState>,
     user_id: String,
     active: bool,
-) -> Result<PublicUser, String> {
+) -> Result<PublicUser, AppError> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
 
     check_permission(pool.inner(), &current_user.role, "users", "edit").await?;
@@ -250,16 +251,16 @@ pub async fn set_company_user_active(
     let target_user = fetch_company_user(pool.inner(), &company_id, &user_id).await?;
 
     if target_user.id == current_user.id {
-        return Err("You cannot deactivate your own currently logged-in account".to_string());
+        return Err(AppError::internal("You cannot deactivate your own currently logged-in account".to_string()));
     }
 
     if target_user.role == "owner" {
-        return Err("The company owner cannot be deactivated".to_string());
+        return Err(AppError::internal("The company owner cannot be deactivated".to_string()));
     }
 
     // Admins may manage employees, but not other admins.
     if current_user.role == "admin" && target_user.role != "employee" {
-        return Err("An admin may only activate or deactivate employees".to_string());
+        return Err(AppError::internal("An admin may only activate or deactivate employees".to_string()));
     }
 
     let active_value = if active { 1_i64 } else { 0_i64 };

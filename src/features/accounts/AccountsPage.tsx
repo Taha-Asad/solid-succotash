@@ -42,6 +42,7 @@ import {
 import type {
   AccountBalance,
   AccountStatementRow,
+  CurrencyConfig,
   JournalEntryWithLines,
   LedgerAccount,
   ManualLineInput,
@@ -49,17 +50,15 @@ import type {
 
 import { INK } from "../../theme";
 import { AppDateInput } from "../../components/AppDateInput";
+import { formatPaisaWithSymbol } from "../../utils/currency";
 
 const fadeUp = {
   initial: { opacity: 0, y: 14 },
   animate: { opacity: 1, y: 0 },
 };
 
-function p(paisa: number): string {
-  return `Rs ${(paisa / 100).toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
+function p(paisa: number, config?: CurrencyConfig | null): string {
+  return formatPaisaWithSymbol(paisa, config);
 }
 
 const TYPE_LABEL: Record<string, string> = {

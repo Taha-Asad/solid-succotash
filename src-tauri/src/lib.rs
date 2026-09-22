@@ -1,8 +1,10 @@
 mod commands;
 mod db;
+pub mod error;
 mod pdf;
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePool};
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions, SqliteSynchronous};
 use std::str::FromStr;
+use std::time::Duration;
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! Your Rust backend is working.", name)
@@ -71,6 +73,19 @@ pub async fn run() {
     // Avoid the WebKitGTK compositing crash before the webview starts
     harden_webkit();
 
+    // ── Structured logging (§18.10) ──────────────────────────────
+    // RUST_LOG controls verbosity: e.g. "info,ijazandcompany=debug"
+    use tracing_subscriber::EnvFilter;
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+        )
+        .with_target(true)
+        .with_file(true)
+        .with_line_number(true)
+        .init();
+    tracing::info!("Application starting");
+
     println!("=== Ijaz & Company ERP Starting ===");
 
     // Get the correct database path
@@ -90,36 +105,45 @@ pub async fn run() {
         }
     }
 
-    // Create the connection pool
-    let sqlite_pool = match SqliteConnectOptions::from_str(&sqlite_url) {
-        Ok(options) => match SqlitePool::connect_with(options.create_if_missing(true)).await {
-            Ok(pool) => {
-                println!("Database connected");
-                pool
-            }
-            Err(e) => {
-                let error_msg = format!("DATABASE CONNECTION FAILED:\n\n{e}");
-                eprintln!("{error_msg}");
-                write_error_log(&error_msg);
-                std::thread::sleep(std::time::Duration::from_secs(10));
-                panic!("{error_msg}");
-            }
-        },
+    // Create the connection pool with WAL mode & busy timeout
+    let connect_options = match SqliteConnectOptions::from_str(&sqlite_url) {
+        Ok(options) => options
+            .create_if_missing(true)
+            .journal_mode(SqliteJournalMode::Wal)
+            .synchronous(SqliteSynchronous::Normal)
+            .busy_timeout(Duration::from_secs(5))
+            .foreign_keys(true),
         Err(e) => {
             panic!("Invalid SQLite URL: {e}");
         }
     };
 
-    println!("Starting Tauri application...");
-
-    // One-time Super Admin seeding (creates credentials + handover doc on
-    // first launch; idempotent afterwards).
-    if let Some(data_dir) = dirs::data_dir() {
-        let app_data = data_dir.join("ijazandcompany-erp");
-        if let Err(e) = commands::setup::ensure_super_admin(&sqlite_pool, &app_data).await {
-            eprintln!("Super admin seeding failed: {e}");
+    let sqlite_pool = match SqlitePoolOptions::new()
+        .max_connections(5)
+        .min_connections(1)
+        .acquire_timeout(Duration::from_secs(10))
+        .connect_with(connect_options)
+        .await
+    {
+        Ok(pool) => {
+            println!("Database connected (WAL mode, busy_timeout=5s, foreign_keys=ON, pool=5)");
+            pool
         }
+        Err(e) => {
+            let error_msg = format!("DATABASE CONNECTION FAILED:\n\n{e}");
+            eprintln!("{error_msg}");
+            write_error_log(&error_msg);
+            std::thread::sleep(Duration::from_secs(10));
+            panic!("{error_msg}");
+        }
+    };
+
+    // Run automatic daily backup snapshot (keeps last 7 days)
+    if let Err(e) = commands::backup::run_automatic_daily_backup(&sqlite_pool).await {
+        eprintln!("Automatic daily backup notice: {e}");
     }
+
+    println!("Starting Tauri application...");
 
     tauri::Builder::default()
         .manage(sqlite_pool)
@@ -129,6 +153,8 @@ pub async fn run() {
             // Capture the app handle (for import push-progress events) and
             // resolve the bundled Tesseract OCR engine, if present.
             commands::import_wizard::init_app_services(app.handle());
+            // FBR queue push events (desktop SSE analogue for §18.5)
+            commands::fbr::init_fbr(app.handle());
             // Notification push channel: capture the handle for instant emits
             // from stock/invoice/PO mutations and start a 30s background
             // ticker so time-based alerts (expiry/overdue) surface on their own.
@@ -248,6 +274,7 @@ pub async fn run() {
             commands::roles::update_role_permissions,
             commands::roles::delete_custom_role,
             commands::roles::get_my_permissions,
+            commands::roles::get_my_modules,
             // ---- Search ----
             commands::search::search_all,
             // ---- Theme ----

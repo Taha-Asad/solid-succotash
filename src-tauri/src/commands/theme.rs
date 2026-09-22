@@ -3,6 +3,7 @@
 // ==========================================
 
 use crate::commands::auth::{require_current_user, SessionState};
+use crate::error::AppError;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
@@ -41,7 +42,7 @@ pub struct UpdateThemeInput {
 pub async fn get_theme(
     pool: State<'_, SqlitePool>,
     session: State<'_, SessionState>,
-) -> Result<CompanyTheme, String> {
+) -> Result<CompanyTheme, AppError> {
     let user = require_current_user(pool.inner(), session.inner()).await?;
     let company_id = user.company_id.as_ref().ok_or("Not assigned")?;
 
@@ -51,7 +52,7 @@ pub async fn get_theme(
     .bind(company_id)
     .fetch_optional(pool.inner())
     .await
-    .map_err(|e| format!("Error: {e}"))?;
+    .map_err(|e| AppError::internal(format!("Error: {e}")))?;
 
     if let Some((p, s, a, cs, logo, tag, wm)) = existing {
         return Ok(CompanyTheme {
@@ -83,11 +84,11 @@ pub async fn update_theme(
     pool: State<'_, SqlitePool>,
     session: State<'_, SessionState>,
     input: UpdateThemeInput,
-) -> Result<CompanyTheme, String> {
+) -> Result<CompanyTheme, AppError> {
     let user = require_current_user(pool.inner(), session.inner()).await?;
 
     if user.role == "employee" {
-        return Err("Only owner/admin can change theme".to_string());
+        return Err(AppError::internal("Only owner/admin can change theme".to_string()));
     }
 
     let company_id = user.company_id.as_ref().ok_or("Not assigned")?;
@@ -124,7 +125,7 @@ pub async fn update_theme(
     .bind(&erp_watermark)
     .execute(pool.inner())
     .await
-    .map_err(|e| format!("Error: {e}"))?;
+    .map_err(|e| AppError::internal(format!("Error: {e}")))?;
 
     Ok(CompanyTheme {
         primary_color: input.primary_color,
@@ -139,8 +140,8 @@ pub async fn update_theme(
 
 /// Reads an image file and returns it as a base64 data URI (for logo upload).
 #[tauri::command]
-pub fn read_file_base64(path: String) -> Result<String, String> {
-    let bytes = std::fs::read(&path).map_err(|e| format!("Cannot read file: {e}"))?;
+pub fn read_file_base64(path: String) -> Result<String, AppError> {
+    let bytes = std::fs::read(&path).map_err(|e| AppError::internal(format!("Cannot read file: {e}")))?;
     let mime = match path.to_lowercase().rsplit('.').next() {
         Some("png") => "image/png",
         Some("jpg") | Some("jpeg") => "image/jpeg",

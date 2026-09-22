@@ -6,6 +6,7 @@
 // Replaces LIKE '%...%' with SQLite FTS5.
 
 use crate::commands::auth::{require_current_user, SessionState};
+use crate::error::AppError;
 use serde::Serialize;
 use sqlx::SqlitePool;
 use tauri::State;
@@ -26,7 +27,7 @@ pub async fn search_all(
     pool: State<'_, SqlitePool>,
     session: State<'_, SessionState>,
     query: String,
-) -> Result<Vec<SearchResult>, String> {
+) -> Result<Vec<SearchResult>, AppError> {
     let user = require_current_user(pool.inner(), session.inner()).await?;
     let company_id = user.company_id.as_ref().ok_or("Not assigned")?;
 

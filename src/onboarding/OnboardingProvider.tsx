@@ -117,7 +117,7 @@ export function OnboardingProvider({
   children,
 }: {
   /** Which screen the app is currently showing. */
-  screen: "loading" | "setup" | "login" | "dashboard" | "fatal-error";
+  screen: "loading" | "setup" | "login" | "change-password" | "dashboard" | "fatal-error";
   user: { id: string; role: UserRole; isSuperAdmin: boolean } | null;
   children: ReactNode;
 }) {

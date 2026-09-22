@@ -324,7 +324,8 @@ export default function AppShell({
   const navItems = NAV_ITEMS.filter(
     (item) =>
       item.roles.includes(user.role) &&
-      (!item.module || perms.can(item.module, "view")),
+      (!item.module || perms.can(item.module, "view")) &&
+      (!item.module || perms.isModuleEnabled(item.module)),
   );
 
   async function handleBackup() {

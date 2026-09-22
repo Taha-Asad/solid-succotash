@@ -11,8 +11,9 @@
 //   3. Returns structured data for the frontend to display
 
 use crate::commands::auth::{require_current_user, SessionState};
+use crate::error::AppError;
 use serde::Serialize;
-use sqlx::SqlitePool;
+use sqlx::{FromRow, SqlitePool};
 use tauri::State;
 
 // ==========================================
@@ -103,7 +104,7 @@ pub struct ProfitLossSummary {
     pub total_discounts_given: i64,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, FromRow)]
 #[serde(rename_all = "camelCase")]
 pub struct CustomerLedgerEntry {
     pub customer_id: String,
@@ -116,7 +117,7 @@ pub struct CustomerLedgerEntry {
     pub last_payment_date: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, FromRow)]
 #[serde(rename_all = "camelCase")]
 pub struct ProductMovement {
     pub product_id: String,
@@ -139,7 +140,7 @@ pub struct ProductMovement {
 pub async fn report_sales_summary(
     pool: State<'_, SqlitePool>,
     session: State<'_, SessionState>,
-) -> Result<SalesSummary, String> {
+) -> Result<SalesSummary, AppError> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
 
     let company_id = current_user
@@ -167,7 +168,7 @@ pub async fn report_sales_summary(
     .bind(company_id)
     .fetch_one(pool.inner())
     .await
-    .map_err(|e| format!("Report error: {e}"))?;
+    .map_err(|e| AppError::internal(format!("Report error: {e}")))?;
 
     Ok(SalesSummary {
         total_invoices: row.0,
@@ -188,7 +189,7 @@ pub async fn report_sales_summary(
 pub async fn report_sales_by_month(
     pool: State<'_, SqlitePool>,
     session: State<'_, SessionState>,
-) -> Result<Vec<SalesByPeriod>, String> {
+) -> Result<Vec<SalesByPeriod>, AppError> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
 
     let company_id = current_user
@@ -214,7 +215,7 @@ pub async fn report_sales_by_month(
     .bind(company_id)
     .fetch_all(pool.inner())
     .await
-    .map_err(|e| format!("Report error: {e}"))?;
+    .map_err(|e| AppError::internal(format!("Report error: {e}")))?;
 
     Ok(rows
         .into_iter()
@@ -233,7 +234,7 @@ pub async fn report_sales_by_month(
 pub async fn report_top_products(
     pool: State<'_, SqlitePool>,
     session: State<'_, SessionState>,
-) -> Result<Vec<TopProduct>, String> {
+) -> Result<Vec<TopProduct>, AppError> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
 
     let company_id = current_user
@@ -260,7 +261,7 @@ pub async fn report_top_products(
     .bind(company_id)
     .fetch_all(pool.inner())
     .await
-    .map_err(|e| format!("Report error: {e}"))?;
+    .map_err(|e| AppError::internal(format!("Report error: {e}")))?;
 
     Ok(rows
         .into_iter()
@@ -279,7 +280,7 @@ pub async fn report_top_products(
 pub async fn report_top_customers(
     pool: State<'_, SqlitePool>,
     session: State<'_, SessionState>,
-) -> Result<Vec<TopCustomer>, String> {
+) -> Result<Vec<TopCustomer>, AppError> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
 
     let company_id = current_user
@@ -307,7 +308,7 @@ pub async fn report_top_customers(
     .bind(company_id)
     .fetch_all(pool.inner())
     .await
-    .map_err(|e| format!("Report error: {e}"))?;
+    .map_err(|e| AppError::internal(format!("Report error: {e}")))?;
 
     Ok(rows
         .into_iter()
@@ -328,7 +329,7 @@ pub async fn report_stock(
     pool: State<'_, SqlitePool>,
     session: State<'_, SessionState>,
     low_stock_threshold: i64,
-) -> Result<StockSummary, String> {
+) -> Result<StockSummary, AppError> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
 
     let company_id = current_user
@@ -359,7 +360,7 @@ pub async fn report_stock(
     .bind(company_id)
     .fetch_all(pool.inner())
     .await
-    .map_err(|e| format!("Report error: {e}"))?;
+    .map_err(|e| AppError::internal(format!("Report error: {e}")))?;
 
     let mut items: Vec<StockReportItem> = Vec::new();
     let mut total_units: i64 = 0;
@@ -414,7 +415,7 @@ pub async fn report_stock(
 pub async fn report_profit_loss(
     pool: State<'_, SqlitePool>,
     session: State<'_, SessionState>,
-) -> Result<ProfitLossSummary, String> {
+) -> Result<ProfitLossSummary, AppError> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
 
     let company_id = current_user
@@ -439,7 +440,7 @@ pub async fn report_profit_loss(
     .bind(company_id)
     .fetch_one(pool.inner())
     .await
-    .map_err(|e| format!("Report error: {e}"))?;
+    .map_err(|e| AppError::internal(format!("Report error: {e}")))?;
 
     let total_revenue = revenue_row.0;
     let total_cost = revenue_row.1;
@@ -465,7 +466,7 @@ pub async fn report_profit_loss(
 pub async fn report_customer_ledger(
     pool: State<'_, SqlitePool>,
     session: State<'_, SessionState>,
-) -> Result<Vec<CustomerLedgerEntry>, String> {
+) -> Result<Vec<CustomerLedgerEntry>, AppError> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
 
     let company_id = current_user
@@ -473,75 +474,34 @@ pub async fn report_customer_ledger(
         .as_ref()
         .ok_or("Not assigned to a company")?;
 
-    let rows = sqlx::query_as::<
-        _,
-        (
-            String,
-            String,
-            i64,
-            i64,
-            i64,
-            Option<String>,
-            Option<String>,
-        ),
-    >(
+    let entries = sqlx::query_as::<_, CustomerLedgerEntry>(
         r#"
         SELECT
-            c.id,
-            c.name,
-            COALESCE(SUM(i.grand_total), 0),
-            COALESCE(SUM(i.amount_paid), 0),
-            COALESCE(SUM(i.balance_due), 0),
-            MAX(i.invoice_date),
-            NULL
+            c.id AS customer_id,
+            c.name AS customer_name,
+            COALESCE(SUM(i.grand_total), 0) AS total_invoiced,
+            COALESCE(SUM(i.amount_paid), 0) AS total_paid,
+            COALESCE(SUM(i.balance_due), 0) AS balance_due,
+            COUNT(i.id) AS invoice_count,
+            MAX(i.invoice_date) AS last_invoice_date,
+            (
+                SELECT MAX(pr.payment_date)
+                FROM payment_records pr
+                JOIN invoices inv ON inv.id = pr.invoice_id
+                WHERE inv.customer_id = c.id
+            ) AS last_payment_date
         FROM customers c
         LEFT JOIN invoices i ON i.customer_id = c.id AND i.status != 'cancelled'
         WHERE c.company_id = ?
-        GROUP BY c.id
+        GROUP BY c.id, c.name
         HAVING SUM(i.grand_total) > 0
-        ORDER BY SUM(i.balance_due) DESC
+        ORDER BY balance_due DESC
         "#,
     )
     .bind(company_id)
     .fetch_all(pool.inner())
     .await
-    .map_err(|e| format!("Report error: {e}"))?;
-
-    // Get last payment date for each customer
-    let mut entries: Vec<CustomerLedgerEntry> = Vec::new();
-    for (id, name, invoiced, paid, balance, last_inv, _) in &rows {
-        let last_payment = sqlx::query_scalar::<_, String>(
-            r#"
-            SELECT MAX(pr.payment_date)
-            FROM payment_records pr
-            JOIN invoices i ON i.id = pr.invoice_id
-            WHERE i.customer_id = ?
-            "#,
-        )
-        .bind(id)
-        .fetch_optional(pool.inner())
-        .await
-        .unwrap_or(None);
-
-        let invoice_count = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM invoices WHERE customer_id = ? AND status != 'cancelled'",
-        )
-        .bind(id)
-        .fetch_one(pool.inner())
-        .await
-        .unwrap_or(0);
-
-        entries.push(CustomerLedgerEntry {
-            customer_id: id.clone(),
-            customer_name: name.clone(),
-            total_invoiced: *invoiced,
-            total_paid: *paid,
-            balance_due: *balance,
-            invoice_count,
-            last_invoice_date: last_inv.clone(),
-            last_payment_date: last_payment,
-        });
-    }
+    .map_err(|e| AppError::internal(format!("Report error: {e}")))?;
 
     Ok(entries)
 }
@@ -551,7 +511,7 @@ pub async fn report_customer_ledger(
 pub async fn report_product_movements(
     pool: State<'_, SqlitePool>,
     session: State<'_, SessionState>,
-) -> Result<Vec<ProductMovement>, String> {
+) -> Result<Vec<ProductMovement>, AppError> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
 
     let company_id = current_user
@@ -559,65 +519,29 @@ pub async fn report_product_movements(
         .as_ref()
         .ok_or("Not assigned to a company")?;
 
-    let rows = sqlx::query_as::<_, (String, String, String, i64)>(
+    let movements = sqlx::query_as::<_, ProductMovement>(
         r#"
-        SELECT id, name, sku, quantity_in_stock
-        FROM products
-        WHERE company_id = ? AND is_active = 1 AND deleted_at IS NULL
-        ORDER BY name
+        SELECT
+            p.id AS product_id,
+            p.name AS product_name,
+            p.sku AS product_sku,
+            COALESCE(SUM(CASE WHEN sm.movement_type = 'purchase' THEN ABS(sm.quantity) ELSE 0 END), 0) AS total_purchased,
+            COALESCE(SUM(CASE WHEN sm.movement_type = 'sale' THEN ABS(sm.quantity) ELSE 0 END), 0) AS total_sold,
+            COALESCE(SUM(CASE WHEN sm.movement_type = 'adjustment' THEN sm.quantity ELSE 0 END), 0) AS total_adjusted,
+            COALESCE(SUM(CASE WHEN sm.movement_type = 'return' THEN ABS(sm.quantity) ELSE 0 END), 0) AS total_returned,
+            COALESCE(SUM(CASE WHEN sm.movement_type = 'damage' THEN ABS(sm.quantity) ELSE 0 END), 0) AS total_damaged,
+            p.quantity_in_stock AS current_stock
+        FROM products p
+        LEFT JOIN stock_movements sm ON sm.product_id = p.id AND sm.company_id = p.company_id
+        WHERE p.company_id = ? AND p.is_active = 1 AND p.deleted_at IS NULL
+        GROUP BY p.id, p.name, p.sku, p.quantity_in_stock
+        ORDER BY p.name
         "#,
     )
     .bind(company_id)
     .fetch_all(pool.inner())
     .await
-    .map_err(|e| format!("Report error: {e}"))?;
-
-    let mut movements: Vec<ProductMovement> = Vec::new();
-
-    for (id, name, sku, current_stock) in &rows {
-        let stock_data = sqlx::query_as::<_, (String, i64)>(
-            r#"
-            SELECT movement_type, SUM(quantity)
-            FROM stock_movements
-            WHERE product_id = ? AND company_id = ?
-            GROUP BY movement_type
-            "#,
-        )
-        .bind(id)
-        .bind(company_id)
-        .fetch_all(pool.inner())
-        .await
-        .unwrap_or_default();
-
-        let mut purchased: i64 = 0;
-        let mut sold: i64 = 0;
-        let mut adjusted: i64 = 0;
-        let mut returned: i64 = 0;
-        let mut damaged: i64 = 0;
-
-        for (mtype, qty) in &stock_data {
-            match mtype.as_str() {
-                "purchase" => purchased += qty.abs(),
-                "sale" => sold += qty.abs(),
-                "adjustment" => adjusted += *qty,
-                "return" => returned += qty.abs(),
-                "damage" => damaged += qty.abs(),
-                _ => {}
-            }
-        }
-
-        movements.push(ProductMovement {
-            product_id: id.clone(),
-            product_name: name.clone(),
-            product_sku: sku.clone(),
-            total_purchased: purchased,
-            total_sold: sold,
-            total_adjusted: adjusted,
-            total_returned: returned,
-            total_damaged: damaged,
-            current_stock: *current_stock,
-        });
-    }
+    .map_err(|e| AppError::internal(format!("Report error: {e}")))?;
 
     Ok(movements)
 }

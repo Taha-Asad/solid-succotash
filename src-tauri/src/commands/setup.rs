@@ -17,6 +17,7 @@ use sqlx::SqlitePool;
 use uuid::Uuid;
 
 use crate::commands::auth::hash_password;
+use crate::error::AppError;
 
 /// Default email for the seeded super admin (configurable in future).
 pub const SUPER_ADMIN_EMAIL: &str = "superadmin@ijaz.local";
@@ -90,7 +91,7 @@ There is intentionally no self-service reset. To reset the Super Admin:
 pub async fn ensure_super_admin(
     pool: &SqlitePool,
     data_dir: &std::path::Path,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
     let existing: Option<String> = sqlx::query_scalar(
         "SELECT id FROM users WHERE is_super_admin = 1 AND is_active = 1 LIMIT 1",
     )

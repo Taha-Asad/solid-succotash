@@ -6,6 +6,7 @@ use tauri::State;
 use uuid::Uuid;
 
 use crate::commands::audit::log_audit;
+use crate::error::AppError;
 use crate::commands::auth::{
     hash_password, map_user_write_error, normalize_email, require_current_user, set_current_user,
     validate_password, validate_person_name, PublicUser, SessionState,
@@ -39,22 +40,22 @@ pub struct RegisterCompanyResult {
     pub user: PublicUser,
 }
 
-fn validate_company_name(name: &str) -> Result<String, String> {
+fn validate_company_name(name: &str) -> Result<String, AppError> {
     let name = name.trim();
     let character_count = name.chars().count();
 
     if character_count < 2 {
-        return Err("Company name must contain at least 2 characters".to_string());
+        return Err(AppError::internal("Company name must contain at least 2 characters".to_string()));
     }
 
     if character_count > 150 {
-        return Err("Company name cannot exceed 150 characters".to_string());
+        return Err(AppError::internal("Company name cannot exceed 150 characters".to_string()));
     }
 
     Ok(name.to_string())
 }
 
-fn validate_currency_code(code: &str) -> Result<String, String> {
+fn validate_currency_code(code: &str) -> Result<String, AppError> {
     let code = code.trim().to_uppercase();
 
     if code.len() != 3
@@ -62,7 +63,7 @@ fn validate_currency_code(code: &str) -> Result<String, String> {
             .chars()
             .all(|character| character.is_ascii_alphabetic())
     {
-        return Err("Currency code must contain exactly 3 letters, for example PKR".to_string());
+        return Err(AppError::internal("Currency code must contain exactly 3 letters, for example PKR".to_string()));
     }
 
     Ok(code)
@@ -72,7 +73,7 @@ fn clean_optional_text(
     value: Option<String>,
     field_name: &str,
     maximum_length: usize,
-) -> Result<Option<String>, String> {
+) -> Result<Option<String>, AppError> {
     let Some(value) = value else {
         return Ok(None);
     };
@@ -84,22 +85,22 @@ fn clean_optional_text(
     }
 
     if value.chars().count() > maximum_length {
-        return Err(format!(
+        return Err(AppError::internal(format!(
             "{field_name} cannot exceed {maximum_length} characters"
-        ));
+        )));
     }
 
     Ok(Some(value.to_string()))
 }
 
-fn clean_optional_email(email: Option<String>) -> Result<Option<String>, String> {
+fn clean_optional_email(email: Option<String>) -> Result<Option<String>, AppError> {
     match email {
         Some(email) if !email.trim().is_empty() => Ok(Some(normalize_email(&email)?)),
         _ => Ok(None),
     }
 }
 
-async fn fetch_company(pool: &SqlitePool, company_id: &str) -> Result<PublicCompany, String> {
+async fn fetch_company(pool: &SqlitePool, company_id: &str) -> Result<PublicCompany, AppError> {
     sqlx::query_as::<_, PublicCompany>(
         r#"
         SELECT
@@ -125,7 +126,7 @@ async fn fetch_company(pool: &SqlitePool, company_id: &str) -> Result<PublicComp
     .bind(company_id)
     .fetch_one(pool)
     .await
-    .map_err(|error| format!("Database error: {error}"))
+    .map_err(|error| AppError::database(format!("Database error: {error}")))
 }
 
 // ==========================================
@@ -148,7 +149,7 @@ pub async fn register_company(
     address: Option<String>,
     tax_number: Option<String>,
     currency_code: Option<String>,
-) -> Result<RegisterCompanyResult, String> {
+) -> Result<RegisterCompanyResult, AppError> {
     let company_name = validate_company_name(&company_name)?;
     let owner_full_name = validate_person_name(&owner_full_name)?;
     let email = normalize_email(&email)?;
@@ -177,9 +178,9 @@ pub async fn register_company(
         .map_err(|error| format!("Database error: {error}"))?;
 
     if company_count > 0 {
-        return Err(
-            "Company setup has already been completed on this desktop installation".to_string(),
-        );
+        return Err(AppError::validation(
+            "Company setup has already been completed on this desktop installation",
+        ));
     }
 
     sqlx::query(
@@ -304,7 +305,7 @@ pub async fn register_company(
 // This command does not require authentication because the application
 // needs it before showing either the setup screen or login screen.
 #[tauri::command]
-pub async fn is_company_setup(pool: State<'_, SqlitePool>) -> Result<bool, String> {
+pub async fn is_company_setup(pool: State<'_, SqlitePool>) -> Result<bool, AppError> {
     let company_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM companies")
         .fetch_one(pool.inner())
         .await
@@ -320,12 +321,12 @@ pub async fn is_company_setup(pool: State<'_, SqlitePool>) -> Result<bool, Strin
 pub async fn get_company(
     pool: State<'_, SqlitePool>,
     session: State<'_, SessionState>,
-) -> Result<PublicCompany, String> {
+) -> Result<PublicCompany, AppError> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
 
     let company_id = current_user
         .company_id
-        .ok_or_else(|| "User is not assigned to a company".to_string())?;
+        .ok_or_else(|| AppError::internal("User is not assigned to a company".to_string()))?;
 
     fetch_company(pool.inner(), &company_id).await
 }
@@ -340,14 +341,14 @@ pub async fn update_company(
     address: Option<String>,
     tax_number: Option<String>,
     currency_code: String,
-) -> Result<PublicCompany, String> {
+) -> Result<PublicCompany, AppError> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
 
     check_permission(pool.inner(), &current_user.role, "settings", "edit").await?;
 
     let company_id = current_user
         .company_id
-        .ok_or_else(|| "User is not assigned to a company".to_string())?;
+        .ok_or_else(|| AppError::internal("User is not assigned to a company".to_string()))?;
 
     let name = validate_company_name(&name)?;
     let email = clean_optional_email(email)?;

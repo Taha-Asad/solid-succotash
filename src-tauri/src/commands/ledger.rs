@@ -18,6 +18,7 @@
 // one non-zero line on each side.
 
 use crate::commands::auth::{require_current_user, SessionState};
+use crate::error::AppError;
 use crate::commands::permissions::check_permission;
 use serde::Serialize;
 use sqlx::{Sqlite, SqlitePool};
@@ -130,15 +131,15 @@ pub struct AccountStatementRow {
 // ==========================================
 
 /// Seeds the default chart of accounts for a company (idempotent).
-pub async fn ensure_chart_of_accounts(pool: &SqlitePool, company_id: &str) -> Result<(), String> {
+pub async fn ensure_chart_of_accounts(pool: &SqlitePool, company_id: &str) -> Result<(), AppError> {
     let mut tx = pool
         .begin()
         .await
-        .map_err(|e| format!("Transaction error: {e}"))?;
+        .map_err(|e| AppError::internal(format!("Transaction error: {e}")))?;
     seed_default_accounts(&mut tx, company_id).await?;
     tx.commit()
         .await
-        .map_err(|e| format!("Commit error: {e}"))?;
+        .map_err(|e| AppError::internal(format!("Commit error: {e}")))?;
     Ok(())
 }
 
@@ -146,7 +147,7 @@ pub async fn ensure_chart_of_accounts(pool: &SqlitePool, company_id: &str) -> Re
 async fn seed_default_accounts(
     tx: &mut sqlx::Transaction<'_, Sqlite>,
     company_id: &str,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
     for (code, name, account_type) in DEFAULT_ACCOUNTS {
         sqlx::query(
             r#"
@@ -161,7 +162,7 @@ async fn seed_default_accounts(
         .bind(account_type)
         .execute(&mut **tx)
         .await
-        .map_err(|e| format!("Chart of accounts error: {e}"))?;
+        .map_err(|e| AppError::internal(format!("Chart of accounts error: {e}")))?;
     }
     Ok(())
 }
@@ -186,7 +187,7 @@ pub async fn post_journal_entry(
     description: &str,
     lines: Vec<JournalLineInput>,
     created_by: Option<&str>,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
     let mut total_debit: i64 = 0;
     let mut total_credit: i64 = 0;
     for line in &lines {
@@ -195,12 +196,12 @@ pub async fn post_journal_entry(
     }
 
     if total_debit == 0 && total_credit == 0 {
-        return Err("Journal entry must have at least one line".to_string());
+        return Err(AppError::internal("Journal entry must have at least one line".to_string()));
     }
     if total_debit != total_credit {
-        return Err(format!(
+        return Err(AppError::internal(format!(
             "Unbalanced journal entry: debit {total_debit} != credit {total_credit}"
-        ));
+        )));
     }
 
     seed_default_accounts(tx, company_id).await?;
@@ -222,7 +223,7 @@ pub async fn post_journal_entry(
     .bind(created_by)
     .execute(&mut **tx)
     .await
-    .map_err(|e| format!("Journal entry insert error: {e}"))?;
+    .map_err(|e| AppError::internal(format!("Journal entry insert error: {e}")))?;
 
     for line in lines {
         let account_id = sqlx::query_scalar::<_, String>(
@@ -232,8 +233,8 @@ pub async fn post_journal_entry(
         .bind(&line.account_code)
         .fetch_optional(&mut **tx)
         .await
-        .map_err(|e| format!("Account lookup error: {e}"))?
-        .ok_or_else(|| format!("Account {} not found", line.account_code))?;
+        .map_err(|e| AppError::internal(format!("Account lookup error: {e}")))?
+        .ok_or_else(|| AppError::internal(format!("Account {} not found", line.account_code)))?;
 
         sqlx::query(
             r#"
@@ -250,7 +251,7 @@ pub async fn post_journal_entry(
         .bind(line.description)
         .execute(&mut **tx)
         .await
-        .map_err(|e| format!("Journal line insert error: {e}"))?;
+        .map_err(|e| AppError::internal(format!("Journal line insert error: {e}")))?;
     }
 
     Ok(())
@@ -266,7 +267,7 @@ pub async fn post_invoice_sale(
     invoice_number: &str,
     grand_total: i64,
     created_by: &str,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
     post_journal_entry(
         tx,
         company_id,
@@ -303,7 +304,7 @@ pub async fn post_payment_collection(
     invoice_number: &str,
     amount: i64,
     created_by: &str,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
     post_journal_entry(
         tx,
         company_id,
@@ -339,7 +340,7 @@ pub async fn post_payment_collection(
 pub async fn get_chart_of_accounts(
     pool: State<'_, SqlitePool>,
     session: State<'_, SessionState>,
-) -> Result<Vec<Account>, String> {
+) -> Result<Vec<Account>, AppError> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
     let company_id = current_user
         .company_id
@@ -355,7 +356,7 @@ pub async fn get_chart_of_accounts(
             .bind(company_id)
             .fetch_all(pool.inner())
             .await
-            .map_err(|e| format!("Database error: {e}"))?;
+            .map_err(|e| AppError::internal(format!("Database error: {e}")))?;
 
     Ok(accounts)
 }
@@ -365,7 +366,7 @@ pub async fn get_chart_of_accounts(
 pub async fn get_ledger_summary(
     pool: State<'_, SqlitePool>,
     session: State<'_, SessionState>,
-) -> Result<LedgerSummary, String> {
+) -> Result<LedgerSummary, AppError> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
     let company_id = current_user
         .company_id
@@ -396,7 +397,7 @@ pub async fn get_ledger_summary(
     .bind(company_id)
     .fetch_all(pool.inner())
     .await
-    .map_err(|e| format!("Ledger summary error: {e}"))?;
+    .map_err(|e| AppError::internal(format!("Ledger summary error: {e}")))?;
 
     let total_debit: i64 = rows.iter().map(|r| r.debit_total).sum();
     let total_credit: i64 = rows.iter().map(|r| r.credit_total).sum();
@@ -414,7 +415,7 @@ pub async fn get_journal_entries(
     pool: State<'_, SqlitePool>,
     session: State<'_, SessionState>,
     limit: Option<i64>,
-) -> Result<Vec<JournalEntryWithLines>, String> {
+) -> Result<Vec<JournalEntryWithLines>, AppError> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
     let company_id = current_user
         .company_id
@@ -437,7 +438,7 @@ pub async fn get_journal_entries(
     .bind(limit)
     .fetch_all(pool.inner())
     .await
-    .map_err(|e| format!("Database error: {e}"))?;
+    .map_err(|e| AppError::internal(format!("Database error: {e}")))?;
 
     let mut result = Vec::with_capacity(entries.len());
     for entry in entries {
@@ -461,7 +462,7 @@ pub async fn get_journal_entries(
         .bind(&entry.id)
         .fetch_all(pool.inner())
         .await
-        .map_err(|e| format!("Journal lines error: {e}"))?;
+        .map_err(|e| AppError::internal(format!("Journal lines error: {e}")))?;
 
         result.push(JournalEntryWithLines { entry, lines });
     }
@@ -475,7 +476,7 @@ pub async fn get_account_statement(
     pool: State<'_, SqlitePool>,
     session: State<'_, SessionState>,
     account_id: String,
-) -> Result<Vec<AccountStatementRow>, String> {
+) -> Result<Vec<AccountStatementRow>, AppError> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
     let company_id = current_user
         .company_id
@@ -505,7 +506,7 @@ pub async fn get_account_statement(
     .bind(company_id)
     .fetch_all(pool.inner())
     .await
-    .map_err(|e| format!("Statement error: {e}"))?;
+    .map_err(|e| AppError::internal(format!("Statement error: {e}")))?;
 
     let mut running: i64 = 0;
     let mut out = Vec::with_capacity(rows.len());
@@ -526,7 +527,7 @@ pub async fn post_manual_entry(
     entry_date: String,
     description: String,
     lines: Vec<ManualLineInput>,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
     let company_id = current_user
         .company_id
@@ -536,29 +537,29 @@ pub async fn post_manual_entry(
     check_permission(pool.inner(), &current_user.role, "ledger", "post").await?;
 
     if lines.len() < 2 {
-        return Err("A journal entry needs at least two lines".to_string());
+        return Err(AppError::internal("A journal entry needs at least two lines".to_string()));
     }
 
     let mut tx = pool
         .inner()
         .begin()
         .await
-        .map_err(|e| format!("Transaction error: {e}"))?;
+        .map_err(|e| AppError::internal(format!("Transaction error: {e}")))?;
 
     let mut total_debit: i64 = 0;
     let mut total_credit: i64 = 0;
     for line in &lines {
         if line.debit < 0 || line.credit < 0 {
-            return Err("Amounts cannot be negative".to_string());
+            return Err(AppError::internal("Amounts cannot be negative".to_string()));
         }
         total_debit += line.debit;
         total_credit += line.credit;
     }
 
     if total_debit != total_credit {
-        return Err(format!(
+        return Err(AppError::internal(format!(
             "Unbalanced journal entry: debit {total_debit} != credit {total_credit}"
-        ));
+        )));
     }
 
     let inputs = lines
@@ -585,7 +586,7 @@ pub async fn post_manual_entry(
 
     tx.commit()
         .await
-        .map_err(|e| format!("Commit error: {e}"))?;
+        .map_err(|e| AppError::internal(format!("Commit error: {e}")))?;
 
     Ok(())
 }

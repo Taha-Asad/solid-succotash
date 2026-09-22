@@ -11,6 +11,7 @@
 //   log_audit(pool, &current_user, "create", "product", Some(&product_id), "Created product SKU-001").await;
 
 use crate::commands::auth::{require_current_user, SessionState};
+use crate::error::AppError;
 use serde::Serialize;
 use sqlx::SqlitePool;
 use tauri::State;
@@ -74,11 +75,11 @@ pub async fn list_audit_logs(
     session: State<'_, SessionState>,
     limit: Option<i64>,
     offset: Option<i64>,
-) -> Result<Vec<AuditEntry>, String> {
+) -> Result<Vec<AuditEntry>, AppError> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
 
     if current_user.role != "owner" && current_user.role != "admin" {
-        return Err("Only owners and admins can view audit logs".to_string());
+        return Err(AppError::internal("Only owners and admins can view audit logs".to_string()));
     }
 
     let company_id = current_user
@@ -118,7 +119,7 @@ pub async fn list_audit_logs(
     .bind(offset)
     .fetch_all(pool.inner())
     .await
-    .map_err(|e| format!("Audit query error: {e}"))?;
+    .map_err(|e| AppError::internal(format!("Audit query error: {e}")))?;
 
     Ok(rows
         .into_iter()

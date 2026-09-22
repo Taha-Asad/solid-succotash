@@ -54,6 +54,7 @@ import {
   reportStock,
   listInvoices,
   listPurchaseOrders,
+  getCompanyCurrency,
 } from "../../api/backend";
 
 import type {
@@ -64,24 +65,24 @@ import type {
   TopProduct,
   PublicInvoice,
   PublicPurchaseOrder,
+  CurrencyConfig,
 } from "../../types/backend";
 
 import AnimatedNumber from "../../components/AnimatedNumber";
 import { INK } from "../../theme";
+import { formatPaisaWithSymbol } from "../../utils/currency";
 
 // ==========================================
 // HELPERS
 // ==========================================
 
-export function p(paisa: number): string {
-  return (paisa / 100).toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
+export function p(paisa: number, config?: CurrencyConfig | null): string {
+  return formatPaisaWithSymbol(paisa, config);
 }
 
 // Recharts-safe money formatter (tooltip values may be undefined).
-const fmtMoney = (value: unknown): string => p(Math.round(Number(value ?? 0) * 100));
+const fmtMoney = (value: unknown, config?: CurrencyConfig | null): string =>
+  p(Math.round(Number(value ?? 0) * 100), config);
 
 const fadeUp = {
   initial: { opacity: 0, y: 18 },
@@ -100,8 +101,12 @@ export default function DashboardHome({ user }: { user: PublicUser }) {
   const [recentInvoices, setRecentInvoices] = useState<PublicInvoice[]>([]);
   const [recentPOs, setRecentPOs] = useState<PublicPurchaseOrder[]>([]);
   const [loading, setLoading] = useState(true);
+  const [currencyConfig, setCurrencyConfig] = useState<CurrencyConfig | null>(null);
 
   useEffect(() => {
+    getCompanyCurrency()
+      .then((c) => setCurrencyConfig(c))
+      .catch(() => {});
     Promise.all([
       reportSalesSummary().catch(() => null),
       reportSalesByMonth().catch(() => []),
@@ -272,7 +277,8 @@ export default function DashboardHome({ user }: { user: PublicUser }) {
           icon={<TrendingUp size={18} />}
           tint={INK.chart.navy}
           label="Total Revenue"
-          value={sales ? p(sales.totalRevenue) : "—"}
+          value={sales ? p(sales.totalRevenue, currencyConfig) : "—"}
+          currencyPrefix={currencyConfig?.symbol || "₨"}
           sub={
             <Group gap={6}>
               <Text size="xs" c="dimmed">{sales?.totalInvoices ?? 0} invoices</Text>
@@ -280,7 +286,7 @@ export default function DashboardHome({ user }: { user: PublicUser }) {
             </Group>
           }
           footer={
-            sales && sales.totalTax > 0 ? `Includes ${p(sales.totalTax)} tax` : "No tax recorded yet"
+            sales && sales.totalTax > 0 ? `Includes ${p(sales.totalTax, currencyConfig)} tax` : "No tax recorded yet"
           }
         />
         <StatCard
@@ -288,7 +294,8 @@ export default function DashboardHome({ user }: { user: PublicUser }) {
           icon={<Wallet size={18} />}
           tint={INK.chart.green}
           label="Collected"
-          value={sales ? p(sales.totalPaid) : "—"}
+          value={sales ? p(sales.totalPaid, currencyConfig) : "—"}
+          currencyPrefix={currencyConfig?.symbol || "₨"}
           sub={
             <Group gap={6}>
               <ArrowUpRight size={14} color={INK.chart.green} />
@@ -302,7 +309,8 @@ export default function DashboardHome({ user }: { user: PublicUser }) {
           icon={<Receipt size={18} />}
           tint={sales && sales.totalOutstanding > 0 ? INK.chart.orange : INK.chart.green}
           label="Outstanding"
-          value={sales ? p(sales.totalOutstanding) : "—"}
+          value={sales ? p(sales.totalOutstanding, currencyConfig) : "—"}
+          currencyPrefix={currencyConfig?.symbol || "₨"}
           sub={
             <Group gap={6}>
               <ArrowDownRight size={14} color={sales && sales.totalOutstanding > 0 ? INK.chart.orange : INK.chart.green} />
@@ -347,7 +355,7 @@ export default function DashboardHome({ user }: { user: PublicUser }) {
                 <Text fw={700} style={{ color: INK.text }}>Revenue Trend</Text>
                 <Text size="xs" c="dimmed">Monthly invoiced vs collected</Text>
               </Stack>
-              <Badge color="gold" variant="light" size="sm">PKR</Badge>
+              <Badge color="gold" variant="light" size="sm">{currencyConfig?.code || "PKR"}</Badge>
             </Group>
             {revenueSeries.length === 0 ? (
               <EmptyChart message="No monthly sales data yet. Create and finalize invoices to see trends." />
@@ -369,7 +377,7 @@ export default function DashboardHome({ user }: { user: PublicUser }) {
                     <XAxis dataKey="name" tick={{ fontSize: 11, fill: INK.muted }} tickLine={false} axisLine={false} />
                     <YAxis tick={{ fontSize: 11, fill: INK.muted }} tickLine={false} axisLine={false} tickFormatter={(v) => `${v >= 1000 ? `${(v / 1000).toFixed(1)}k` : v}`} />
                     <Tooltip
-                      formatter={(value) => [fmtMoney(value), ""]}
+                      formatter={(value) => [fmtMoney(value, currencyConfig), ""]}
                       labelStyle={{ fontWeight: 700, color: INK.text }}
                       contentStyle={{ borderRadius: 12, border: `1px solid ${INK.border}`, boxShadow: "0 10px 30px -12px rgba(29,43,84,0.25)" }}
                     />
@@ -463,7 +471,7 @@ export default function DashboardHome({ user }: { user: PublicUser }) {
                     <XAxis type="number" tick={{ fontSize: 11, fill: INK.muted }} tickLine={false} axisLine={false} tickFormatter={(v) => `${v >= 1000 ? `${(v / 1000).toFixed(1)}k` : v}`} />
                     <YAxis type="category" dataKey="name" width={120} tick={{ fontSize: 11, fill: INK.muted }} tickLine={false} axisLine={false} />
                     <Tooltip
-                      formatter={(value) => [fmtMoney(value), "Revenue"]}
+                      formatter={(value) => [fmtMoney(value, currencyConfig), "Revenue"]}
                       contentStyle={{ borderRadius: 12, border: `1px solid ${INK.border}` }}
                       cursor={{ fill: "rgba(29,43,84,0.04)" }}
                     />
@@ -493,17 +501,17 @@ export default function DashboardHome({ user }: { user: PublicUser }) {
               <Stack gap="sm">
                 <Group justify="space-between">
                   <Text size="xs" c="dimmed">Stock value at cost</Text>
-                  <Text size="sm" fw={700} className="tabular">{p(stock.totalValueAtCost)}</Text>
+                  <Text size="sm" fw={700} className="tabular">{p(stock.totalValueAtCost, currencyConfig)}</Text>
                 </Group>
                 <Group justify="space-between">
                   <Text size="xs" c="dimmed">Stock value at sell</Text>
-                  <Text size="sm" fw={700} className="tabular" style={{ color: INK.chart.green }}>{p(stock.totalValueAtSell)}</Text>
+                  <Text size="sm" fw={700} className="tabular" style={{ color: INK.chart.green }}>{p(stock.totalValueAtSell, currencyConfig)}</Text>
                 </Group>
                 <Divider />
                 <Group justify="space-between">
                   <Text size="xs" fw={600}>Potential profit</Text>
                   <Text size="sm" fw={800} className="tabular" style={{ color: INK.chart.green }}>
-                    {p(stock.totalValueAtSell - stock.totalValueAtCost)}
+                    {p(stock.totalValueAtSell - stock.totalValueAtCost, currencyConfig)}
                   </Text>
                 </Group>
 
@@ -607,7 +615,7 @@ export default function DashboardHome({ user }: { user: PublicUser }) {
                         </Badge>
                       </Table.Td>
                       <Table.Td ta="right">
-                        <Text size="sm" fw={600} className="tabular">{p(inv.grandTotal)}</Text>
+                        <Text size="sm" fw={600} className="tabular">{p(inv.grandTotal, currencyConfig)}</Text>
                       </Table.Td>
                       <Table.Td ta="right">
                         <Text
@@ -615,7 +623,7 @@ export default function DashboardHome({ user }: { user: PublicUser }) {
                           className="tabular"
                           c={inv.balanceDue > 0 ? "orange" : "green"}
                         >
-                          {p(inv.balanceDue)}
+                          {p(inv.balanceDue, currencyConfig)}
                         </Text>
                       </Table.Td>
                     </motion.tr>
@@ -692,7 +700,7 @@ export default function DashboardHome({ user }: { user: PublicUser }) {
                         </Badge>
                       </Table.Td>
                       <Table.Td ta="right">
-                        <Text size="sm" fw={600} className="tabular">{p(po.grandTotal)}</Text>
+                        <Text size="sm" fw={600} className="tabular">{p(po.grandTotal, currencyConfig)}</Text>
                       </Table.Td>
                     </motion.tr>
                   ))}
@@ -718,6 +726,7 @@ function StatCard({
   sub,
   footer,
   delay,
+  currencyPrefix,
 }: {
   label: string;
   value: string;
@@ -726,6 +735,7 @@ function StatCard({
   sub: React.ReactNode;
   footer?: React.ReactNode;
   delay: number;
+  currencyPrefix?: string;
 }) {
   const isMoney = value.includes(".");
   const isDash = value === "—";
@@ -746,7 +756,7 @@ function StatCard({
               {isDash ? (
                 "—"
               ) : isMoney ? (
-                <AnimatedNumber value={parseFloat(value.replace(/[^0-9.-]/g, "")) || 0} decimals={2} prefix="₨ " />
+                <AnimatedNumber value={parseFloat(value.replace(/[^0-9.-]/g, "")) || 0} decimals={2} prefix={currencyPrefix ? `${currencyPrefix} ` : ""} />
               ) : (
                 <AnimatedNumber value={parseInt(value, 10) || 0} />
               )}

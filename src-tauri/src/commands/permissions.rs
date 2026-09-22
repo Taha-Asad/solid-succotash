@@ -7,6 +7,7 @@
 //   soft_delete(pool, "products", &product_id, company_id).await?;
 //   check_version(pool, "products", &product_id, expected_version).await?;
 
+use crate::error::AppError;
 use sqlx::SqlitePool;
 
 /// Checks if a user's role has a specific permission.
@@ -16,7 +17,7 @@ pub async fn check_permission(
     role: &str,
     module: &str,
     permission: &str,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
     // Owner always has all permissions
     if role == "owner" {
         return Ok(());
@@ -30,15 +31,15 @@ pub async fn check_permission(
     .bind(permission)
     .fetch_optional(pool)
     .await
-    .map_err(|e| format!("Permission check error: {e}"))?
+    .map_err(|e| AppError::internal(format!("Permission check error: {e}")))?
     .unwrap_or(false);
 
     if allowed {
         Ok(())
     } else {
-        Err(format!(
+        Err(AppError::internal(format!(
             "Access denied: {role} cannot {permission} {module}"
-        ))
+        )))
     }
 }
 
@@ -49,7 +50,7 @@ pub async fn soft_delete(
     table: &str,
     id: &str,
     company_id: &str,
-) -> Result<u64, String> {
+) -> Result<u64, AppError> {
     // Only allow known tables (prevent SQL injection)
     let valid_tables = [
         "products",
@@ -61,7 +62,7 @@ pub async fn soft_delete(
         "users",
     ];
     if !valid_tables.contains(&table) {
-        return Err(format!("Cannot soft-delete table: {table}"));
+        return Err(AppError::internal(format!("Cannot soft-delete table: {table}")));
     }
 
     let query = format!(
@@ -73,7 +74,7 @@ pub async fn soft_delete(
         .bind(company_id)
         .execute(pool)
         .await
-        .map_err(|e| format!("Soft-delete error: {e}"))?;
+        .map_err(|e| AppError::internal(format!("Soft-delete error: {e}")))?;
 
     Ok(rows.rows_affected())
 }
@@ -85,7 +86,7 @@ pub async fn check_version(
     table: &str,
     id: &str,
     expected_version: i64,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
     let valid_tables = [
         "products",
         "customers",
@@ -96,7 +97,7 @@ pub async fn check_version(
         "users",
     ];
     if !valid_tables.contains(&table) {
-        return Err(format!("Cannot check version for table: {table}"));
+        return Err(AppError::internal(format!("Cannot check version for table: {table}")));
     }
 
     let query = format!("SELECT version FROM {table} WHERE id = ? AND deleted_at IS NULL");
@@ -104,20 +105,20 @@ pub async fn check_version(
         .bind(id)
         .fetch_optional(pool)
         .await
-        .map_err(|e| format!("Version check error: {e}"))?
+        .map_err(|e| AppError::internal(format!("Version check error: {e}")))?
         .ok_or("Record not found or deleted")?;
 
     if current != expected_version {
-        Err(format!(
+        Err(AppError::internal(format!(
             "Conflict: record was modified by another user (expected v{expected_version}, found v{current}). Please refresh and try again."
-        ))
+        )))
     } else {
         Ok(())
     }
 }
 
 /// Increments the version column after a successful update.
-pub async fn bump_version(pool: &SqlitePool, table: &str, id: &str) -> Result<(), String> {
+pub async fn bump_version(pool: &SqlitePool, table: &str, id: &str) -> Result<(), AppError> {
     let valid_tables = [
         "products",
         "customers",
@@ -128,7 +129,7 @@ pub async fn bump_version(pool: &SqlitePool, table: &str, id: &str) -> Result<()
         "users",
     ];
     if !valid_tables.contains(&table) {
-        return Err(format!("Cannot bump version for table: {table}"));
+        return Err(AppError::internal(format!("Cannot bump version for table: {table}")));
     }
 
     let query = format!(
@@ -138,7 +139,7 @@ pub async fn bump_version(pool: &SqlitePool, table: &str, id: &str) -> Result<()
         .bind(id)
         .execute(pool)
         .await
-        .map_err(|e| format!("Version bump error: {e}"))?;
+        .map_err(|e| AppError::internal(format!("Version bump error: {e}")))?;
 
     Ok(())
 }

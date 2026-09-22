@@ -18,8 +18,10 @@ import type {
   CompanySetupInput,
   CreatePackageInput,
   CreateUserInput,
+  CurrencyConfig,
   CustomerLedgerEntry,
   ErpAdapterInfo,
+  ExchangeRate,
   FileAnalysis,
   ImportError,
   ImportJob,
@@ -76,6 +78,11 @@ import type {
   UpdateProductInput,
   UpdateRoleInput,
   UpdateTenantCompanyInput,
+  FbrConfig,
+  FbrConnectionTestResult,
+  FbrQueueStatus,
+  InvoiceFbrStatus,
+  PublicFbrQueueItem,
 } from "../types/backend";
 
 // ==========================================
@@ -379,6 +386,7 @@ export function confirmImport(input: ImportRequest): Promise<ImportResult> {
 // worker emits these; the wizard listens instead of only polling.
 export const IMPORT_PROGRESS_EVENT = "import:progress"; // live (status: processing)
 export const IMPORT_COMPLETE_EVENT = "import:complete"; // terminal (completed|failed)
+export const FBR_QUEUE_UPDATED_EVENT = "fbr:queue:updated"; // §18.5 desktop SSE — FBR queue changed
 
 // Payload shape shared by both events (matches Rust ImportProgressEvent).
 export type ImportProgressEvent = {
@@ -467,6 +475,8 @@ export function createInvoice(input: {
   dueDate: string;
   poNumber: string;
   referenceNote: string;
+  currencyCode?: string;
+  exchangeRate?: number;
 }): Promise<PublicInvoice> {
   return invoke<PublicInvoice>("create_invoice", input);
 }
@@ -514,6 +524,8 @@ export function recordPayment(input: {
   paymentDate: string;
   reference: string;
   notes: string;
+  paymentCurrencyCode?: string;
+  paymentExchangeRate?: number;
 }): Promise<PublicInvoice> {
   return invoke<PublicInvoice>("record_payment", input);
 }
@@ -768,6 +780,10 @@ export function deleteCustomRole(name: string): Promise<void> {
 
 export function getMyPermissions(): Promise<RoleInfo> {
   return invoke<RoleInfo>("get_my_permissions");
+}
+
+export function getMyModules(): Promise<string[]> {
+  return invoke<string[]>("get_my_modules");
 }
 
 
@@ -1087,13 +1103,193 @@ export function activateCompany(companyId: string): Promise<void> {
 // ==========================================
 
 // Turns any unknown error into a readable string
+// ==========================================
+// MULTI-CURRENCY
+// ==========================================
+
+export function getAllCurrencies(): Promise<CurrencyConfig[]> {
+  return invoke<CurrencyConfig[]>("get_all_currencies");
+}
+
+export function getCompanyCurrency(): Promise<CurrencyConfig> {
+  return invoke<CurrencyConfig>("get_company_currency");
+}
+
+export function fetchExchangeRates(input: {
+  baseCurrency: string;
+  targetCurrencies: string[];
+}): Promise<ExchangeRate[]> {
+  return invoke<ExchangeRate[]>("fetch_exchange_rates", input);
+}
+
+export function getExchangeRate(input: {
+  baseCurrency: string;
+  targetCurrency: string;
+}): Promise<ExchangeRate> {
+  return invoke<ExchangeRate>("get_exchange_rate", input);
+}
+
+export function getExchangeRateHistory(input: {
+  baseCurrency: string;
+  targetCurrency: string;
+  days?: number;
+}): Promise<ExchangeRate[]> {
+  return invoke<ExchangeRate[]>("get_exchange_rate_history", input);
+}
+
+// ==========================================
+// FBR / PRAL
+// ==========================================
+
+export async function getFbrConfig(): Promise<FbrConfig | null> {
+  return invoke<FbrConfig | null>("get_fbr_config");
+}
+
+export async function saveFbrConfig(
+  environment: string,
+  isActive: boolean,
+  pralToken: string | null,
+): Promise<FbrConfig> {
+  return invoke<FbrConfig>("save_fbr_config", {
+    environment,
+    isActive,
+    pralToken,
+  });
+}
+
+export async function testFbrConnection(): Promise<FbrConnectionTestResult> {
+  return invoke<FbrConnectionTestResult>("test_fbr_connection");
+}
+
+export async function getFbrQueueStatus(): Promise<FbrQueueStatus> {
+  return invoke<FbrQueueStatus>("get_fbr_queue_status");
+}
+
+export async function retryFbrSubmission(
+  queueId: string,
+): Promise<PublicFbrQueueItem> {
+  return invoke<PublicFbrQueueItem>("retry_fbr_submission", { queueId });
+}
+
+export async function getInvoiceFbrStatus(
+  invoiceId: string,
+): Promise<InvoiceFbrStatus> {
+  return invoke<InvoiceFbrStatus>("get_invoice_fbr_status", { invoiceId });
+}
+
+export async function processFbrQueueNow(): Promise<number> {
+  return invoke<number>("process_fbr_queue_now");
+}
+
+export async function createCreditNote(
+  originalInvoiceId: string,
+  reason: string,
+  creditAmount: number,
+  itemsJson: string | null,
+): Promise<PublicInvoice> {
+  return invoke<PublicInvoice>("create_credit_note", {
+    originalInvoiceId,
+    reason,
+    creditAmount,
+    itemsJson,
+  });
+}
+
+export async function createDebitNote(
+  originalInvoiceId: string,
+  reason: string,
+  debitAmount: number,
+  itemsJson: string | null,
+): Promise<PublicInvoice> {
+  return invoke<PublicInvoice>("create_debit_note", {
+    originalInvoiceId,
+    reason,
+    debitAmount,
+    itemsJson,
+  });
+}
+
+// ==========================================
+// ERROR HELPER
+// ==========================================
+
+// ==========================================
+// UNIFIED ERROR SCHEMA (§18.6)
+// ==========================================
+
+export type ErrorCode =
+  | "VALIDATION"
+  | "NOT_FOUND"
+  | "UNAUTHORIZED"
+  | "FORBIDDEN"
+  | "CONFLICT"
+  | "RATE_LIMITED"
+  | "DATABASE"
+  | "INTERNAL";
+
+export interface AppErrorDetail {
+  field: string;
+  issue: string;
+}
+
+export interface AppError {
+  code: ErrorCode;
+  message: string;
+  details?: AppErrorDetail[];
+  timestamp: string;
+}
+
+export function isAppError(error: unknown): error is AppError {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    "message" in error &&
+    "timestamp" in error &&
+    typeof (error as Record<string, unknown>).code === "string"
+  );
+}
+
+/** User-friendly messages for each error code. */
+const ERROR_MESSAGES: Record<ErrorCode, string> = {
+  VALIDATION: "Validation error",
+  NOT_FOUND: "Not found",
+  UNAUTHORIZED: "Please log in again",
+  FORBIDDEN: "You don't have permission",
+  CONFLICT: "Conflict",
+  RATE_LIMITED: "Too many requests — try again later",
+  DATABASE: "Database error",
+  INTERNAL: "Something went wrong",
+};
+
 export function getErrorMessage(error: unknown): string {
+  // Structured AppError from the Rust backend
+  if (isAppError(error)) {
+    const friendly = ERROR_MESSAGES[error.code] ?? error.message;
+    const detail = error.details?.length
+      ? `: ${error.details.map((d) => `${d.field} — ${d.issue}`).join("; ")}`
+      : "";
+    return `${friendly}${detail}`;
+  }
+
+  // String error (legacy or helper function)
   if (typeof error === "string") {
     return error;
   }
 
+  // JS Error object
   if (error instanceof Error) {
     return error.message;
+  }
+
+  // Tauri may wrap the error in { message: "..." }
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "message" in error &&
+    typeof (error as Record<string, unknown>).message === "string"
+  ) {
+    return (error as { message: string }).message;
   }
 
   try {

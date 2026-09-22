@@ -4,8 +4,9 @@
 //
 // Tab 1: Company Profile
 // Tab 2: Invoice Settings (FBR fields, numbering)
-// Tab 3: Backup & Restore
-// Tab 4: Audit Log
+// Tab 3: FBR Integration (API config, queue)
+// Tab 4: Backup & Restore
+// Tab 5: Audit Log
 
 import { useCallback, useEffect, useState } from "react";
 
@@ -33,6 +34,14 @@ import {
   Switch,
   Textarea,
   Kbd,
+  PasswordInput,
+  Tooltip,
+  Loader,
+  Modal,
+  Stepper,
+  Center,
+  ThemeIcon,
+  List,
 } from "@mantine/core";
 
 import { useForm } from "@mantine/form";
@@ -58,6 +67,15 @@ import {
   saveInvoiceExcelTemplate,
   analyzeInvoiceExcelTemplate,
   downloadSampleInvoiceTemplate,
+  getAllCurrencies,
+  getFbrConfig,
+  saveFbrConfig,
+  testFbrConnection,
+  getFbrQueueStatus,
+  retryFbrSubmission,
+  processFbrQueueNow,
+  listCompanyModules,
+  setCompanyModule,
 } from "../../api/backend";
 
 import type {
@@ -67,9 +85,20 @@ import type {
   ExcelTemplateAnalysis,
 } from "../../api/backend";
 
-import type { PublicUser } from "../../types/backend";
+import type {
+  PublicUser,
+  CurrencyConfig,
+  FbrConfig,
+  FbrQueueStatus,
+  FbrConnectionTestResult,
+  PublicCompany,
+  PublicCompanyModule,
+} from "../../types/backend";
 
-import { Trash2, Upload, Check, Languages as LanguagesIcon } from "lucide-react";
+import {
+  Trash2, Upload, Check, Languages as LanguagesIcon, Send, RefreshCw, Zap, AlertTriangle,
+  CheckCircle, XCircle, ArrowRight, Settings,
+} from "lucide-react";
 
 import { INK } from "../../theme";
 import { useI18n } from "../../i18n/I18nProvider";
@@ -105,6 +134,12 @@ export default function SettingsPage({ user, onLogout }: SettingsPageProps) {
           <Tabs.Tab value="company">{t("settings.tab.company")}</Tabs.Tab>
           <Tabs.Tab value="invoice">{t("settings.tab.invoice")}</Tabs.Tab>
           {canEdit && (
+            <Tabs.Tab value="fbr">FBR Integration</Tabs.Tab>
+          )}
+          {canEdit && (
+            <Tabs.Tab value="modules">Modules</Tabs.Tab>
+          )}
+          {canEdit && (
             <Tabs.Tab value="theme">{t("settings.tab.theme")}</Tabs.Tab>
           )}
           <Tabs.Tab value="backup">{t("settings.tab.backup")}</Tabs.Tab>
@@ -123,6 +158,16 @@ export default function SettingsPage({ user, onLogout }: SettingsPageProps) {
         <Tabs.Panel value="invoice" pt="md">
           <InvoiceSettingsTab />
         </Tabs.Panel>
+        {canEdit && (
+          <Tabs.Panel value="fbr" pt="md">
+            <FbrSettingsTab />
+          </Tabs.Panel>
+        )}
+        {canEdit && (
+          <Tabs.Panel value="modules" pt="md">
+            <ModulesTab companyId={user.companyId ?? ""} />
+          </Tabs.Panel>
+        )}
         {canEdit && (
           <Tabs.Panel value="theme" pt="md">
             <ThemeBrandingTab />
@@ -258,6 +303,7 @@ function CompanyProfileTab() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [currencies, setCurrencies] = useState<CurrencyConfig[]>([]);
 
   const form = useForm({
     initialValues: {
@@ -271,6 +317,9 @@ function CompanyProfileTab() {
   });
 
   useEffect(() => {
+    getAllCurrencies()
+      .then((list) => setCurrencies(list))
+      .catch(() => {});
     getCompany()
       .then((c) => {
         form.setValues({
@@ -333,7 +382,10 @@ function CompanyProfileTab() {
             />
             <Select
               label="Currency"
-              data={["PKR", "USD", "EUR", "GBP", "AED", "SAR", "INR"]}
+              data={currencies.length > 0
+                ? currencies.map((c) => ({ value: c.code, label: `${c.code} — ${c.name}` }))
+                : ["PKR", "USD", "EUR", "GBP", "AED", "SAR", "INR"]
+              }
               {...form.getInputProps("currencyCode")}
             />
           </SimpleGrid>
@@ -1264,6 +1316,804 @@ function RetentionTab() {
             {success}
           </Text>
         )}
+      </Card>
+    </Stack>
+  );
+}
+
+// ==========================================
+// FBR INTEGRATION TAB
+// ==========================================
+
+function FbrSettingsTab() {
+  const [config, setConfig] = useState<FbrConfig | null>(null);
+  const [company, setCompany] = useState<PublicCompany | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+
+  const [isActive, setIsActive] = useState(false);
+
+  const [queueStatus, setQueueStatus] = useState<FbrQueueStatus | null>(null);
+  const [queueLoading, setQueueLoading] = useState(true);
+  const [processingQueue, setProcessingQueue] = useState(false);
+
+  const [wizardOpened, setWizardOpened] = useState(false);
+  const [wizardStep, setWizardStep] = useState(0);
+  const [wizEnvironment, setWizEnvironment] = useState("sandbox");
+  const [wizToken, setWizToken] = useState("");
+  const [wizSaving, setWizSaving] = useState(false);
+  const [wizTesting, setWizTesting] = useState(false);
+  const [wizTestResult, setWizTestResult] = useState<FbrConnectionTestResult | null>(null);
+
+  const isConnected = Boolean(config?.pralToken && config?.isActive);
+  const lastTestOk = config?.lastTestResult === "success";
+
+  const loadConfig = useCallback(async () => {
+    try {
+      const [c, co] = await Promise.all([getFbrConfig(), getCompany()]);
+      if (c) {
+        setConfig(c);
+        setEnvironment(c.environment);
+        setPralToken(c.pralToken ?? "");
+        setIsActive(c.isActive);
+        setCompany(co);
+      } else {
+        setCompany(co);
+      }
+    } catch (e) {
+      setError(getErrorMessage(e));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // We need these for the outer card but also for the wizard
+  const [environment, setEnvironment] = useState("sandbox");
+  const [pralToken, setPralToken] = useState("");
+
+  const loadQueue = useCallback(async () => {
+    try {
+      setQueueLoading(true);
+      const qs = await getFbrQueueStatus();
+      setQueueStatus(qs);
+    } catch {
+      // Queue load failure is non-critical
+    } finally {
+      setQueueLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadConfig();
+    void loadQueue();
+  }, [loadConfig, loadQueue]);
+
+  const handleToggleActive = async (checked: boolean) => {
+    if (checked && !config?.pralToken) {
+      setWizardOpened(true);
+      return;
+    }
+    setError(null);
+    try {
+      const updated = await saveFbrConfig(environment, checked, pralToken || null);
+      setConfig(updated);
+      setIsActive(updated.isActive);
+      setSuccess(checked ? "FBR submission enabled." : "FBR submission paused.");
+    } catch (e) {
+      setError(getErrorMessage(e));
+    }
+  };
+
+  const handleProcessQueue = async () => {
+    setProcessingQueue(true);
+    setError(null);
+    try {
+      const processed = await processFbrQueueNow();
+      setSuccess(`Processed ${processed} queued invoice(s).`);
+      await loadQueue();
+    } catch (e) {
+      setError(getErrorMessage(e));
+    } finally {
+      setProcessingQueue(false);
+    }
+  };
+
+  const handleRetry = async (queueId: string) => {
+    try {
+      await retryFbrSubmission(queueId);
+      setSuccess("Submission queued for retry.");
+      await loadQueue();
+    } catch (e) {
+      setError(getErrorMessage(e));
+    }
+  };
+
+  // --- Wizard handlers ---
+  const openWizard = () => {
+    setWizardStep(0);
+    setWizEnvironment(config?.environment ?? "sandbox");
+    setWizToken(config?.pralToken ?? "");
+    setWizTestResult(null);
+    setError(null);
+    setWizardOpened(true);
+  };
+
+  const handleWizardSaveAndTest = async () => {
+    setWizSaving(true);
+    setError(null);
+    try {
+      const updated = await saveFbrConfig(wizEnvironment, true, wizToken || null);
+      setConfig(updated);
+      setEnvironment(updated.environment);
+      setPralToken(updated.pralToken ?? "");
+      setIsActive(true);
+      setWizSaving(false);
+      setWizardStep(2);
+    } catch (e) {
+      setError(getErrorMessage(e));
+      setWizSaving(false);
+    }
+  };
+
+  const handleWizardTest = async () => {
+    setWizTesting(true);
+    setWizTestResult(null);
+    try {
+      const result = await testFbrConnection();
+      setWizTestResult(result);
+      const updated = await getFbrConfig();
+      if (updated) setConfig(updated);
+    } catch (e) {
+      setWizTestResult({ success: false, message: getErrorMessage(e), timestamp: new Date().toISOString() });
+    } finally {
+      setWizTesting(false);
+    }
+  };
+
+  const handleWizardFinish = () => {
+    setWizardOpened(false);
+    if (wizTestResult?.success) {
+      setSuccess("FBR connection configured and verified.");
+    }
+  };
+
+  if (loading) {
+    return <Text c="dimmed">Loading FBR configuration...</Text>;
+  }
+
+  const isProduction = (config?.environment ?? environment) === "production";
+  const canGoProduction = isConnected && lastTestOk && !isProduction;
+
+  return (
+    <>
+      <Stack gap="lg">
+        {/* ---- Connection status card ---- */}
+        <Card withBorder padding="lg" maw={700}>
+          <Group gap="sm" mb="sm">
+            <span
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: 38,
+                height: 38,
+                borderRadius: 12,
+                background: isConnected
+                  ? "linear-gradient(135deg, #2B8A3E 0%, #40C057 100%)"
+                  : "linear-gradient(135deg, #C9952A 0%, #E6C965 100%)",
+                color: isConnected ? "#fff" : "#131C39",
+              }}
+            >
+              {isConnected ? <CheckCircle size={18} /> : <Send size={18} />}
+            </span>
+            <Title order={5}>FBR Digital Invoicing</Title>
+          </Group>
+          <Text size="sm" c="dimmed" mb="lg">
+            Your ERP can automatically submit finalized sales invoices to FBR.
+            {isConnected
+              ? " Your connection is active."
+              : " Connect your business to get started."}
+          </Text>
+
+          <Card
+            withBorder
+            padding="md"
+            style={{
+              borderColor: isConnected ? "var(--mantine-color-green-4)" : undefined,
+              background: isConnected ? "var(--mantine-color-green-0)" : undefined,
+            }}
+          >
+            <Group justify="space-between" wrap="nowrap">
+              <Group gap="md" wrap="nowrap">
+                <ThemeIcon
+                  size={42}
+                  radius="xl"
+                  variant="light"
+                  color={isConnected ? "green" : "yellow"}
+                >
+                  {isConnected ? <CheckCircle size={20} /> : <XCircle size={20} />}
+                </ThemeIcon>
+                <Box>
+                  <Text fw={600} size="sm">
+                    {isConnected ? "Connected" : "Not Connected"}
+                  </Text>
+                  <Text size="xs" c="dimmed">
+                    {isConnected
+                      ? `Environment: ${config?.environment === "production" ? "Production" : "Sandbox"}`
+                      : "Configure your FBR integration to start submitting invoices."}
+                    {config?.lastTestedAt && isConnected && (
+                      <> · Last tested: {new Date(config.lastTestedAt).toLocaleDateString()}</>
+                    )}
+                  </Text>
+                </Box>
+              </Group>
+              <Button
+                variant={isConnected ? "light" : "filled"}
+                color={isConnected ? "gray" : "green"}
+                size="sm"
+                onClick={openWizard}
+                leftSection={<Settings size={14} />}
+              >
+                {isConnected ? "Manage Connection" : "Connect FBR"}
+              </Button>
+            </Group>
+          </Card>
+
+          {/* Automatic submission toggle */}
+          <Box mt="lg">
+            <Group justify="space-between" align="center">
+              <Box>
+                <Text fw={500} size="sm">Automatic Submission</Text>
+                <Text size="xs" c="dimmed">
+                  {isConnected
+                    ? "Finalized invoices will be automatically queued for FBR submission."
+                    : "Connect to FBR first, then enable automatic submission."}
+                </Text>
+              </Box>
+              <Switch
+                checked={isActive}
+                disabled={!isConnected}
+                onChange={(e) => void handleToggleActive(e.currentTarget.checked)}
+                size="lg"
+              />
+            </Group>
+          </Box>
+
+          {/* Environment indicator */}
+          {isProduction && (
+            <Alert color="orange" mt="md" variant="light" title="Production Environment">
+              <Text size="sm">
+                Invoices are submitted to FBR's live production system.
+                All submissions are final and legally binding.
+              </Text>
+            </Alert>
+          )}
+
+          {/* Errors / Success */}
+          {error && (
+            <Alert color="red" title="Error" variant="light" mt="md">
+              {error}
+            </Alert>
+          )}
+          {success && (
+            <Alert color="green" title="Success" variant="light" mt="md" onClose={() => setSuccess(null)}>
+              {success}
+            </Alert>
+          )}
+        </Card>
+
+        {/* ---- Queue card ---- */}
+        <Card withBorder padding="lg" maw={700}>
+          <Group gap="sm" mb="sm">
+            <span
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: 38,
+                height: 38,
+                borderRadius: 12,
+                background: "linear-gradient(135deg, #C9952A 0%, #E6C965 100%)",
+                color: "#131C39",
+              }}
+            >
+              <AlertTriangle size={18} />
+            </span>
+            <Title order={5}>Submission Queue</Title>
+          </Group>
+          <Text size="sm" c="dimmed" mb="md">
+            Invoices are submitted asynchronously. Failed submissions are retried
+            with exponential backoff (2m → 10m → 30m → 2h) and moved to dead
+            letter after 5 attempts.
+          </Text>
+
+          {queueLoading ? (
+            <Group gap="sm">
+              <Loader size="sm" />
+              <Text c="dimmed" size="sm">Loading queue...</Text>
+            </Group>
+          ) : queueStatus ? (
+            <Stack gap="md">
+              <SimpleGrid cols={4}>
+                <Card padding="sm" withBorder>
+                  <Text size="xs" c="dimmed">Queued</Text>
+                  <Title order={4}>{queueStatus.queued}</Title>
+                </Card>
+                <Card padding="sm" withBorder>
+                  <Text size="xs" c="dimmed">Submitting</Text>
+                  <Title order={4} c="blue">{queueStatus.submitting}</Title>
+                </Card>
+                <Card padding="sm" withBorder>
+                  <Text size="xs" c="dimmed">Failed</Text>
+                  <Title order={4} c="orange">{queueStatus.failed}</Title>
+                </Card>
+                <Card padding="sm" withBorder>
+                  <Text size="xs" c="dimmed">Dead</Text>
+                  <Title order={4} c="red">{queueStatus.dead}</Title>
+                </Card>
+              </SimpleGrid>
+
+              {queueStatus.items.length > 0 && (
+                <ScrollArea>
+                  <Table striped highlightOnHover withTableBorder>
+                    <Table.Thead>
+                      <Table.Tr>
+                        <Table.Th>Invoice</Table.Th>
+                        <Table.Th>Type</Table.Th>
+                        <Table.Th>Status</Table.Th>
+                        <Table.Th>Attempts</Table.Th>
+                        <Table.Th>IRN</Table.Th>
+                        <Table.Th>Error</Table.Th>
+                        <Table.Th>Action</Table.Th>
+                      </Table.Tr>
+                    </Table.Thead>
+                    <Table.Tbody>
+                      {queueStatus.items.map((item) => (
+                        <Table.Tr key={item.id}>
+                          <Table.Td>
+                            <Text size="sm" fw={500}>
+                              {item.invoiceId.slice(0, 8)}...
+                            </Text>
+                          </Table.Td>
+                          <Table.Td>
+                            <Badge size="sm" variant="light">
+                              {item.invoiceType}
+                            </Badge>
+                          </Table.Td>
+                          <Table.Td>
+                            <Badge
+                              size="sm"
+                              color={
+                                item.status === "validated"
+                                  ? "green"
+                                  : item.status === "failed"
+                                  ? "orange"
+                                  : item.status === "dead"
+                                  ? "red"
+                                  : "blue"
+                              }
+                              variant="light"
+                            >
+                              {item.status}
+                            </Badge>
+                          </Table.Td>
+                          <Table.Td>
+                            <Text size="sm">
+                              {item.attemptCount}/{item.maxAttempts}
+                            </Text>
+                          </Table.Td>
+                          <Table.Td>
+                            <Text size="xs" style={{ fontFamily: "monospace" }}>
+                              {item.irn ?? "—"}
+                            </Text>
+                          </Table.Td>
+                          <Table.Td>
+                            <Text size="xs" c="dimmed" lineClamp={1} maw={150}>
+                              {item.lastError ?? "—"}
+                            </Text>
+                          </Table.Td>
+                          <Table.Td>
+                            {(item.status === "failed" || item.status === "dead") && (
+                              <Tooltip label="Retry submission">
+                                <ActionIcon
+                                  size="sm"
+                                  variant="light"
+                                  color="blue"
+                                  onClick={() => void handleRetry(item.id)}
+                                >
+                                  <RefreshCw size={12} />
+                                </ActionIcon>
+                              </Tooltip>
+                            )}
+                          </Table.Td>
+                        </Table.Tr>
+                      ))}
+                    </Table.Tbody>
+                  </Table>
+                </ScrollArea>
+              )}
+
+              {queueStatus.items.length === 0 && (
+                <Text c="dimmed" ta="center" py="md">
+                  No submissions in queue.
+                </Text>
+              )}
+
+              <Group justify="flex-end">
+                <Button
+                  variant="light"
+                  loading={processingQueue}
+                  onClick={() => void handleProcessQueue()}
+                  leftSection={<Send size={14} />}
+                >
+                  Process Queue Now
+                </Button>
+              </Group>
+            </Stack>
+          ) : (
+            <Text c="dimmed">No queue data available.</Text>
+          )}
+        </Card>
+      </Stack>
+
+      {/* ========================================== */}
+      {/* MANAGE CONNECTION WIZARD                   */}
+      {/* ========================================== */}
+      <Modal
+        opened={wizardOpened}
+        onClose={() => setWizardOpened(false)}
+        title="Connect FBR Digital Invoicing"
+        size="lg"
+        closeOnClickOutside={wizardStep === 0}
+      >
+        <Stepper active={wizardStep} onStepClick={setWizardStep} size="sm">
+          {/* Step 0: Business info */}
+          <Stepper.Step label="Business Info" description="Verify your details">
+            <Stack gap="md" mt="md">
+              <Text size="sm" c="dimmed">
+                Your ERP will use these details when submitting invoices to FBR.
+                They are taken from your Company Profile.
+              </Text>
+
+              <Card withBorder padding="md">
+                <Stack gap="xs">
+                  <Group justify="space-between">
+                    <Text size="xs" c="dimmed">Business Name</Text>
+                    <Text size="sm" fw={500}>{company?.name ?? "—"}</Text>
+                  </Group>
+                  <Divider />
+                  <Group justify="space-between">
+                    <Text size="xs" c="dimmed">NTN</Text>
+                    <Text size="sm" fw={500} style={{ fontFamily: "monospace" }}>
+                      {company?.ntn ?? company?.taxNumber ?? "—"}
+                    </Text>
+                  </Group>
+                  <Divider />
+                  <Group justify="space-between">
+                    <Text size="xs" c="dimmed">STRN</Text>
+                    <Text size="sm" fw={500} style={{ fontFamily: "monospace" }}>
+                      {company?.strn ?? "—"}
+                    </Text>
+                  </Group>
+                  <Divider />
+                  <Group justify="space-between">
+                    <Text size="xs" c="dimmed">Province</Text>
+                    <Text size="sm" fw={500}>{company?.province ?? "—"}</Text>
+                  </Group>
+                </Stack>
+              </Card>
+
+              <Alert color="blue" variant="light" title="FBR Integration">
+                <Text size="sm">
+                  FBR Digital Invoicing requires your business to be registered
+                  with FBR. If your NTN/STRN are missing, update your Company
+                  Profile first.
+                </Text>
+              </Alert>
+
+              <Group justify="flex-end">
+                <Button
+                  rightSection={<ArrowRight size={14} />}
+                  onClick={() => setWizardStep(1)}
+                >
+                  Continue
+                </Button>
+              </Group>
+            </Stack>
+          </Stepper.Step>
+
+          {/* Step 1: Environment + Token */}
+          <Stepper.Step label="FBR Connection" description="Enter credentials">
+            <Stack gap="md" mt="md">
+              <Box>
+                <Text fw={500} size="sm" mb={4}>Environment</Text>
+                <Select
+                  data={[
+                    { value: "sandbox", label: "Sandbox (Testing)" },
+                    { value: "production", label: "Production (Live)" },
+                  ]}
+                  value={wizEnvironment}
+                  onChange={(v) => v && setWizEnvironment(v)}
+                  disabled={canGoProduction === false}
+                />
+                {wizEnvironment === "sandbox" ? (
+                  <Text size="xs" c="dimmed" mt={4}>
+                    Used for testing only. No invoices are submitted to FBR.
+                  </Text>
+                ) : (
+                  <Text size="xs" c="orange" mt={4}>
+                    Invoices will be submitted to FBR's live system.
+                  </Text>
+                )}
+              </Box>
+
+              <Divider />
+
+              <Box>
+                <Text fw={500} size="sm" mb={4}>Security Token</Text>
+                <PasswordInput
+                  placeholder="Enter your FBR/PRAL security token"
+                  value={wizToken}
+                  onChange={(e) => setWizToken(e.currentTarget.value)}
+                />
+                <Text size="xs" c="dimmed" mt={4}>
+                  Your token is provided by FBR or a licensed integrator.
+                  It is encrypted and stored securely.
+                </Text>
+              </Box>
+
+              <Group justify="space-between" mt="md">
+                <Button variant="subtle" onClick={() => setWizardStep(0)}>
+                  Back
+                </Button>
+                <Button
+                  loading={wizSaving}
+                  disabled={!wizToken.trim()}
+                  onClick={() => void handleWizardSaveAndTest()}
+                >
+                  Save & Continue
+                </Button>
+              </Group>
+            </Stack>
+          </Stepper.Step>
+
+          {/* Step 2: Test connection */}
+          <Stepper.Step label="Verify" description="Test connection">
+            <Stack gap="md" mt="md">
+              {!wizTestResult && (
+                <>
+                  <Text size="sm" c="dimmed">
+                    Test your connection to make sure the token is valid and
+                    FBR can authenticate your business.
+                  </Text>
+                  <Center py="md">
+                    <Button
+                      loading={wizTesting}
+                      onClick={() => void handleWizardTest()}
+                      leftSection={<Zap size={14} />}
+                      size="lg"
+                    >
+                      Test Connection
+                    </Button>
+                  </Center>
+                </>
+              )}
+
+              {wizTestResult && (
+                <Card
+                  withBorder
+                  padding="md"
+                  style={{
+                    borderColor: wizTestResult.success ? "var(--mantine-color-green-4)" : "var(--mantine-color-red-4)",
+                    background: wizTestResult.success ? "var(--mantine-color-green-0)" : "var(--mantine-color-red-0)",
+                  }}
+                >
+                  <Group gap="sm" mb="sm">
+                    <ThemeIcon
+                      size={32}
+                      radius="xl"
+                      variant="light"
+                      color={wizTestResult.success ? "green" : "red"}
+                    >
+                      {wizTestResult.success ? <CheckCircle size={16} /> : <XCircle size={16} />}
+                    </ThemeIcon>
+                    <Title order={6}>
+                      {wizTestResult.success ? "Connection Successful" : "Connection Failed"}
+                    </Title>
+                  </Group>
+                  <Text size="sm">{wizTestResult.message}</Text>
+
+                  {wizTestResult.success && (
+                    <List size="sm" mt="sm" spacing={4}>
+                      <List.Item>Environment: {wizEnvironment === "production" ? "Production" : "Sandbox"}</List.Item>
+                      <List.Item>Business NTN: {company?.ntn ?? company?.taxNumber ?? "—"}</List.Item>
+                      <List.Item>
+                        {wizEnvironment === "sandbox"
+                          ? "You can now submit test invoices."
+                          : "Invoices will be submitted to FBR live."}
+                      </List.Item>
+                    </List>
+                  )}
+
+                  {!wizTestResult.success && (
+                    <List size="sm" mt="sm" spacing={4} c="dimmed">
+                      <List.Item>Verify your token is correct</List.Item>
+                      <List.Item>Check the token has not expired</List.Item>
+                      <List.Item>Ensure the token matches the selected environment</List.Item>
+                    </List>
+                  )}
+                </Card>
+              )}
+
+              <Group justify="space-between" mt="md">
+                <Button variant="subtle" onClick={() => setWizardStep(1)}>
+                  Back
+                </Button>
+                {wizTestResult?.success ? (
+                  <Button
+                    color="green"
+                    onClick={handleWizardFinish}
+                    leftSection={<Check size={14} />}
+                  >
+                    Done
+                  </Button>
+                ) : wizTestResult && !wizTestResult.success ? (
+                  <Button
+                    variant="light"
+                    onClick={() => { setWizTestResult(null); }}
+                    leftSection={<RefreshCw size={14} />}
+                  >
+                    Try Again
+                  </Button>
+                ) : null}
+              </Group>
+            </Stack>
+          </Stepper.Step>
+        </Stepper>
+      </Modal>
+    </>
+  );
+}
+
+// ==========================================
+// MODULES TAB
+// ==========================================
+
+const MODULE_DESCRIPTIONS: Record<string, { label: string; description: string }> = {
+  inventory: { label: "Inventory", description: "Products, stock management & suppliers" },
+  invoices: { label: "Invoices", description: "Create, finalize & manage customer invoices" },
+  purchase_orders: { label: "Purchasing", description: "Purchase orders from suppliers" },
+  reports: { label: "Reports", description: "Sales, stock & profit analytics" },
+  ledger: { label: "Accounts", description: "Chart of accounts & journal entries" },
+  users: { label: "Team", description: "Manage company users & roles" },
+  settings: { label: "Settings", description: "Company profile, invoice design & backup" },
+  import: { label: "Import", description: "Import products, customers & invoices from files" },
+};
+
+function ModulesTab({ companyId }: { companyId: string }) {
+  const [modules, setModules] = useState<PublicCompanyModule[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+
+  const loadModules = useCallback(async () => {
+    try {
+      const list = await listCompanyModules(companyId);
+      setModules(list);
+    } catch (e) {
+      setError(getErrorMessage(e));
+    } finally {
+      setLoading(false);
+    }
+  }, [companyId]);
+
+  useEffect(() => {
+    void loadModules();
+  }, [loadModules]);
+
+  const handleToggle = async (moduleKey: string, currentValue: boolean) => {
+    setSaving(moduleKey);
+    setError(null);
+    setSuccess(null);
+    try {
+      await setCompanyModule({ companyId, moduleKey, isEnabled: !currentValue });
+      setModules((prev) =>
+        prev.map((m) =>
+          m.moduleKey === moduleKey ? { ...m, isEnabled: !currentValue } : m,
+        ),
+      );
+      setSuccess(
+        `${MODULE_DESCRIPTIONS[moduleKey]?.label ?? moduleKey} ${!currentValue ? "enabled" : "disabled"}.`,
+      );
+    } catch (e) {
+      setError(getErrorMessage(e));
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  if (loading) {
+    return <Text c="dimmed">Loading modules...</Text>;
+  }
+
+  return (
+    <Stack gap="lg">
+      <Card withBorder padding="lg" maw={700}>
+        <Group gap="sm" mb="sm">
+          <span
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              width: 38,
+              height: 38,
+              borderRadius: 12,
+              background: "linear-gradient(135deg, #C9952A 0%, #E6C965 100%)",
+              color: "#131C39",
+            }}
+          >
+            <Zap size={18} />
+          </span>
+          <Title order={5}>Modules</Title>
+        </Group>
+        <Text size="sm" c="dimmed" mb="lg">
+          Enable or disable modules for your company. Disabled modules are hidden
+          from the sidebar and their data is not accessible.
+        </Text>
+
+        {error && (
+          <Alert color="red" title="Error" variant="light" mb="md">
+            {error}
+          </Alert>
+        )}
+        {success && (
+          <Alert color="green" title="Updated" variant="light" mb="md">
+            {success}
+          </Alert>
+        )}
+
+        <Stack gap="md">
+          {modules.map((mod) => {
+            const meta = MODULE_DESCRIPTIONS[mod.moduleKey];
+            return (
+              <Group
+                key={mod.id}
+                justify="space-between"
+                p="md"
+                style={{
+                  borderRadius: 8,
+                  border: "1px solid var(--app-border)",
+                  background: "var(--app-surface)",
+                }}
+              >
+                <Stack gap={2}>
+                  <Text fw={500} size="sm">
+                    {meta?.label ?? mod.moduleKey}
+                  </Text>
+                  <Text size="xs" c="dimmed">
+                    {meta?.description ?? mod.moduleKey}
+                  </Text>
+                </Stack>
+                <Switch
+                  checked={mod.isEnabled}
+                  onChange={() => void handleToggle(mod.moduleKey, mod.isEnabled)}
+                  disabled={
+                    saving !== null ||
+                    mod.moduleKey === "settings" ||
+                    mod.moduleKey === "ledger"
+                  }
+                />
+              </Group>
+            );
+          })}
+          {modules.length === 0 && (
+            <Text c="dimmed" ta="center" py="md">
+              No modules found. Run a database migration to seed default modules.
+            </Text>
+          )}
+        </Stack>
       </Card>
     </Stack>
   );

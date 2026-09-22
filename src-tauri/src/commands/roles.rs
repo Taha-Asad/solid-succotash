@@ -12,6 +12,7 @@
 //   (view / create / edit / delete / finalize / export / post)
 
 use crate::commands::auth::{require_current_user, SessionState};
+use crate::error::AppError;
 use crate::commands::permissions::check_permission;
 use serde::Serialize;
 use sqlx::SqlitePool;
@@ -81,7 +82,7 @@ pub async fn resolve_role(
     pool: &SqlitePool,
     company_id: &str,
     role: &str,
-) -> Result<String, String> {
+) -> Result<String, AppError> {
     let normalized = role.trim();
     if is_builtin_role(&normalized.to_lowercase()) {
         return Ok(normalized.to_lowercase());
@@ -94,19 +95,19 @@ pub async fn resolve_role(
     .bind(normalized)
     .fetch_one(pool)
     .await
-    .map_err(|e| format!("Role lookup error: {e}"))?;
+    .map_err(|e| AppError::internal(format!("Role lookup error: {e}")))?;
 
     if exists {
         Ok(normalized.to_string())
     } else {
-        Err(format!(
+        Err(AppError::internal(format!(
             "Unknown role '{normalized}'. Choose a built-in role or an existing custom role."
-        ))
+        )))
     }
 }
 
 /// Fetches the permissions for a role as a matrix (all modules × permissions).
-async fn permissions_for(pool: &SqlitePool, role: &str) -> Result<Vec<RolePermission>, String> {
+async fn permissions_for(pool: &SqlitePool, role: &str) -> Result<Vec<RolePermission>, AppError> {
     let mut out = Vec::new();
     for (module, perms) in MODULE_PERMISSIONS {
         for permission in *perms {
@@ -118,7 +119,7 @@ async fn permissions_for(pool: &SqlitePool, role: &str) -> Result<Vec<RolePermis
             .bind(permission)
             .fetch_optional(pool)
             .await
-            .map_err(|e| format!("Permission lookup error: {e}"))?
+            .map_err(|e| AppError::internal(format!("Permission lookup error: {e}")))?
             .unwrap_or(false);
             out.push(RolePermission {
                 module: module.to_string(),
@@ -144,7 +145,7 @@ fn builtin_description(role: &str) -> &'static str {
 pub async fn list_roles(
     pool: State<'_, SqlitePool>,
     session: State<'_, SessionState>,
-) -> Result<Vec<RoleInfo>, String> {
+) -> Result<Vec<RoleInfo>, AppError> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
 
     check_permission(pool.inner(), &current_user.role, "users", "view").await?;
@@ -170,7 +171,7 @@ pub async fn list_roles(
     .bind(company_id)
     .fetch_all(pool.inner())
     .await
-    .map_err(|e| format!("Database error: {e}"))?;
+    .map_err(|e| AppError::internal(format!("Database error: {e}")))?;
 
     for (name, description, _active) in custom {
         let permissions = permissions_for(pool.inner(), &name).await?;
@@ -192,11 +193,11 @@ pub async fn create_custom_role(
     session: State<'_, SessionState>,
     name: String,
     description: Option<String>,
-) -> Result<RoleInfo, String> {
+) -> Result<RoleInfo, AppError> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
 
     if current_user.role != "owner" {
-        return Err("Only the company owner can create roles".to_string());
+        return Err(AppError::internal("Only the company owner can create roles".to_string()));
     }
 
     let company_id = current_user
@@ -206,26 +207,25 @@ pub async fn create_custom_role(
 
     let name = name.trim().to_string();
     if name.is_empty() || name.len() > 30 {
-        return Err("Role name must be 1-30 characters".to_string());
+        return Err(AppError::internal("Role name must be 1-30 characters".to_string()));
     }
     if !name
         .chars()
         .all(|c| c.is_ascii_alphanumeric() || c == ' ' || c == '-' || c == '_')
     {
-        return Err(
-            "Role name may only contain letters, numbers, spaces, dashes and underscores"
-                .to_string(),
-        );
+        return Err(AppError::validation(
+            "Role name may only contain letters, numbers, spaces, dashes and underscores",
+        ));
     }
     if is_builtin_role(&name.to_lowercase()) {
-        return Err("That name is reserved for a built-in role".to_string());
+        return Err(AppError::internal("That name is reserved for a built-in role".to_string()));
     }
 
     let mut tx = pool
         .inner()
         .begin()
         .await
-        .map_err(|e| format!("Transaction error: {e}"))?;
+        .map_err(|e| AppError::internal(format!("Transaction error: {e}")))?;
 
     let exists: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM custom_roles WHERE company_id = ? AND name = ? COLLATE NOCASE",
@@ -234,10 +234,10 @@ pub async fn create_custom_role(
     .bind(&name)
     .fetch_one(&mut *tx)
     .await
-    .map_err(|e| format!("Database error: {e}"))?;
+    .map_err(|e| AppError::internal(format!("Database error: {e}")))?;
 
     if exists > 0 {
-        return Err("A role with that name already exists".to_string());
+        return Err(AppError::internal("A role with that name already exists".to_string()));
     }
 
     sqlx::query("INSERT INTO custom_roles (id, company_id, name, description) VALUES (?, ?, ?, ?)")
@@ -247,7 +247,7 @@ pub async fn create_custom_role(
         .bind(description.as_deref().unwrap_or(""))
         .execute(&mut *tx)
         .await
-        .map_err(|e| format!("Create role error: {e}"))?;
+        .map_err(|e| AppError::internal(format!("Create role error: {e}")))?;
 
     // Seed view-only permissions for every module.
     for module in ALL_MODULES {
@@ -259,12 +259,12 @@ pub async fn create_custom_role(
         .bind(module)
         .execute(&mut *tx)
         .await
-        .map_err(|e| format!("Seed permission error: {e}"))?;
+        .map_err(|e| AppError::internal(format!("Seed permission error: {e}")))?;
     }
 
     tx.commit()
         .await
-        .map_err(|e| format!("Commit error: {e}"))?;
+        .map_err(|e| AppError::internal(format!("Commit error: {e}")))?;
 
     Ok(RoleInfo {
         role: name.clone(),
@@ -281,11 +281,11 @@ pub async fn update_role_permissions(
     session: State<'_, SessionState>,
     role: String,
     permissions: Vec<UpdatePermissionInput>,
-) -> Result<RoleInfo, String> {
+) -> Result<RoleInfo, AppError> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
 
     if current_user.role != "owner" {
-        return Err("Only the company owner can change permissions".to_string());
+        return Err(AppError::internal("Only the company owner can change permissions".to_string()));
     }
 
     let company_id = current_user
@@ -294,7 +294,7 @@ pub async fn update_role_permissions(
         .ok_or("You are not assigned to a company")?;
 
     if role == "owner" {
-        return Err("The owner role always has full access and cannot be edited".to_string());
+        return Err(AppError::internal("The owner role always has full access and cannot be edited".to_string()));
     }
 
     if !is_builtin_role(&role) {
@@ -305,9 +305,9 @@ pub async fn update_role_permissions(
         .bind(&role)
         .fetch_one(pool.inner())
         .await
-        .map_err(|e| format!("Database error: {e}"))?;
+        .map_err(|e| AppError::internal(format!("Database error: {e}")))?;
         if !exists {
-            return Err("Unknown role".to_string());
+            return Err(AppError::internal("Unknown role".to_string()));
         }
     }
 
@@ -317,7 +317,7 @@ pub async fn update_role_permissions(
             .iter()
             .any(|(m, perms)| m == &p.module && perms.contains(&p.permission.as_str()));
         if !valid {
-            return Err(format!("Unknown permission {}:{}", p.module, p.permission));
+            return Err(AppError::internal(format!("Unknown permission {}:{}", p.module, p.permission)));
         }
     }
 
@@ -325,7 +325,7 @@ pub async fn update_role_permissions(
         .inner()
         .begin()
         .await
-        .map_err(|e| format!("Transaction error: {e}"))?;
+        .map_err(|e| AppError::internal(format!("Transaction error: {e}")))?;
 
     for p in &permissions {
         sqlx::query(
@@ -343,12 +343,12 @@ pub async fn update_role_permissions(
         .bind(p.allowed as i64)
         .execute(&mut *tx)
         .await
-        .map_err(|e| format!("Update permission error: {e}"))?;
+        .map_err(|e| AppError::internal(format!("Update permission error: {e}")))?;
     }
 
     tx.commit()
         .await
-        .map_err(|e| format!("Commit error: {e}"))?;
+        .map_err(|e| AppError::internal(format!("Commit error: {e}")))?;
 
     Ok(RoleInfo {
         role: role.clone(),
@@ -364,11 +364,11 @@ pub async fn delete_custom_role(
     pool: State<'_, SqlitePool>,
     session: State<'_, SessionState>,
     name: String,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
 
     if current_user.role != "owner" {
-        return Err("Only the company owner can delete roles".to_string());
+        return Err(AppError::internal("Only the company owner can delete roles".to_string()));
     }
 
     let company_id = current_user
@@ -377,7 +377,7 @@ pub async fn delete_custom_role(
         .ok_or("You are not assigned to a company")?;
 
     if is_builtin_role(&name) {
-        return Err("Built-in roles cannot be deleted".to_string());
+        return Err(AppError::internal("Built-in roles cannot be deleted".to_string()));
     }
 
     let assigned: i64 = sqlx::query_scalar(
@@ -387,38 +387,73 @@ pub async fn delete_custom_role(
     .bind(&name)
     .fetch_one(pool.inner())
     .await
-    .map_err(|e| format!("Database error: {e}"))?;
+    .map_err(|e| AppError::internal(format!("Database error: {e}")))?;
 
     if assigned > 0 {
-        return Err(format!(
+        return Err(AppError::internal(format!(
             "Cannot delete this role: {assigned} user(s) are still assigned to it"
-        ));
+        )));
     }
 
     let mut tx = pool
         .inner()
         .begin()
         .await
-        .map_err(|e| format!("Transaction error: {e}"))?;
+        .map_err(|e| AppError::internal(format!("Transaction error: {e}")))?;
 
     sqlx::query("DELETE FROM custom_roles WHERE company_id = ? AND name = ?")
         .bind(company_id)
         .bind(&name)
         .execute(&mut *tx)
         .await
-        .map_err(|e| format!("Delete role error: {e}"))?;
+        .map_err(|e| AppError::internal(format!("Delete role error: {e}")))?;
 
     sqlx::query("DELETE FROM role_permissions WHERE role = ?")
         .bind(&name)
         .execute(&mut *tx)
         .await
-        .map_err(|e| format!("Delete permissions error: {e}"))?;
+        .map_err(|e| AppError::internal(format!("Delete permissions error: {e}")))?;
 
     tx.commit()
         .await
-        .map_err(|e| format!("Commit error: {e}"))?;
+        .map_err(|e| AppError::internal(format!("Commit error: {e}")))?;
 
     Ok(())
+}
+
+/// Returns the enabled module keys for the current user's company.
+/// Owner always sees all modules. Others see only enabled company_modules.
+#[tauri::command]
+pub async fn get_my_modules(
+    pool: State<'_, SqlitePool>,
+    session: State<'_, SessionState>,
+) -> Result<Vec<String>, AppError> {
+    let current_user = require_current_user(pool.inner(), session.inner()).await?;
+
+    let company_id = current_user
+        .company_id
+        .as_ref()
+        .ok_or_else(|| AppError::forbidden("Super admins do not have a company"))?;
+
+    let modules: Vec<String> = if current_user.role == "owner" {
+        sqlx::query_scalar::<_, String>(
+            "SELECT module_key FROM company_modules WHERE company_id = ? AND is_enabled = 1",
+        )
+        .bind(company_id)
+        .fetch_all(pool.inner())
+        .await
+        .map_err(AppError::from)?
+    } else {
+        sqlx::query_scalar::<_, String>(
+            "SELECT module_key FROM company_modules WHERE company_id = ? AND is_enabled = 1",
+        )
+        .bind(company_id)
+        .fetch_all(pool.inner())
+        .await
+        .map_err(AppError::from)?
+    };
+
+    Ok(modules)
 }
 
 /// Returns the current user's role + allowed permissions. Used by the
@@ -427,7 +462,7 @@ pub async fn delete_custom_role(
 pub async fn get_my_permissions(
     pool: State<'_, SqlitePool>,
     session: State<'_, SessionState>,
-) -> Result<RoleInfo, String> {
+) -> Result<RoleInfo, AppError> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
 
     let permissions = if current_user.role == "owner" {

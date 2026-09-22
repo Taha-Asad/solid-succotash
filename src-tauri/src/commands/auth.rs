@@ -5,6 +5,7 @@ use tauri::State;
 use tokio::sync::RwLock;
 
 use crate::commands::audit::log_audit;
+use crate::error::AppError;
 
 // ==========================================
 // PUBLIC USER
@@ -32,7 +33,7 @@ impl LoginAttemptTracker {
     /// key = email address (or IP for future)
     /// max_attempts = how many tries in the window
     /// window = time window
-    pub fn check(&self, key: &str, max_attempts: usize, window: Duration) -> Result<usize, String> {
+    pub fn check(&self, key: &str, max_attempts: usize, window: Duration) -> Result<usize, AppError> {
         let mut map = self.attempts.lock().map_err(|_| "Lock error".to_string())?;
         let now = Instant::now();
         let entry = map.entry(key.to_lowercase()).or_insert_with(Vec::new);
@@ -44,10 +45,10 @@ impl LoginAttemptTracker {
             let remaining = window
                 .checked_sub(now.duration_since(entry[0]))
                 .unwrap_or(Duration::ZERO);
-            Err(format!(
+            Err(AppError::internal(format!(
                 "Too many login attempts. Try again in {} seconds.",
                 remaining.as_secs()
-            ))
+            )))
         } else {
             Ok(max_attempts - entry.len())
         }
@@ -134,49 +135,49 @@ impl SessionState {
 // VALIDATION HELPERS
 // ==========================================
 
-pub(crate) fn normalize_email(email: &str) -> Result<String, String> {
+pub(crate) fn normalize_email(email: &str) -> Result<String, AppError> {
     let email = email.trim().to_lowercase();
 
     if email.len() > 254 {
-        return Err("Email is too long".to_string());
+        return Err(AppError::internal("Email is too long".to_string()));
     }
 
     let Some((local, domain)) = email.split_once('@') else {
-        return Err("Invalid email address".to_string());
+        return Err(AppError::internal("Invalid email address".to_string()));
     };
 
     if local.is_empty() || domain.is_empty() || domain.contains('@') || !domain.contains('.') {
-        return Err("Invalid email address".to_string());
+        return Err(AppError::internal("Invalid email address".to_string()));
     }
 
     Ok(email)
 }
 
-pub(crate) fn validate_person_name(name: &str) -> Result<String, String> {
+pub(crate) fn validate_person_name(name: &str) -> Result<String, AppError> {
     let name = name.trim();
 
     let character_count = name.chars().count();
 
     if character_count < 2 {
-        return Err("Full name must contain at least 2 characters".to_string());
+        return Err(AppError::internal("Full name must contain at least 2 characters".to_string()));
     }
 
     if character_count > 100 {
-        return Err("Full name cannot exceed 100 characters".to_string());
+        return Err(AppError::internal("Full name cannot exceed 100 characters".to_string()));
     }
 
     Ok(name.to_string())
 }
 
-pub(crate) fn validate_password(password: &str) -> Result<(), String> {
+pub(crate) fn validate_password(password: &str) -> Result<(), AppError> {
     if password.chars().count() < 8 {
-        return Err("Password must contain at least 8 characters".to_string());
+        return Err(AppError::internal("Password must contain at least 8 characters".to_string()));
     }
 
     // Traditional bcrypt only considers up to 72 bytes.
     // Rejecting longer passwords prevents misleading password behavior.
     if password.len() > 72 {
-        return Err("Password cannot exceed 72 bytes".to_string());
+        return Err(AppError::internal("Password cannot exceed 72 bytes".to_string()));
     }
 
     Ok(())
@@ -188,23 +189,23 @@ pub(crate) fn validate_password(password: &str) -> Result<(), String> {
 
 // bcrypt is CPU intensive. spawn_blocking prevents bcrypt from blocking
 // Tauri's asynchronous runtime while it works.
-pub(crate) async fn hash_password(password: &str) -> Result<String, String> {
+pub(crate) async fn hash_password(password: &str) -> Result<String, AppError> {
     let password = password.to_string();
 
     tokio::task::spawn_blocking(move || bcrypt_hash(password, DEFAULT_COST))
         .await
-        .map_err(|error| format!("Password worker failed: {error}"))?
-        .map_err(|error| format!("Failed to hash password: {error}"))
+        .map_err(|error| AppError::internal(format!("Password worker failed: {error}")))?
+        .map_err(|error| AppError::internal(format!("Failed to hash password: {error}")))
 }
 
-async fn verify_password(password: &str, password_hash: &str) -> Result<bool, String> {
+async fn verify_password(password: &str, password_hash: &str) -> Result<bool, AppError> {
     let password = password.to_string();
     let password_hash = password_hash.to_string();
 
     tokio::task::spawn_blocking(move || bcrypt_verify(password, &password_hash))
         .await
-        .map_err(|error| format!("Password worker failed: {error}"))?
-        .map_err(|error| format!("Failed to verify password: {error}"))
+        .map_err(|error| AppError::internal(format!("Password worker failed: {error}")))?
+        .map_err(|error| AppError::internal(format!("Failed to verify password: {error}")))
 }
 
 pub(crate) fn map_user_write_error(error: sqlx::Error) -> String {
@@ -237,13 +238,13 @@ pub(crate) async fn set_current_user(session: &SessionState, user: PublicUser) {
 pub(crate) async fn require_current_user(
     pool: &SqlitePool,
     session: &SessionState,
-) -> Result<PublicUser, String> {
+) -> Result<PublicUser, AppError> {
     let session_user_id = {
         let session_guard = session.current_user.read().await;
 
         session_guard.as_ref().map(|user| user.id.clone())
     }
-    .ok_or_else(|| "You must log in first".to_string())?;
+    .ok_or_else(|| AppError::internal("You must log in first".to_string()))?;
 
     let user = sqlx::query_as::<_, PublicUser>(
         r#"
@@ -278,7 +279,7 @@ pub(crate) async fn require_current_user(
         None => {
             *session.current_user.write().await = None;
 
-            Err("Your account or company is no longer active. Please log in again.".to_string())
+            Err(AppError::internal("Your account or company is no longer active. Please log in again.".to_string()))
         }
     }
 }
@@ -294,7 +295,7 @@ pub async fn login_user(
     tracker: State<'_, LoginAttemptTracker>,
     email: String,
     password: String,
-) -> Result<PublicUser, String> {
+) -> Result<PublicUser, AppError> {
     let email = normalize_email(&email)?;
 
     // Rate limit: 5 attempts per minute per email (PECA §16.2)
@@ -331,7 +332,7 @@ pub async fn login_user(
         Some(user) => user,
         None => {
             tracker.record(&email);
-            return Err("Invalid email or password".to_string());
+            return Err(AppError::internal("Invalid email or password".to_string()));
         }
     };
 
@@ -339,7 +340,7 @@ pub async fn login_user(
 
     if !password_is_correct {
         tracker.record(&email);
-        return Err("Invalid email or password".to_string());
+        return Err(AppError::internal("Invalid email or password".to_string()));
     }
 
     tracker.clear(&email);
@@ -366,7 +367,7 @@ pub async fn login_user(
 // ==========================================
 
 #[tauri::command]
-pub async fn logout_user(session: State<'_, SessionState>) -> Result<(), String> {
+pub async fn logout_user(session: State<'_, SessionState>) -> Result<(), AppError> {
     *session.current_user.write().await = None;
     Ok(())
 }
@@ -375,7 +376,7 @@ pub async fn logout_user(session: State<'_, SessionState>) -> Result<(), String>
 pub async fn current_user(
     pool: State<'_, SqlitePool>,
     session: State<'_, SessionState>,
-) -> Result<PublicUser, String> {
+) -> Result<PublicUser, AppError> {
     require_current_user(pool.inner(), session.inner()).await
 }
 
@@ -388,7 +389,7 @@ pub async fn update_my_profile(
     pool: State<'_, SqlitePool>,
     session: State<'_, SessionState>,
     full_name: String,
-) -> Result<PublicUser, String> {
+) -> Result<PublicUser, AppError> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
 
     let full_name = validate_person_name(&full_name)?;
@@ -430,7 +431,7 @@ pub async fn change_my_password(
     session: State<'_, SessionState>,
     current_password: String,
     new_password: String,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
 
     validate_password(&new_password)?;
@@ -446,13 +447,13 @@ pub async fn change_my_password(
         verify_password(&current_password, &stored_password_hash).await?;
 
     if !current_password_is_correct {
-        return Err("Current password is incorrect".to_string());
+        return Err(AppError::internal("Current password is incorrect".to_string()));
     }
 
     let same_as_old_password = verify_password(&new_password, &stored_password_hash).await?;
 
     if same_as_old_password {
-        return Err("New password must be different from the current password".to_string());
+        return Err(AppError::internal("New password must be different from the current password".to_string()));
     }
 
     let new_password_hash = hash_password(&new_password).await?;
@@ -512,7 +513,7 @@ pub async fn change_my_password(
 pub async fn save_session(
     pool: State<'_, SqlitePool>,
     session: State<'_, SessionState>,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
 
     sqlx::query(
@@ -527,7 +528,7 @@ pub async fn save_session(
     .bind(&current_user.id)
     .execute(pool.inner())
     .await
-    .map_err(|e| format!("Failed to save session: {e}"))?;
+    .map_err(|e| AppError::internal(format!("Failed to save session: {e}")))?;
 
     Ok(())
 }
@@ -539,17 +540,17 @@ pub async fn save_session(
 pub async fn load_saved_session(
     pool: State<'_, SqlitePool>,
     session: State<'_, SessionState>,
-) -> Result<PublicUser, String> {
+) -> Result<PublicUser, AppError> {
     // 1. Check if there's a saved session
     let saved_user_id =
         sqlx::query_scalar::<_, String>("SELECT user_id FROM app_session WHERE id = 'current'")
             .fetch_optional(pool.inner())
             .await
-            .map_err(|e| format!("Session lookup error: {e}"))?;
+            .map_err(|e| AppError::internal(format!("Session lookup error: {e}")))?;
 
     let user_id = match saved_user_id {
         Some(id) => id,
-        None => return Err("No saved session".to_string()),
+        None => return Err(AppError::internal("No saved session".to_string())),
     };
 
     // 2. Load the user from the database
@@ -564,7 +565,7 @@ pub async fn load_saved_session(
     .bind(&user_id)
     .fetch_optional(pool.inner())
     .await
-    .map_err(|e| format!("User lookup error: {e}"))?;
+    .map_err(|e| AppError::internal(format!("User lookup error: {e}")))?;
 
     let user = match user_row {
         Some(u) => u,
@@ -573,7 +574,7 @@ pub async fn load_saved_session(
             let _ = sqlx::query("DELETE FROM app_session WHERE id = 'current'")
                 .execute(pool.inner())
                 .await;
-            return Err("Saved user no longer active".to_string());
+            return Err(AppError::internal("Saved user no longer active".to_string()));
         }
     };
 
@@ -597,11 +598,11 @@ pub async fn load_saved_session(
 
 /// Clears the saved session (called on logout).
 #[tauri::command]
-pub async fn clear_saved_session(pool: State<'_, SqlitePool>) -> Result<(), String> {
+pub async fn clear_saved_session(pool: State<'_, SqlitePool>) -> Result<(), AppError> {
     sqlx::query("DELETE FROM app_session WHERE id = 'current'")
         .execute(pool.inner())
         .await
-        .map_err(|e| format!("Failed to clear session: {e}"))?;
+        .map_err(|e| AppError::internal(format!("Failed to clear session: {e}")))?;
 
     Ok(())
 }
