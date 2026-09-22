@@ -58,10 +58,18 @@ pub async fn execute_atomic_backup(pool: &SqlitePool, save_path: &str) -> Result
     let escaped_path = save_path.replace('\'', "''");
     let vacuum_sql = format!("VACUUM INTO '{escaped_path}'");
 
-    sqlx::query(sqlx::AssertSqlSafe(vacuum_sql))
+    let res = sqlx::query(sqlx::AssertSqlSafe(vacuum_sql))
         .execute(pool)
-        .await
-        .map_err(|e| AppError::internal(format!("Online backup failed via VACUUM INTO: {e}")))?;
+        .await;
+
+    if let Err(e) = res {
+        // If VACUUM INTO fails partway through (e.g. disk full, permission denied),
+        // delete the partial corrupt snapshot file to avoid invalid restore candidates.
+        if target.exists() {
+            let _ = std::fs::remove_file(target);
+        }
+        return Err(AppError::internal(format!("Online backup failed via VACUUM INTO: {e}")));
+    }
 
     Ok(())
 }

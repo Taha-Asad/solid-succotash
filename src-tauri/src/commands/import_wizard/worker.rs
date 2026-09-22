@@ -82,6 +82,10 @@ async fn prepare_import(
     }
 
     // ---- Quotas (spec §23.10) ----
+    if request.import_data && request.file_bytes.is_empty() {
+        return Err(AppError::validation("Uploaded import file is empty."));
+    }
+
     if request.file_bytes.len() > MAX_IMPORT_FILE_BYTES {
         return Err(AppError::internal(format!(
             "File too large ({} bytes). Maximum allowed is {} MB.",

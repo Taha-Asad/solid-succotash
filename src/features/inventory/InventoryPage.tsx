@@ -38,6 +38,7 @@ import {
   Group,
   Modal,
   NumberInput,
+  Pagination,
   Select,
   SimpleGrid,
   Stack,
@@ -58,7 +59,6 @@ import { useForm } from "@mantine/form";
 
 import { useMediaQuery } from "@mantine/hooks";
 import {
-  Boxes,
   Package,
   PackagePlus,
   Tags,
@@ -68,12 +68,14 @@ import {
   History,
   Search,
   FileSpreadsheet,
-  Wallet,
   AlertTriangle,
-  Info,
   CalendarClock,
   CalendarDays,
   Trash2,
+  TrendingUp,
+  Download,
+  MoreVertical,
+  CheckCircle2,
 } from "lucide-react";
 
 import {
@@ -96,10 +98,6 @@ import {
   listProductBatches,
   listExpiringBatches,
   writeOffBatch,
-  listUnits,
-  createUnit,
-  updateUnit,
-  deleteUnit,
   getErrorMessage,
   listCustomFields,
   IMPORT_COMPLETE_EVENT,
@@ -111,7 +109,6 @@ import type {
   PublicStockBatch,
   PublicStockMovement,
   PublicSupplier,
-  PublicUnit,
   PublicUser,
 } from "../../types/backend";
 
@@ -121,6 +118,7 @@ import {
 } from "../../components/AppDateInput";
 import { INK } from "../../theme";
 import { reportOnboardingEvent } from "../../onboarding/bus";
+import ProductFormPage from "./ProductFormPage";
 
 // ==========================================
 // DESIGN TOKENS — shared, defined in src/theme.ts
@@ -240,41 +238,44 @@ function EmptyState({
 export default function InventoryPage({ onOpenImport }: InventoryPageProps) {
   const perms = usePermissions();
   const isMobileHeader = useMediaQuery("(max-width: 36em)");
+  const [isFormMode, setIsFormMode] = useState(false);
 
   return (
     <Stack gap="lg">
-      <Group justify="space-between" align="flex-end" wrap="wrap">
-        <Stack gap={2}>
-          <Eyebrow>Inventory</Eyebrow>
-          <Title order={2} style={{ color: INK.text, letterSpacing: -0.3 }}>
-            Inventory Management
-          </Title>
-          <Text size="sm" c="dimmed">
-            Track products, stock levels, categories and suppliers in one place.
-          </Text>
-        </Stack>
-        {perms.canManage && (
-          <Button
-            leftSection={<FileSpreadsheet size={16} />}
-            variant="filled"
-            color="dark"
-            fullWidth={isMobileHeader}
-            styles={{
-              root: {
-                backgroundColor: INK.navy,
-                "&:hover": { backgroundColor: INK.navySoft },
-              },
-            }}
-            onClick={() => {
-              onOpenImport?.();
-              reportOnboardingEvent({ type: "wizard-opened" });
-            }}
-            data-tour="import-button"
-          >
-            Import from Excel / CSV
-          </Button>
-        )}
-      </Group>
+      {!isFormMode && (
+        <Group justify="space-between" align="flex-end" wrap="wrap">
+          <Stack gap={2}>
+            <Eyebrow>Inventory</Eyebrow>
+            <Title order={2} style={{ color: INK.text, letterSpacing: -0.3 }}>
+              Inventory Management
+            </Title>
+            <Text size="sm" c="dimmed">
+              Track products, stock levels, categories and suppliers in one place.
+            </Text>
+          </Stack>
+          {perms.canManage && (
+            <Button
+              leftSection={<FileSpreadsheet size={16} />}
+              variant="filled"
+              color="dark"
+              fullWidth={isMobileHeader}
+              styles={{
+                root: {
+                  backgroundColor: INK.navy,
+                  "&:hover": { backgroundColor: INK.navySoft },
+                },
+              }}
+              onClick={() => {
+                onOpenImport?.();
+                reportOnboardingEvent({ type: "wizard-opened" });
+              }}
+              data-tour="import-button"
+            >
+              Import from Excel / CSV
+            </Button>
+          )}
+        </Group>
+      )}
 
       <Tabs
         defaultValue="products"
@@ -293,20 +294,22 @@ export default function InventoryPage({ onOpenImport }: InventoryPageProps) {
           },
         }}
       >
-        <Tabs.List grow={isMobileHeader}>
-          <Tabs.Tab value="products" leftSection={<Package size={16} />}>
-            Products
-          </Tabs.Tab>
-          <Tabs.Tab value="categories" leftSection={<Tags size={16} />}>
-            Categories
-          </Tabs.Tab>
-          <Tabs.Tab value="suppliers" leftSection={<Truck size={16} />}>
-            Suppliers
-          </Tabs.Tab>
-        </Tabs.List>
+        {!isFormMode && (
+          <Tabs.List grow={isMobileHeader}>
+            <Tabs.Tab value="products" leftSection={<Package size={16} />}>
+              Products
+            </Tabs.Tab>
+            <Tabs.Tab value="categories" leftSection={<Tags size={16} />}>
+              Categories
+            </Tabs.Tab>
+            <Tabs.Tab value="suppliers" leftSection={<Truck size={16} />}>
+              Suppliers
+            </Tabs.Tab>
+          </Tabs.List>
+        )}
 
-        <Tabs.Panel value="products" pt="md">
-          <ProductsTab />
+        <Tabs.Panel value="products" pt={isFormMode ? 0 : "md"}>
+          <ProductsTab onFormModeChange={setIsFormMode} />
         </Tabs.Panel>
 
         <Tabs.Panel value="categories" pt="md">
@@ -1149,7 +1152,52 @@ function ExpiryBadge({ date }: { date: string }) {
   );
 }
 
-function ProductsTab() {
+// Helper to export products to CSV
+function exportProductsToCsv(
+  products: PublicProduct[],
+  categoryMap: Map<string, string>,
+  supplierMap: Map<string, string>,
+) {
+  const headers = [
+    "SKU",
+    "Product Name",
+    "Category",
+    "Supplier",
+    "Cost Price",
+    "Sell Price",
+    "Stock Quantity",
+    "Unit",
+  ];
+  const rows = products.map((p) => [
+    `"${p.sku.replace(/"/g, '""')}"`,
+    `"${p.name.replace(/"/g, '""')}"`,
+    `"${(p.categoryId ? categoryMap.get(p.categoryId) ?? "" : "").replace(/"/g, '""')}"`,
+    `"${(p.supplierId ? supplierMap.get(p.supplierId) ?? "" : "").replace(/"/g, '""')}"`,
+    (p.costPrice / 100).toFixed(2),
+    (p.sellPrice / 100).toFixed(2),
+    p.quantityInStock,
+    `"${(p.unit ?? "").replace(/"/g, '""')}"`,
+  ]);
+  const csvContent =
+    "data:text/csv;charset=utf-8," +
+    [headers.join(","), ...rows.map((e) => e.join(","))].join("\n");
+  const encodedUri = encodeURI(csvContent);
+  const link = document.createElement("a");
+  link.setAttribute("href", encodedUri);
+  link.setAttribute(
+    "download",
+    `products_export_${new Date().toISOString().slice(0, 10)}.csv`,
+  );
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
+interface ProductsTabProps {
+  onFormModeChange?: (active: boolean) => void;
+}
+
+function ProductsTab({ onFormModeChange }: ProductsTabProps) {
   const perms = usePermissions();
   const canCreate = perms.can("inventory", "create");
   const canEdit = perms.can("inventory", "edit");
@@ -1161,26 +1209,26 @@ function ProductsTab() {
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
 
-  // Modals
-  const [productModalOpen, setProductModalOpen] = useState(false);
-  const [editingProduct, setEditingProduct] = useState<PublicProduct | null>(
-    null,
-  );
+  // Mode: list vs form (dedicated Kusale full-page)
+  const [viewMode, setViewMode] = useState<"list" | "form">("list");
+  const [selectedCategory, setSelectedCategory] = useState<string>("all");
+  const [selectedStatus, setSelectedStatus] = useState<string>("all");
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
+
+  // Editing product
+  const [editingProduct, setEditingProduct] = useState<PublicProduct | null>(null);
+
+  // Other Modals (stock, movements, batches, write-off)
   const [stockModalOpen, setStockModalOpen] = useState(false);
   const [stockProduct, setStockProduct] = useState<PublicProduct | null>(null);
   const [movementsModalOpen, setMovementsModalOpen] = useState(false);
   const [movementsProduct, setMovementsProduct] =
     useState<PublicProduct | null>(null);
-  const [expiringBatches, setExpiringBatches] = useState<PublicStockBatch[]>(
-    [],
-  );
+  const [expiringBatches, setExpiringBatches] = useState<PublicStockBatch[]>([]);
   const [batchesModalOpen, setBatchesModalOpen] = useState(false);
-  const [batchesProduct, setBatchesProduct] = useState<PublicProduct | null>(
-    null,
-  );
-  const [writeOffTarget, setWriteOffTarget] = useState<PublicStockBatch | null>(
-    null,
-  );
+  const [batchesProduct, setBatchesProduct] = useState<PublicProduct | null>(null);
+  const [writeOffTarget, setWriteOffTarget] = useState<PublicStockBatch | null>(null);
 
   // Custom field definitions (created during import)
   const [customFieldDefs, setCustomFieldDefs] = useState<
@@ -1234,9 +1282,6 @@ function ProductsTab() {
     load();
   }, [load]);
 
-  // Re-fetch products when an import completes in the background.
-  // The import wizard runs as a fire-and-forget job; the inventory page
-  // may already be mounted and needs to refresh to show newly imported data.
   useEffect(() => {
     const unlisten = listen(IMPORT_COMPLETE_EVENT, () => {
       load();
@@ -1247,31 +1292,70 @@ function ProductsTab() {
   }, [load]);
 
   // Lookup maps for displaying names
-  const categoryMap = new Map(categories.map((c) => [c.id, c.name]));
-  const supplierMap = new Map(suppliers.map((s) => [s.id, s.name]));
+  const categoryMap = useMemo(
+    () => new Map(categories.map((c) => [c.id, c.name])),
+    [categories],
+  );
+  const supplierMap = useMemo(
+    () => new Map(suppliers.map((s) => [s.id, s.name])),
+    [suppliers],
+  );
 
   const filtered = useMemo(() => {
+    let result = products;
+
     const q = query.trim().toLowerCase();
-    if (!q) return products;
-    return products.filter(
-      (p) =>
-        p.sku.toLowerCase().includes(q) ||
-        p.name.toLowerCase().includes(q) ||
-        (p.categoryId &&
-          (categoryMap.get(p.categoryId) ?? "").toLowerCase().includes(q)) ||
-        (p.supplierId &&
-          (supplierMap.get(p.supplierId) ?? "").toLowerCase().includes(q)),
-    );
-  }, [products, query, categoryMap, supplierMap]);
+    if (q) {
+      result = result.filter(
+        (p) =>
+          p.sku.toLowerCase().includes(q) ||
+          p.name.toLowerCase().includes(q) ||
+          (p.categoryId &&
+            (categoryMap.get(p.categoryId) ?? "").toLowerCase().includes(q)) ||
+          (p.supplierId &&
+            (supplierMap.get(p.supplierId) ?? "").toLowerCase().includes(q)),
+      );
+    }
+
+    if (selectedCategory && selectedCategory !== "all") {
+      result = result.filter((p) => p.categoryId === selectedCategory);
+    }
+
+    if (selectedStatus === "in_stock") {
+      result = result.filter((p) => p.quantityInStock >= 10);
+    } else if (selectedStatus === "low_stock") {
+      result = result.filter(
+        (p) => p.quantityInStock > 0 && p.quantityInStock < 10,
+      );
+    } else if (selectedStatus === "out_of_stock") {
+      result = result.filter((p) => p.quantityInStock <= 0);
+    }
+
+    return result;
+  }, [products, query, selectedCategory, selectedStatus, categoryMap, supplierMap]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const paginatedProducts = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return filtered.slice(start, start + pageSize);
+  }, [filtered, page, pageSize]);
 
   function openCreate() {
     setEditingProduct(null);
-    setProductModalOpen(true);
+    setViewMode("form");
+    onFormModeChange?.(true);
   }
 
   function openEdit(prod: PublicProduct) {
     setEditingProduct(prod);
-    setProductModalOpen(true);
+    setViewMode("form");
+    onFormModeChange?.(true);
+  }
+
+  function closeForm() {
+    setViewMode("list");
+    setEditingProduct(null);
+    onFormModeChange?.(false);
   }
 
   function openStock(prod: PublicProduct) {
@@ -1301,7 +1385,6 @@ function ProductsTab() {
     unit: string;
   }) {
     try {
-      // Convert display prices to paisa
       const costPricePaisa = displayToPaisa(values.costPrice);
       const sellPricePaisa = displayToPaisa(values.sellPrice);
       const taxRateBasisPoints = Math.round(values.taxRate * 100);
@@ -1333,7 +1416,7 @@ function ProductsTab() {
         });
         reportOnboardingEvent({ type: "product-created" });
       }
-      setProductModalOpen(false);
+      closeForm();
       await load();
     } catch (err) {
       throw new Error(getErrorMessage(err));
@@ -1379,62 +1462,280 @@ function ProductsTab() {
     }
   }
 
+  // If in form mode, render the dedicated Kusale full-page form
+  if (viewMode === "form") {
+    return (
+      <ProductFormPage
+        initial={editingProduct}
+        categories={categories}
+        suppliers={suppliers}
+        onSave={handleSaveProduct}
+        onCancel={closeForm}
+      />
+    );
+  }
+
   // Calculate totals
   const totalProducts = products.length;
+  const inStockProducts = products.filter((p) => p.quantityInStock >= 10);
+  const lowStockCount = products.filter(
+    (p) => p.quantityInStock > 0 && p.quantityInStock < 10,
+  ).length;
+  const outOfStockCount = products.filter((p) => p.quantityInStock <= 0).length;
   const totalStock = products.reduce((sum, p) => sum + p.quantityInStock, 0);
   const totalValue = products.reduce(
     (sum, p) => sum + p.sellPrice * p.quantityInStock,
     0,
   );
-  const lowStockCount = products.filter(
-    (p) => p.quantityInStock > 0 && p.quantityInStock < 10,
-  ).length;
-  const outOfStockCount = products.filter((p) => p.quantityInStock <= 0).length;
 
   return (
-    <Stack>
-      {/* ---- Summary cards ---- */}
-      <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }}>
-        <StatCard
-          icon={<Package size={18} />}
-          label="Total Products"
-          value={totalProducts.toLocaleString()}
-        />
-        <StatCard
-          icon={<Boxes size={18} />}
-          label="Total Stock Units"
-          value={totalStock.toLocaleString()}
-        />
-        <StatCard
-          icon={<Wallet size={18} />}
-          label="Stock Value (at sell price)"
-          value={(totalValue / 100).toLocaleString(undefined, {
-            minimumFractionDigits: 2,
-          })}
-          accent
-        />
-        <StatCard
-          icon={<AlertTriangle size={18} />}
-          label="Needs Attention"
-          value={`${lowStockCount + outOfStockCount}`}
-          hint={
-            outOfStockCount > 0
-              ? `${outOfStockCount} out of stock`
-              : lowStockCount > 0
-                ? `${lowStockCount} running low`
-                : "All stocked"
-          }
-          tone={
-            outOfStockCount > 0
-              ? "danger"
-              : lowStockCount > 0
-                ? "warning"
-                : "success"
-          }
-        />
+    <Stack gap="xl">
+      {/* ---- 4 Summary Cards (Directly Modeled on Pharmly Reference) ---- */}
+      <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }} spacing="lg">
+        {/* Card 1: Total Products (Hero Emerald) */}
+        <Box
+          p={22}
+          style={{
+            background: "#103830",
+            borderRadius: 20,
+            color: "#ffffff",
+            boxShadow: "0 6px 20px -4px rgba(16, 56, 48, 0.25)",
+            display: "flex",
+            flexDirection: "column",
+            justifyContent: "space-between",
+            minHeight: 140,
+          }}
+        >
+          <Group justify="space-between" align="flex-start">
+            <Stack gap={2}>
+              <Text size="sm" fw={600} style={{ color: "#ffffff", letterSpacing: -0.2 }}>
+                Total Products
+              </Text>
+              <Text size="xs" style={{ color: "#82a8a0" }}>
+                Active in catalog
+              </Text>
+            </Stack>
+            <ActionIcon variant="subtle" color="gray" size="sm" radius="pill">
+              <MoreVertical size={16} color="#82a8a0" />
+            </ActionIcon>
+          </Group>
+
+          <Group justify="space-between" align="baseline" mt={12}>
+            <Text fw={800} size="30px" style={{ ...LEDGER_NUM, color: "#ffffff", lineHeight: 1 }}>
+              {totalProducts.toLocaleString()}
+            </Text>
+            <Box
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 4,
+                background: "#1a4940",
+                color: "#6ee7b7",
+                borderRadius: 999,
+                padding: "3px 10px",
+                fontSize: 12,
+                fontWeight: 700,
+              }}
+            >
+              <TrendingUp size={12} strokeWidth={2.5} />
+              <span>100% Tracked</span>
+            </Box>
+          </Group>
+
+          <Text size="xs" mt={10} style={{ color: "#82a8a0" }}>
+            Stock Valuation:{" "}
+            <strong style={{ color: "#ffffff", ...LEDGER_NUM }}>
+              Rs. {(totalValue / 100).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+            </strong>
+          </Text>
+        </Box>
+
+        {/* Card 2: In Stock */}
+        <Box
+          p={22}
+          style={{
+            background: "var(--app-surface)",
+            border: "1px solid var(--app-border)",
+            borderRadius: 20,
+            boxShadow: "0 4px 18px -4px rgba(18, 28, 56, 0.03)",
+            display: "flex",
+            flexDirection: "column",
+            justifyContent: "space-between",
+            minHeight: 140,
+          }}
+        >
+          <Group justify="space-between" align="flex-start">
+            <Stack gap={2}>
+              <Text size="sm" fw={600} style={{ color: "var(--app-text)", letterSpacing: -0.2 }}>
+                In Stock
+              </Text>
+              <Text size="xs" c="dimmed">
+                Healthy levels (≥10)
+              </Text>
+            </Stack>
+            <ActionIcon variant="subtle" color="gray" size="sm" radius="pill">
+              <MoreVertical size={16} />
+            </ActionIcon>
+          </Group>
+
+          <Group justify="space-between" align="baseline" mt={12}>
+            <Text fw={800} size="30px" style={{ ...LEDGER_NUM, color: "var(--app-text)", lineHeight: 1 }}>
+              {inStockProducts.length.toLocaleString()}
+            </Text>
+            <Box
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 4,
+                background: "#ecfdf5",
+                color: "#059669",
+                borderRadius: 999,
+                padding: "3px 10px",
+                fontSize: 12,
+                fontWeight: 700,
+              }}
+            >
+              <CheckCircle2 size={12} strokeWidth={2.5} />
+              <span>Healthy</span>
+            </Box>
+          </Group>
+
+          <Text size="xs" mt={10} c="dimmed">
+            Total Units:{" "}
+            <strong style={{ color: "var(--app-text)", ...LEDGER_NUM }}>
+              {totalStock.toLocaleString()} units
+            </strong>
+          </Text>
+        </Box>
+
+        {/* Card 3: Low Stock */}
+        <Box
+          p={22}
+          style={{
+            background: "var(--app-surface)",
+            border: "1px solid var(--app-border)",
+            borderRadius: 20,
+            boxShadow: "0 4px 18px -4px rgba(18, 28, 56, 0.03)",
+            display: "flex",
+            flexDirection: "column",
+            justifyContent: "space-between",
+            minHeight: 140,
+          }}
+        >
+          <Group justify="space-between" align="flex-start">
+            <Stack gap={2}>
+              <Text size="sm" fw={600} style={{ color: "var(--app-text)", letterSpacing: -0.2 }}>
+                Low Stock
+              </Text>
+              <Text size="xs" c="dimmed">
+                Running low (&lt;10)
+              </Text>
+            </Stack>
+            <ActionIcon variant="subtle" color="gray" size="sm" radius="pill">
+              <MoreVertical size={16} />
+            </ActionIcon>
+          </Group>
+
+          <Group justify="space-between" align="baseline" mt={12}>
+            <Text fw={800} size="30px" style={{ ...LEDGER_NUM, color: "var(--app-text)", lineHeight: 1 }}>
+              {lowStockCount.toLocaleString()}
+            </Text>
+            <Box
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 4,
+                background: "#fffbeb",
+                color: "#d97706",
+                borderRadius: 999,
+                padding: "3px 10px",
+                fontSize: 12,
+                fontWeight: 700,
+              }}
+            >
+              <AlertTriangle size={12} strokeWidth={2.5} />
+              <span>Needs Reorder</span>
+            </Box>
+          </Group>
+
+          <Text size="xs" mt={10} c="dimmed">
+            {lowStockCount > 0
+              ? `${lowStockCount} items below safety buffer`
+              : "All items adequately stocked"}
+          </Text>
+        </Box>
+
+        {/* Card 4: Out of Stock */}
+        <Box
+          p={22}
+          style={{
+            background: "var(--app-surface)",
+            border: "1px solid var(--app-border)",
+            borderRadius: 20,
+            boxShadow: "0 4px 18px -4px rgba(18, 28, 56, 0.03)",
+            display: "flex",
+            flexDirection: "column",
+            justifyContent: "space-between",
+            minHeight: 140,
+          }}
+        >
+          <Group justify="space-between" align="flex-start">
+            <Stack gap={2}>
+              <Text size="sm" fw={600} style={{ color: "var(--app-text)", letterSpacing: -0.2 }}>
+                Out of Stock
+              </Text>
+              <Text size="xs" c="dimmed">
+                Zero units remaining
+              </Text>
+            </Stack>
+            <ActionIcon variant="subtle" color="gray" size="sm" radius="pill">
+              <MoreVertical size={16} />
+            </ActionIcon>
+          </Group>
+
+          <Group justify="space-between" align="baseline" mt={12}>
+            <Text
+              fw={800}
+              size="30px"
+              style={{
+                ...LEDGER_NUM,
+                color: outOfStockCount > 0 ? "#e11d48" : "var(--app-text)",
+                lineHeight: 1,
+              }}
+            >
+              {outOfStockCount.toLocaleString()}
+            </Text>
+            <Box
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 4,
+                background: outOfStockCount > 0 ? "#fef2f2" : "#ecfdf5",
+                color: outOfStockCount > 0 ? "#e11d48" : "#059669",
+                borderRadius: 999,
+                padding: "3px 10px",
+                fontSize: 12,
+                fontWeight: 700,
+              }}
+            >
+              {outOfStockCount > 0 ? (
+                <AlertTriangle size={12} strokeWidth={2.5} />
+              ) : (
+                <CheckCircle2 size={12} strokeWidth={2.5} />
+              )}
+              <span>{outOfStockCount > 0 ? "Depleted" : "Zero Out"}</span>
+            </Box>
+          </Group>
+
+          <Text size="xs" mt={10} c="dimmed">
+            {outOfStockCount > 0
+              ? "Immediate supplier restock required"
+              : "No unfulfilled product demand"}
+          </Text>
+        </Box>
       </SimpleGrid>
 
-      {/* ---- Expiry warning feed ---- */}
+      {/* ---- Expiring Batches Notice (if any) ---- */}
       {expiringBatches.length > 0 && (
         <Card
           withBorder
@@ -1537,264 +1838,470 @@ function ProductsTab() {
         </Card>
       )}
 
-      {/* ---- List card ---- */}
-      <Card
-        withBorder
-        radius="md"
-        padding="lg"
-        style={{ borderColor: INK.border }}
-      >
-        <Stack>
-          <Group justify="space-between" wrap="wrap">
-            <TextInput
-              placeholder="Search by name, SKU, category or supplier..."
-              leftSection={<Search size={15} />}
-              value={query}
-              onChange={(e) => setQuery(e.currentTarget.value)}
-              w={{ base: "100%", sm: 320 }}
-            />
-            <Group gap="sm">
-              <Text size="sm" c="dimmed">
-                {filtered.length} of {totalProducts} products
-              </Text>
-              {canCreate && (
-                <Button
-                  size="sm"
-                  leftSection={<Plus size={16} />}
-                  style={{ backgroundColor: INK.navy }}
-                  onClick={openCreate}
-                  data-tour="add-product"
+      {/* ---- Toolbar (Directly from Pharmly Reference) ---- */}
+      <Group justify="space-between" align="center" wrap="wrap" gap="md">
+        {/* Left: Search & Dropdowns */}
+        <Group gap="sm" wrap="wrap" style={{ flex: 1 }}>
+          <TextInput
+            placeholder="Search products by name, SKU, category..."
+            leftSection={<Search size={16} color="#94a3b8" />}
+            value={query}
+            onChange={(e) => {
+              setQuery(e.currentTarget.value);
+              setPage(1);
+            }}
+            radius="pill"
+            style={{ minWidth: 260, flex: 1, maxWidth: 360 }}
+            styles={{
+              input: {
+                background: "var(--app-surface)",
+                borderColor: "var(--app-border)",
+                fontSize: 13,
+              },
+            }}
+          />
+
+          <Select
+            placeholder="All Categories"
+            data={[
+              { value: "all", label: "All Categories" },
+              ...categories.map((c) => ({ value: c.id, label: c.name })),
+            ]}
+            value={selectedCategory}
+            onChange={(val) => {
+              setSelectedCategory(val ?? "all");
+              setPage(1);
+            }}
+            radius="pill"
+            w={170}
+            styles={{
+              input: {
+                background: "var(--app-surface)",
+                borderColor: "var(--app-border)",
+                fontSize: 13,
+              },
+            }}
+          />
+
+          <Select
+            placeholder="All Stock Levels"
+            data={[
+              { value: "all", label: "All Stock Levels" },
+              { value: "in_stock", label: "In Stock (≥10)" },
+              { value: "low_stock", label: "Low Stock (<10)" },
+              { value: "out_of_stock", label: "Out of Stock" },
+            ]}
+            value={selectedStatus}
+            onChange={(val) => {
+              setSelectedStatus(val ?? "all");
+              setPage(1);
+            }}
+            radius="pill"
+            w={160}
+            styles={{
+              input: {
+                background: "var(--app-surface)",
+                borderColor: "var(--app-border)",
+                fontSize: 13,
+              },
+            }}
+          />
+        </Group>
+
+        {/* Right: Actions */}
+        <Group gap="sm">
+          <Button
+            variant="default"
+            radius="pill"
+            size="sm"
+            leftSection={<Download size={14} />}
+            onClick={() => exportProductsToCsv(filtered, categoryMap, supplierMap)}
+            style={{
+              borderColor: "var(--app-border)",
+              background: "var(--app-surface)",
+              fontWeight: 600,
+              fontSize: 13,
+            }}
+          >
+            Export CSV
+          </Button>
+
+          {canCreate && (
+            <Button
+              radius="pill"
+              size="sm"
+              onClick={openCreate}
+              data-tour="add-product"
+              leftSection={
+                <Box
+                  style={{
+                    width: 20,
+                    height: 20,
+                    borderRadius: 999,
+                    background: "#0c2722",
+                    color: "#cbf849",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
                 >
-                  Add Product
-                </Button>
-              )}
-            </Group>
-          </Group>
-
-          {error && (
-            <Alert
-              color="red"
-              variant="light"
-              icon={<AlertTriangle size={16} />}
-            >
-              {error}
-            </Alert>
-          )}
-
-          {/* ---- Products table ---- */}
-          {loading ? (
-            <Text c="dimmed" size="sm">
-              Loading products…
-            </Text>
-          ) : filtered.length === 0 ? (
-            <EmptyState
-              icon={<Package size={20} />}
-              title={totalProducts === 0 ? "No products yet" : "No matches"}
-              description={
-                totalProducts === 0
-                  ? "Add your first product, or import a spreadsheet to bring in many at once."
-                  : "Try a different search term, or clear the search."
+                  <Plus size={13} strokeWidth={3} />
+                </Box>
               }
-            />
-          ) : (
-            <ScrollArea>
-              <Table
-                striped
-                highlightOnHover
-                withTableBorder
-                verticalSpacing="sm"
-                miw={1040}
-              >
-                <Table.Thead>
-                  <Table.Tr>
-                    <Table.Th>SKU</Table.Th>
-                    <Table.Th>Name</Table.Th>
-                    <Table.Th>Category</Table.Th>
-                    <Table.Th>Supplier</Table.Th>
-                    <Table.Th ta="right">Cost</Table.Th>
-                    <Table.Th ta="right">Sell</Table.Th>
-                    <Table.Th ta="right">Stock</Table.Th>
-                    <Table.Th>Unit</Table.Th>
-                    {customFieldDefs.map((f) => (
-                      <Table.Th key={f.fieldName}>{f.fieldLabel}</Table.Th>
-                    ))}
-                    <Table.Th>Expiry</Table.Th>
-                    {(canEdit || canDelete) && <Table.Th>Actions</Table.Th>}
-                  </Table.Tr>
-                </Table.Thead>
-                <Table.Tbody>
-                  {filtered.map((prod) => {
-                    const stockTone =
-                      prod.quantityInStock <= 0
-                        ? "red"
-                        : prod.quantityInStock < 10
-                          ? "yellow"
-                          : "green";
-                    return (
-                      <Table.Tr key={prod.id}>
-                        <Table.Td>
-                          <Badge
-                            variant="outline"
-                            size="sm"
-                            radius="sm"
-                            color="dark"
-                            style={LEDGER_NUM}
-                          >
-                            {prod.sku}
-                          </Badge>
-                        </Table.Td>
-                        <Table.Td>
-                          <Text fw={600} size="sm" style={{ color: INK.text }}>
+              style={{
+                backgroundColor: "#cbf849",
+                color: "#0c2722",
+                fontWeight: 700,
+                fontSize: 13,
+                paddingLeft: 12,
+                paddingRight: 18,
+                border: "none",
+                boxShadow: "0 2px 10px rgba(203, 248, 73, 0.35)",
+              }}
+            >
+              Add New Product
+            </Button>
+          )}
+        </Group>
+      </Group>
+
+      {error && (
+        <Alert
+          color="red"
+          variant="light"
+          radius="md"
+          icon={<AlertTriangle size={16} />}
+        >
+          {error}
+        </Alert>
+      )}
+
+      {/* ---- Products Table Card (Pharmly Style) ---- */}
+      <Box
+        style={{
+          background: "var(--app-surface)",
+          border: "1px solid var(--app-border)",
+          borderRadius: 22,
+          boxShadow: "0 4px 18px -4px rgba(18, 28, 56, 0.03)",
+          overflow: "hidden",
+        }}
+      >
+        {loading ? (
+          <Box p={40} ta="center">
+            <Text c="dimmed" size="sm">
+              Loading inventory catalog…
+            </Text>
+          </Box>
+        ) : filtered.length === 0 ? (
+          <EmptyState
+            icon={<Package size={20} />}
+            title={totalProducts === 0 ? "No products yet" : "No matching products"}
+            description={
+              totalProducts === 0
+                ? "Add your first product or import a spreadsheet to populate the catalog."
+                : "Try searching with a different keyword or reset active filters."
+            }
+          />
+        ) : (
+          <ScrollArea>
+            <Table
+              highlightOnHover
+              verticalSpacing="md"
+              horizontalSpacing="lg"
+              miw={1040}
+              styles={{
+                thead: {
+                  background: "var(--app-soft)",
+                  borderBottom: "1px solid var(--app-border)",
+                },
+                th: {
+                  color: "#64748b",
+                  fontSize: 11,
+                  fontWeight: 700,
+                  textTransform: "uppercase",
+                  letterSpacing: 0.6,
+                  paddingTop: 14,
+                  paddingBottom: 14,
+                },
+                td: {
+                  paddingTop: 14,
+                  paddingBottom: 14,
+                  borderColor: "var(--app-border)",
+                },
+              }}
+            >
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>Product ID / SKU</Table.Th>
+                  <Table.Th>Product Name</Table.Th>
+                  <Table.Th>Category</Table.Th>
+                  <Table.Th>Supplier</Table.Th>
+                  <Table.Th ta="right">Cost Price</Table.Th>
+                  <Table.Th ta="right">Selling Price</Table.Th>
+                  <Table.Th ta="center">Stock Level</Table.Th>
+                  {customFieldDefs.map((f) => (
+                    <Table.Th key={f.fieldName}>{f.fieldLabel}</Table.Th>
+                  ))}
+                  <Table.Th>Expiry</Table.Th>
+                  {(canEdit || canDelete) && <Table.Th ta="right">Actions</Table.Th>}
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {paginatedProducts.map((prod) => {
+                  const inStock = prod.quantityInStock >= 10;
+                  const lowStock =
+                    prod.quantityInStock > 0 && prod.quantityInStock < 10;
+
+                  return (
+                    <Table.Tr key={prod.id}>
+                      {/* SKU */}
+                      <Table.Td>
+                        <Text
+                          size="xs"
+                          fw={600}
+                          style={{
+                            ...LEDGER_NUM,
+                            color: "var(--app-text-muted)",
+                            background: "var(--app-soft)",
+                            padding: "4px 8px",
+                            borderRadius: 6,
+                            display: "inline-block",
+                          }}
+                        >
+                          #{prod.sku}
+                        </Text>
+                      </Table.Td>
+
+                      {/* Name */}
+                      <Table.Td>
+                        <Stack gap={2}>
+                          <Text fw={600} size="sm" style={{ color: "var(--app-text)" }}>
                             {prod.name}
                           </Text>
-                        </Table.Td>
-                        <Table.Td>
-                          <Text size="sm">
-                            {prod.categoryId
-                              ? (categoryMap.get(prod.categoryId) ?? "—")
-                              : "—"}
-                          </Text>
-                        </Table.Td>
-                        <Table.Td>
-                          <Text size="sm">
-                            {prod.supplierId
-                              ? (supplierMap.get(prod.supplierId) ?? "—")
-                              : "—"}
-                          </Text>
-                        </Table.Td>
-                        <Table.Td ta="right">
-                          <Text size="sm" c="dimmed" style={LEDGER_NUM}>
-                            {paisaToDisplay(prod.costPrice)}
-                          </Text>
-                        </Table.Td>
-                        <Table.Td ta="right">
-                          <Text
-                            size="sm"
-                            fw={700}
-                            style={{ ...LEDGER_NUM, color: INK.goldDeep }}
-                          >
-                            {paisaToDisplay(prod.sellPrice)}
-                          </Text>
-                        </Table.Td>
-                        <Table.Td ta="right">
-                          <Badge
-                            color={stockTone}
-                            variant="light"
-                            radius="sm"
-                            style={LEDGER_NUM}
-                          >
-                            {prod.quantityInStock}
-                          </Badge>
-                        </Table.Td>
-                        <Table.Td>
-                          <Text size="sm">{prod.unit}</Text>
-                        </Table.Td>
-                        {customFieldDefs.map((f) => {
-                          let val = "—";
-                          if (prod.customFields) {
-                            try {
-                              const parsed = JSON.parse(prod.customFields);
-                              if (parsed[f.fieldName] != null) {
-                                val = String(parsed[f.fieldName]);
-                              }
-                            } catch { /* ignore */ }
-                          }
-                          return (
-                            <Table.Td key={f.fieldName}>
-                              <Text size="sm" c="dimmed">{val}</Text>
-                            </Table.Td>
-                          );
-                        })}
-                        <Table.Td>
-                          {prod.nextExpiryDate ? (
-                            <ExpiryBadge date={prod.nextExpiryDate} />
-                          ) : (
-                            <Text size="sm" c="dimmed">
-                              —
+                          {prod.unit && (
+                            <Text size="xs" c="dimmed">
+                              Unit: {prod.unit}
                             </Text>
                           )}
-                        </Table.Td>
-                        {(canEdit || canDelete) && (
-                          <Table.Td>
-                            <Group gap="xs">
-                              {canEdit && (
-                                <Tooltip label="Edit product">
-                                  <ActionIcon
-                                    variant="subtle"
-                                    color="dark"
-                                    onClick={() => openEdit(prod)}
-                                  >
-                                    <Pencil size={15} />
-                                  </ActionIcon>
-                                </Tooltip>
-                              )}
-                              {canEdit && (
-                                <Tooltip label="Adjust stock">
-                                  <ActionIcon
-                                    variant="subtle"
-                                    color="blue"
-                                    onClick={() => openStock(prod)}
-                                  >
-                                    <PackagePlus size={15} />
-                                  </ActionIcon>
-                                </Tooltip>
-                              )}
-                              {canEdit && prod.nextExpiryDate && (
-                                <Tooltip label="Batches / expiry">
-                                  <ActionIcon
-                                    variant="subtle"
-                                    color="orange"
-                                    onClick={() => openBatches(prod)}
-                                  >
-                                    <CalendarDays size={15} />
-                                  </ActionIcon>
-                                </Tooltip>
-                              )}
-                              {canEdit && (
-                                <Tooltip label="Stock history">
-                                  <ActionIcon
-                                    variant="subtle"
-                                    color="gray"
-                                    onClick={() => openMovements(prod)}
-                                  >
-                                    <History size={15} />
-                                  </ActionIcon>
-                                </Tooltip>
-                              )}
-                              {canDelete && (
-                                <Tooltip label="Delete product">
-                                  <ActionIcon
-                                    variant="subtle"
-                                    color="red"
-                                    onClick={() => handleDeleteProduct(prod)}
-                                  >
-                                    <Trash2 size={15} />
-                                  </ActionIcon>
-                                </Tooltip>
-                              )}
-                            </Group>
-                          </Table.Td>
-                        )}
-                      </Table.Tr>
-                    );
-                  })}
-                </Table.Tbody>
-              </Table>
-            </ScrollArea>
-          )}
-        </Stack>
-      </Card>
+                        </Stack>
+                      </Table.Td>
 
-      {/* ---- Product Create/Edit Modal ---- */}
-      <ProductModal
-        opened={productModalOpen}
-        onClose={() => setProductModalOpen(false)}
-        onSave={handleSaveProduct}
-        initial={editingProduct}
-        categories={categories}
-        suppliers={suppliers}
-        products={products}
-      />
+                      {/* Category */}
+                      <Table.Td>
+                        <Text size="sm" style={{ color: "var(--app-text)" }}>
+                          {prod.categoryId ? categoryMap.get(prod.categoryId) ?? "—" : "—"}
+                        </Text>
+                      </Table.Td>
+
+                      {/* Supplier */}
+                      <Table.Td>
+                        <Text size="sm" c="dimmed">
+                          {prod.supplierId ? supplierMap.get(prod.supplierId) ?? "—" : "—"}
+                        </Text>
+                      </Table.Td>
+
+                      {/* Cost Price */}
+                      <Table.Td ta="right">
+                        <Text size="sm" c="dimmed" style={LEDGER_NUM}>
+                          Rs. {paisaToDisplay(prod.costPrice)}
+                        </Text>
+                      </Table.Td>
+
+                      {/* Selling Price */}
+                      <Table.Td ta="right">
+                        <Text
+                          size="sm"
+                          fw={700}
+                          style={{ ...LEDGER_NUM, color: INK.goldDeep }}
+                        >
+                          Rs. {paisaToDisplay(prod.sellPrice)}
+                        </Text>
+                      </Table.Td>
+
+                      {/* Stock Status Pill Badge (Matching Pharmly) */}
+                      <Table.Td ta="center">
+                        <span
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 6,
+                            background: inStock ? "#ecfdf5" : lowStock ? "#fffbeb" : "#fef2f2",
+                            color: inStock ? "#047857" : lowStock ? "#b45309" : "#b91c1c",
+                            padding: "4px 12px",
+                            borderRadius: 999,
+                            fontSize: 12,
+                            fontWeight: 700,
+                          }}
+                        >
+                          <span
+                            style={{
+                              width: 6,
+                              height: 6,
+                              borderRadius: 999,
+                              background: inStock ? "#10b981" : lowStock ? "#f59e0b" : "#ef4444",
+                            }}
+                          />
+                          {inStock
+                            ? `In Stock (${prod.quantityInStock})`
+                            : lowStock
+                            ? `Low Stock (${prod.quantityInStock})`
+                            : "Out of Stock"}
+                        </span>
+                      </Table.Td>
+
+                      {/* Custom Fields */}
+                      {customFieldDefs.map((f) => {
+                        let val = "—";
+                        if (prod.customFields) {
+                          try {
+                            const parsed = JSON.parse(prod.customFields);
+                            if (parsed[f.fieldName] != null) {
+                              val = String(parsed[f.fieldName]);
+                            }
+                          } catch {
+                            /* ignore */
+                          }
+                        }
+                        return (
+                          <Table.Td key={f.fieldName}>
+                            <Text size="sm" c="dimmed">
+                              {val}
+                            </Text>
+                          </Table.Td>
+                        );
+                      })}
+
+                      {/* Expiry */}
+                      <Table.Td>
+                        {prod.nextExpiryDate ? (
+                          <ExpiryBadge date={prod.nextExpiryDate} />
+                        ) : (
+                          <Text size="xs" c="dimmed">
+                            —
+                          </Text>
+                        )}
+                      </Table.Td>
+
+                      {/* Actions */}
+                      {(canEdit || canDelete) && (
+                        <Table.Td ta="right">
+                          <Group gap={4} justify="flex-end" wrap="nowrap">
+                            {canEdit && (
+                              <Tooltip label="Stock Movements" withArrow>
+                                <ActionIcon
+                                  variant="subtle"
+                                  color="gray"
+                                  size="sm"
+                                  radius="md"
+                                  onClick={() => openMovements(prod)}
+                                >
+                                  <History size={15} />
+                                </ActionIcon>
+                              </Tooltip>
+                            )}
+                            {canEdit && (
+                              <Tooltip label="Quick Adjust Stock" withArrow>
+                                <ActionIcon
+                                  variant="subtle"
+                                  color="blue"
+                                  size="sm"
+                                  radius="md"
+                                  onClick={() => openStock(prod)}
+                                >
+                                  <PackagePlus size={15} />
+                                </ActionIcon>
+                              </Tooltip>
+                            )}
+                            {canEdit && prod.nextExpiryDate && (
+                              <Tooltip label="Batches / expiry" withArrow>
+                                <ActionIcon
+                                  variant="subtle"
+                                  color="orange"
+                                  size="sm"
+                                  radius="md"
+                                  onClick={() => openBatches(prod)}
+                                >
+                                  <CalendarDays size={15} />
+                                </ActionIcon>
+                              </Tooltip>
+                            )}
+                            {canEdit && (
+                              <Tooltip label="Edit Product" withArrow>
+                                <ActionIcon
+                                  variant="subtle"
+                                  color="indigo"
+                                  size="sm"
+                                  radius="md"
+                                  onClick={() => openEdit(prod)}
+                                >
+                                  <Pencil size={15} />
+                                </ActionIcon>
+                              </Tooltip>
+                            )}
+                            {canDelete && (
+                              <Tooltip label="Delete Product" withArrow>
+                                <ActionIcon
+                                  variant="subtle"
+                                  color="red"
+                                  size="sm"
+                                  radius="md"
+                                  onClick={() => handleDeleteProduct(prod)}
+                                >
+                                  <Trash2 size={15} />
+                                </ActionIcon>
+                              </Tooltip>
+                            )}
+                          </Group>
+                        </Table.Td>
+                      )}
+                    </Table.Tr>
+                  );
+                })}
+              </Table.Tbody>
+            </Table>
+          </ScrollArea>
+        )}
+
+        {/* Pagination Footer (Matching Pharmly) */}
+        {!loading && filtered.length > 0 && (
+          <Box
+            p="md"
+            style={{
+              borderTop: "1px solid var(--app-border)",
+              background: "var(--app-soft)",
+            }}
+          >
+            <Group justify="space-between" align="center" wrap="wrap">
+              <Text size="xs" c="dimmed">
+                Showing{" "}
+                <strong style={{ color: "var(--app-text)" }}>
+                  {(page - 1) * pageSize + 1}
+                </strong>{" "}
+                –{" "}
+                <strong style={{ color: "var(--app-text)" }}>
+                  {Math.min(page * pageSize, filtered.length)}
+                </strong>{" "}
+                out of{" "}
+                <strong style={{ color: "var(--app-text)" }}>
+                  {filtered.length}
+                </strong>{" "}
+                products
+              </Text>
+
+              {totalPages > 1 && (
+                <Pagination
+                  total={totalPages}
+                  value={page}
+                  onChange={setPage}
+                  radius="pill"
+                  size="sm"
+                  color="dark"
+                />
+              )}
+            </Group>
+          </Box>
+        )}
+      </Box>
 
       {/* ---- Stock Adjustment Modal ---- */}
       <StockAdjustModal
@@ -1829,627 +2336,6 @@ function ProductsTab() {
         }}
       />
     </Stack>
-  );
-}
-
-// ---- Stat card used in the products header ----
-
-function StatCard({
-  icon,
-  label,
-  value,
-  hint,
-  accent = false,
-  tone,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  value: string;
-  hint?: string;
-  accent?: boolean;
-  tone?: "success" | "warning" | "danger";
-}) {
-  const toneColor =
-    tone === "danger"
-      ? INK.danger
-      : tone === "warning"
-        ? INK.warning
-        : tone === "success"
-          ? INK.success
-          : INK.text;
-
-  return (
-    <Card
-      withBorder
-      radius="md"
-      padding="md"
-      style={{
-        borderColor: INK.border,
-        borderLeft: `3px solid ${accent ? INK.gold : toneColor}`,
-      }}
-    >
-      <Group justify="space-between" align="flex-start" wrap="nowrap">
-        <Stack gap={2}>
-          <Text
-            size="xs"
-            c="dimmed"
-            fw={600}
-            tt="uppercase"
-            style={{ letterSpacing: 0.5 }}
-          >
-            {label}
-          </Text>
-          <Text
-            fw={800}
-            size="xl"
-            style={{
-              ...LEDGER_NUM,
-              color: accent ? INK.goldDeep : toneColor,
-            }}
-          >
-            {value}
-          </Text>
-          {hint && (
-            <Text size="xs" c="dimmed">
-              {hint}
-            </Text>
-          )}
-        </Stack>
-        <Box
-          style={{
-            width: 34,
-            height: 34,
-            borderRadius: 8,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            background: accent ? INK.goldSoft : "var(--app-soft)",
-            color: accent ? INK.gold : INK.text,
-            flexShrink: 0,
-          }}
-        >
-          {icon}
-        </Box>
-      </Group>
-    </Card>
-  );
-}
-
-// ---- Product Create/Edit Modal ----
-
-function ProductModal({
-  opened,
-  onClose,
-  onSave,
-  initial,
-  categories,
-  suppliers,
-  products,
-}: {
-  opened: boolean;
-  onClose: () => void;
-  onSave: (values: {
-    sku: string;
-    name: string;
-    categoryId: string;
-    supplierId: string;
-    costPrice: number;
-    sellPrice: number;
-    taxRate: number;
-    quantityInStock: number;
-    unit: string;
-  }) => Promise<void>;
-  initial: PublicProduct | null;
-  categories: PublicCategory[];
-  suppliers: PublicSupplier[];
-  products: PublicProduct[];
-}) {
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const isMobile = useMediaQuery("(max-width: 48em)");
-
-  const isEdit = initial !== null;
-
-  // Units of measure come from the company master list (spec §23.16); the
-  // hardcoded list below is only the fallback when the table is empty.
-  const [units, setUnits] = useState<PublicUnit[]>([]);
-  const [unitsManagerOpen, setUnitsManagerOpen] = useState(false);
-
-  useEffect(() => {
-    listUnits()
-      .then(setUnits)
-      .catch(() => setUnits([]));
-  }, []);
-
-  const form = useForm({
-    initialValues: {
-      sku: initial?.sku ?? "",
-      name: initial?.name ?? "",
-      categoryId: initial?.categoryId ?? "",
-      supplierId: initial?.supplierId ?? "",
-      costPrice: initial ? parseFloat(paisaToDisplay(initial.costPrice)) : 0,
-      sellPrice: initial ? parseFloat(paisaToDisplay(initial.sellPrice)) : 0,
-      taxRate: initial ? initial.taxRate / 100 : 0,
-      quantityInStock: initial?.quantityInStock ?? 0,
-      unit: initial?.unit ?? "pcs",
-    },
-    validate: {
-      name: (v) => (v.trim().length < 1 ? "Name is required" : null),
-    },
-  });
-
-  useEffect(() => {
-    form.setValues({
-      sku: initial?.sku ?? "",
-      name: initial?.name ?? "",
-      categoryId: initial?.categoryId ?? "",
-      supplierId: initial?.supplierId ?? "",
-      costPrice: initial ? parseFloat(paisaToDisplay(initial.costPrice)) : 0,
-      sellPrice: initial ? parseFloat(paisaToDisplay(initial.sellPrice)) : 0,
-      taxRate: initial ? initial.taxRate / 100 : 0,
-      quantityInStock: initial?.quantityInStock ?? 0,
-      unit: initial?.unit ?? "pcs",
-    });
-    setError(null);
-  }, [initial]);
-
-  async function handleSubmit(values: typeof form.values) {
-    setLoading(true);
-    setError(null);
-    try {
-      await onSave(values);
-      form.reset();
-    } catch (err) {
-      setError(getErrorMessage(err));
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  const categoryOptions = [
-    { value: "", label: "None" },
-    ...categories
-      .filter((c) => c.isActive)
-      .map((c) => ({ value: c.id, label: c.name ?? "" })),
-  ];
-
-  const supplierOptions = [
-    { value: "", label: "None" },
-    ...suppliers
-      .filter((s) => s.isActive)
-      .map((s) => ({ value: s.id, label: s.name ?? "" })),
-  ];
-
-  // Prefer the company's saved units; fall back to a sensible default list.
-  const unitOptions = [
-    ...units.map((u) => ({
-      value: u.name,
-      label: u.name
-        ? u.symbol
-          ? `${u.name} (${u.symbol})`
-          : u.name
-        : (u.symbol ?? "Unit"),
-    })),
-    ...(units.length === 0
-      ? [
-          "pcs",
-          "kg",
-          "g",
-          "liters",
-          "ml",
-          "meters",
-          "cm",
-          "box",
-          "pack",
-          "dozen",
-          "set",
-        ].map((u) => ({ value: u, label: u }))
-      : []),
-  ];
-  // Keep an existing free-text unit selectable even if it isn't in the list
-  // (and avoid duplicating it when the fallback default list already has it).
-  if (
-    form.values.unit &&
-    !unitOptions.some((o) => o.value === form.values.unit)
-  ) {
-    unitOptions.push({ value: form.values.unit, label: form.values.unit });
-  }
-
-  // Preview the SKU that will be auto-generated for the selected category.
-  const selectedCategory = categories.find(
-    (c) => c.id === form.values.categoryId,
-  );
-  const previewSku = useMemo(() => {
-    if (isEdit) return null;
-    if (form.values.sku.trim()) return null;
-    const prefix = (selectedCategory?.skuPrefix ?? "").trim();
-    if (!prefix) return null;
-    const used = selectedCategory
-      ? products.filter((p) => p.categoryId === selectedCategory.id)
-      : [];
-    const next = used.length + 1;
-    return `${prefix}-${String(next).padStart(3, "0")}`;
-  }, [
-    isEdit,
-    form.values.sku,
-    form.values.categoryId,
-    selectedCategory,
-    products,
-  ]);
-
-  function handleNameChange(value: string) {
-    form.setFieldValue("name", value);
-  }
-
-  return (
-    <Modal
-      opened={opened}
-      onClose={onClose}
-      title={
-        <Group gap={8}>
-          <Package size={16} color={INK.gold} />
-          <Text fw={700} style={{ color: INK.text }}>
-            {isEdit ? "Edit Product" : "New Product"}
-          </Text>
-        </Group>
-      }
-      size="lg"
-      centered
-      radius="md"
-      fullScreen={isMobile}
-      transitionProps={isMobile ? { transition: "slide-up" } : undefined}
-    >
-      <form onSubmit={form.onSubmit(handleSubmit)}>
-        <Stack gap="md">
-          <SimpleGrid cols={{ base: 1, sm: 2 }}>
-            <TextInput
-              label="SKU"
-              placeholder={previewSku ?? "Auto-generated"}
-              description={
-                previewSku
-                  ? `Next automatic SKU: ${previewSku}`
-                  : "A short code that identifies this product. Leave blank to auto-generate one from the category."
-              }
-              {...form.getInputProps("sku")}
-            />
-            <TextInput
-              label="Product Name"
-              placeholder="Wireless Mouse"
-              required
-              {...form.getInputProps("name")}
-              onChange={(e) => handleNameChange(e.currentTarget.value)}
-            />
-          </SimpleGrid>
-
-          <SimpleGrid cols={{ base: 1, sm: 2 }}>
-            <Select
-              label="Category (optional)"
-              data={categoryOptions}
-              {...form.getInputProps("categoryId")}
-            />
-            <Select
-              label="Supplier (optional)"
-              data={supplierOptions}
-              {...form.getInputProps("supplierId")}
-            />
-          </SimpleGrid>
-
-          <Divider label="Pricing" labelPosition="left" />
-
-          <SimpleGrid cols={{ base: 1, xs: 3 }}>
-            <NumberInput
-              label="Cost Price"
-              description="What you pay to buy or make one unit"
-              placeholder="0.00"
-              decimalScale={2}
-              fixedDecimalScale
-              thousandSeparator=","
-              min={0}
-              {...form.getInputProps("costPrice")}
-            />
-            <NumberInput
-              label="Sell Price"
-              description="What the customer pays for one unit"
-              placeholder="0.00"
-              decimalScale={2}
-              fixedDecimalScale
-              thousandSeparator=","
-              min={0}
-              {...form.getInputProps("sellPrice")}
-            />
-            <NumberInput
-              label="Tax Rate %"
-              placeholder="17"
-              decimalScale={2}
-              fixedDecimalScale
-              suffix="%"
-              min={0}
-              max={100}
-              {...form.getInputProps("taxRate")}
-            />
-          </SimpleGrid>
-
-          <Divider label="Stock" labelPosition="left" />
-
-          <SimpleGrid cols={{ base: 1, sm: 2 }}>
-            <NumberInput
-              label={
-                isEdit ? "Stock (use Adjust Stock to change)" : "Initial Stock"
-              }
-              placeholder="0"
-              min={0}
-              disabled={isEdit}
-              {...form.getInputProps("quantityInStock")}
-            />
-            <Group align="flex-end" gap={6} wrap="wrap">
-              <Select
-                label="Unit"
-                data={unitOptions}
-                searchable
-                style={{ flex: 1, minWidth: 160 }}
-                {...form.getInputProps("unit")}
-              />
-              <Button
-                variant="light"
-                size="sm"
-                color="gray"
-                onClick={() => setUnitsManagerOpen(true)}
-                leftSection={<Package size={14} />}
-              >
-                Manage
-              </Button>
-            </Group>
-          </SimpleGrid>
-
-          {isEdit && (
-            <Alert color="blue" variant="light" icon={<Info size={16} />}>
-              To change stock quantity, close this and use the stock adjustment
-              control on the product row.
-            </Alert>
-          )}
-
-          {error && (
-            <Alert
-              color="red"
-              variant="light"
-              icon={<AlertTriangle size={16} />}
-            >
-              {error}
-            </Alert>
-          )}
-
-          <Divider />
-
-          <Group justify="flex-end">
-            <Button variant="subtle" color="gray" onClick={onClose}>
-              Cancel
-            </Button>
-            <Button
-              type="submit"
-              loading={loading}
-              style={{ backgroundColor: INK.navy }}
-            >
-              {isEdit ? "Save Changes" : "Create Product"}
-            </Button>
-          </Group>
-        </Stack>
-      </form>
-
-      <UnitsManagerModal
-        opened={unitsManagerOpen}
-        onClose={() => setUnitsManagerOpen(false)}
-        units={units}
-        onChanged={setUnits}
-      />
-    </Modal>
-  );
-}
-
-// ---- Units of Measure Manager (spec §23.16) ----
-
-function UnitsManagerModal({
-  opened,
-  onClose,
-  units,
-  onChanged,
-}: {
-  opened: boolean;
-  onClose: () => void;
-  units: PublicUnit[];
-  onChanged: (units: PublicUnit[]) => void;
-}) {
-  const [name, setName] = useState("");
-  const [symbol, setSymbol] = useState("");
-  const [isDefault, setIsDefault] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const isMobile = useMediaQuery("(max-width: 48em)");
-
-  async function refresh() {
-    try {
-      onChanged(await listUnits());
-    } catch {
-      /* keep last known list */
-    }
-  }
-
-  async function handleAdd() {
-    setBusy(true);
-    setError(null);
-    try {
-      await createUnit({
-        name,
-        symbol: symbol.trim() || null,
-        isDefault,
-      });
-      setName("");
-      setSymbol("");
-      setIsDefault(false);
-      await refresh();
-    } catch (err) {
-      setError(getErrorMessage(err));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function handleSetDefault(unit: PublicUnit) {
-    setBusy(true);
-    setError(null);
-    try {
-      await updateUnit({
-        unitId: unit.id,
-        name: unit.name,
-        symbol: unit.symbol,
-        isDefault: true,
-      });
-      await refresh();
-    } catch (err) {
-      setError(getErrorMessage(err));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function handleDelete(unit: PublicUnit) {
-    setBusy(true);
-    setError(null);
-    try {
-      await deleteUnit(unit.id);
-      await refresh();
-    } catch (err) {
-      setError(getErrorMessage(err));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <Modal
-      opened={opened}
-      onClose={onClose}
-      title={
-        <Group gap={8}>
-          <Package size={16} color={INK.gold} />
-          <Text fw={700} style={{ color: INK.text }}>
-            Units of Measure
-          </Text>
-        </Group>
-      }
-      size="md"
-      centered
-      radius="md"
-      fullScreen={isMobile}
-    >
-      <Stack>
-        <Alert color="blue" variant="light" icon={<Info size={16} />}>
-          <Text size="xs">
-            These units feed the product form's Unit picker. Products keep their
-            stored unit text even if you delete it here.
-          </Text>
-        </Alert>
-
-        <Group align="flex-end" gap="sm" wrap="wrap">
-          <TextInput
-            label="Name"
-            placeholder="e.g. carton"
-            value={name}
-            onChange={(e) => setName(e.currentTarget.value)}
-            style={{ flex: 1, minWidth: 140 }}
-          />
-          <TextInput
-            label="Symbol"
-            placeholder="e.g. ct"
-            value={symbol}
-            onChange={(e) => setSymbol(e.currentTarget.value)}
-            style={{ width: 100 }}
-          />
-          <Switch
-            label="Default"
-            checked={isDefault}
-            onChange={(e) => setIsDefault(e.currentTarget.checked)}
-          />
-          <Button
-            onClick={handleAdd}
-            loading={busy}
-            disabled={!name.trim()}
-            leftSection={<Plus size={15} />}
-            style={{ backgroundColor: INK.navy }}
-          >
-            Add
-          </Button>
-        </Group>
-
-        {error && (
-          <Alert color="red" variant="light" icon={<AlertTriangle size={16} />}>
-            {error}
-          </Alert>
-        )}
-
-        <ScrollArea style={{ maxHeight: 320 }}>
-          <Table striped highlightOnHover withTableBorder verticalSpacing="sm">
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th>Name</Table.Th>
-                <Table.Th>Symbol</Table.Th>
-                <Table.Th>Default</Table.Th>
-                <Table.Th style={{ width: 40 }} />
-              </Table.Tr>
-            </Table.Thead>
-            <Table.Tbody>
-              {units.map((u) => (
-                <Table.Tr key={u.id}>
-                  <Table.Td>
-                    <Text fw={600} size="sm" style={{ color: INK.text }}>
-                      {u.name}
-                    </Text>
-                  </Table.Td>
-                  <Table.Td>{u.symbol ?? "—"}</Table.Td>
-                  <Table.Td>
-                    {u.isDefault ? (
-                      <Badge color="green" variant="light" radius="sm">
-                        Default
-                      </Badge>
-                    ) : (
-                      <Button
-                        size="xs"
-                        variant="subtle"
-                        color="gray"
-                        onClick={() => handleSetDefault(u)}
-                        disabled={busy}
-                      >
-                        Set default
-                      </Button>
-                    )}
-                  </Table.Td>
-                  <Table.Td>
-                    <ActionIcon
-                      color="red"
-                      variant="subtle"
-                      onClick={() => handleDelete(u)}
-                      disabled={busy}
-                      title={`Delete ${u.name}`}
-                    >
-                      <Trash2 size={15} />
-                    </ActionIcon>
-                  </Table.Td>
-                </Table.Tr>
-              ))}
-              {units.length === 0 && (
-                <Table.Tr>
-                  <Table.Td colSpan={4}>
-                    <Text size="sm" c="dimmed">
-                      No units yet — add one above. Until then, the default
-                      list (pcs, kg, box…) is used.
-                    </Text>
-                  </Table.Td>
-                </Table.Tr>
-              )}
-            </Table.Tbody>
-          </Table>
-        </ScrollArea>
-      </Stack>
-    </Modal>
   );
 }
 

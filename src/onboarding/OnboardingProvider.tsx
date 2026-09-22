@@ -28,14 +28,11 @@ import {
 import { subscribeOnboarding, type OnboardingEvent } from "./bus";
 import {
   APP_STEPS,
-  LOGIN_STEPS,
   filterStepsForRole,
   isAppStepComplete,
   type OnboardingStep,
 } from "./onboardingSteps";
 import type { UserRole } from "../types/backend";
-
-import InteractiveTour from "../components/InteractiveTour";
 
 // ----- Types ---------------------------------------------------------------
 
@@ -83,13 +80,6 @@ function storeProgress(userId: string, step: number): void {
   }
 }
 
-function storeDone(userId: string): void {
-  try {
-    localStorage.setItem(appProgressKey(userId), JSON.stringify({ done: true }));
-  } catch {
-    // non-persistable environment — no problem
-  }
-}
 
 function markLoginSeen(): void {
   try {
@@ -155,10 +145,6 @@ export function OnboardingProvider({
   useEffect(() => {
     appStepsRef.current = appSteps;
   }, [appSteps]);
-
-  const steps: OnboardingStep[] =
-    phase === "login" ? LOGIN_STEPS : appSteps;
-  const currentStep = phase === "idle" ? null : steps[stepIndex] ?? null;
 
   // ----- Reset a fresh phase ------------------------------------------------
 
@@ -271,45 +257,6 @@ export function OnboardingProvider({
 
   // ----- Actions --------------------------------------------------------------
 
-  const next = useCallback(() => {
-    const p = phaseRef.current;
-    if (p === "idle") return;
-    const list = p === "login" ? LOGIN_STEPS : appStepsRef.current;
-    const step = list[stepIndexRef.current];
-    if (!step) return;
-
-    // Tasks must actually be performed first — but only in mandatory mode.
-    // In replay mode the app is never locked, so "Continue" always advances.
-    if (step.kind === "task" && !taskCompleteRef.current && forceRef.current)
-      return;
-
-    const isLast = stepIndexRef.current >= list.length - 1;
-    if (isLast) {
-      // Finished — persist and leave.
-      if (p === "app" && userIdRef.current) {
-        storeDone(userIdRef.current);
-      }
-      if (p === "login") markLoginSeen();
-      setPhase("idle");
-      return;
-    }
-
-    const nextIndex = stepIndexRef.current + 1;
-    setStepIndex(nextIndex);
-    setTaskComplete(false);
-    if (p === "app" && userIdRef.current && forceRef.current) {
-      storeProgress(userIdRef.current, nextIndex);
-    }
-  }, []);
-
-  const close = useCallback(() => {
-    // Closing is only reachable in replay mode (the mandatory tour hides the
-    // close button and ignores Escape). Store "done" so a replay interrupted
-    // midway does not force a fresh mandatory walkthrough on the next launch.
-    setPhase("idle");
-    if (userIdRef.current) storeDone(userIdRef.current);
-  }, []);
-
   const startReplay = useCallback(() => {
     startPhase("app", 0, false);
   }, [startPhase]);
@@ -322,17 +269,6 @@ export function OnboardingProvider({
   return (
     <OnboardingCtx.Provider value={value}>
       {children}
-
-      {phase !== "idle" && currentStep && (
-        <InteractiveTour
-          steps={steps}
-          stepIndex={stepIndex}
-          force={force}
-          taskComplete={taskComplete}
-          onNext={next}
-          onClose={close}
-        />
-      )}
     </OnboardingCtx.Provider>
   );
 }

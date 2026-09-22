@@ -112,7 +112,8 @@ pub async fn run() {
             .journal_mode(SqliteJournalMode::Wal)
             .synchronous(SqliteSynchronous::Normal)
             .busy_timeout(Duration::from_secs(5))
-            .foreign_keys(true),
+            .foreign_keys(true)
+            .pragma("wal_autocheckpoint", "1000"),
         Err(e) => {
             panic!("Invalid SQLite URL: {e}");
         }

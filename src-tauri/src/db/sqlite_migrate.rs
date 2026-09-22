@@ -131,7 +131,8 @@ pub async fn run_sqlite_migrations(sqlite_url: &str) -> Result<(), Box<dyn std::
         .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
         .synchronous(sqlx::sqlite::SqliteSynchronous::Normal)
         .busy_timeout(std::time::Duration::from_secs(5))
-        .foreign_keys(true);
+        .foreign_keys(true)
+        .pragma("wal_autocheckpoint", "1000");
 
     let pool = SqlitePool::connect_with(options).await?;
 

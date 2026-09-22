@@ -851,10 +851,11 @@ pub async fn finalize_invoice(
         UPDATE invoices
         SET status = 'finalized', finalized_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP,
             balance_due = grand_total
-        WHERE id = ?
+        WHERE id = ? AND company_id = ?
         "#,
     )
     .bind(&invoice_id)
+    .bind(company_id)
     .execute(&mut *tx)
     .await
     .map_err(|e| AppError::internal(format!("Finalize error: {e}")))?;
@@ -1023,13 +1024,14 @@ pub async fn record_payment(
         r#"
         UPDATE invoices
         SET amount_paid = ?, balance_due = ?, status = ?, updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
+        WHERE id = ? AND company_id = ?
         "#,
     )
     .bind(new_amount_paid)
     .bind(new_balance)
     .bind(new_status)
     .bind(&invoice_id)
+    .bind(company_id)
     .execute(&mut *tx)
     .await
     .map_err(|e| AppError::internal(format!("Invoice update error: {e}")))?;
@@ -1294,8 +1296,9 @@ async fn recalculate_invoice_totals(
     // inside the same UPDATE that sets grand_total, because SQLite evaluates the
     // right-hand side with the OLD value of grand_total, not the new one.
     let balance_due = grand_total
-        - sqlx::query_as::<_, (i64,)>("SELECT amount_paid FROM invoices WHERE id = ?")
+        - sqlx::query_as::<_, (i64,)>("SELECT amount_paid FROM invoices WHERE id = ? AND company_id = ?")
             .bind(invoice_id)
+            .bind(company_id)
             .fetch_one(pool)
             .await
             .map_err(|e| AppError::internal(format!("Amount paid lookup error: {e}")))?

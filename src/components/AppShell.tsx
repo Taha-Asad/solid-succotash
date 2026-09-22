@@ -23,7 +23,10 @@ import {
   Stack,
   Text,
   Tooltip,
+  ThemeIcon,
 } from "@mantine/core";
+
+import RightContextPanel from "../features/dashboard/RightContextPanel";
 
 import {
   LayoutDashboard,
@@ -42,6 +45,8 @@ import {
   Sun,
   CircleHelp,
   FileSpreadsheet,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from "lucide-react";
 
 import {
@@ -275,6 +280,26 @@ export default function AppShell({
   const { startReplay } = useOnboarding();
   const perms = usePermissions();
 
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("ijaz_sidebar_collapsed") === "true";
+    } catch {
+      return false;
+    }
+  });
+
+  const toggleSidebar = () => {
+    setSidebarCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem("ijaz_sidebar_collapsed", String(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  };
+
   useEffect(() => {
     Promise.all([getCompany(), getTheme()])
       .then(([company, theme]) => {
@@ -347,7 +372,6 @@ export default function AppShell({
     }
   }
 
-  const current = navItems.find((n) => n.key === view) ?? navItems[0];
   const today = new Date().toLocaleDateString(lang === "ur" ? "ur-PK" : undefined, {
     weekday: "long",
     day: "numeric",
@@ -366,13 +390,8 @@ export default function AppShell({
   const brandGlow = `0 6px 18px -6px ${hexToRgba(accent, 0.55)}`;
   const onAccent = contrastText(accent);
   const onPrimary = contrastText(primary);
-  const accentLabel = accent;
-  const navPillBackground = `linear-gradient(90deg, ${hexToRgba(accent, 0.22)} 0%, ${hexToRgba(accent, 0.06)} 100%)`;
-  const navPillBorder = hexToRgba(accent, 0.35);
-  const navPillShadow = `inset 0 0 24px -8px ${hexToRgba(accent, 0.4)}`;
   const logoImage = theme?.logoBase64 ?? null;
   const tagline = theme?.companyTagline ?? "ERP SUITE";
-  const watermark = theme?.erpWatermark ?? "Powered by Ijaz & Company ERP";
 
   return (
     <Box
@@ -380,87 +399,134 @@ export default function AppShell({
         display: "flex",
         height: "100vh",
         overflow: "hidden",
-        background: INK.paper,
+        background: "var(--app-bg)",
       }}
     >
       {/* ==================== SIDEBAR ==================== */}
       <Box
         component="aside"
         style={{
-          width: 268,
+          width: sidebarCollapsed ? 72 : 240,
+          transition: "width 0.22s cubic-bezier(0.4, 0, 0.2, 1)",
           flexShrink: 0,
           height: "100%",
           display: "flex",
           flexDirection: "column",
-          background:
-            "linear-gradient(180deg, #10183A 0%, #16214A 55%, #1D2B54 100%)",
-          color: "#fff",
-          borderRight: "1px solid rgba(255,255,255,0.06)",
+          background: "var(--app-surface)",
+          color: "var(--app-text)",
+          borderRight: "1px solid var(--app-border)",
+          boxShadow: "0 0 20px rgba(0, 0, 0, 0.02)",
         }}
       >
-        {/* Brand */}
-        <Group gap="sm" px="lg" py="xl">
-          <motion.div
-            initial={{ scale: 0, rotate: -30 }}
-            animate={{ scale: 1, rotate: 0 }}
-            transition={{ type: "spring", stiffness: 220, damping: 14 }}
-            style={{
-              width: 38,
-              height: 38,
-              borderRadius: 12,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              overflow: "hidden",
-              background: logoImage ? "transparent" : accentGradient,
-              color: onAccent,
-              fontWeight: 800,
-              fontSize: 15,
-              boxShadow: brandGlow,
-            }}
-          >
-            {logoImage ? (
-              <img
-                src={logoImage}
-                alt={branding.companyName}
-                style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: 12 }}
-              />
-            ) : (
-              <span>{branding.companyName.charAt(0).toUpperCase()}</span>
-            )}
-          </motion.div>
-          <Stack gap={0}>
-            <Text fw={800} size="lg" style={{ letterSpacing: -0.2, lineHeight: 1.25 }}>
-              {branding.companyName}
-            </Text>
-            <Text size="xs" style={{ color: "#A9B6D6", letterSpacing: 1.5, lineHeight: 1.3 }}>
-              {tagline}
-            </Text>
-          </Stack>
-        </Group>
-
-        {/* Nav */}
-        <ScrollArea offsetScrollbars style={{ flex: 1 }}>
-          <Stack gap={4} px="sm" data-tour="nav">
-            <Text
-              size="xs"
-              px="md"
-              pb="xs"
-              style={{ color: "#6B7BA6", letterSpacing: 1.5, fontWeight: 700 }}
+        {/* Brand & Toggle Header */}
+        {!sidebarCollapsed ? (
+          <Group justify="space-between" px="md" py="md">
+            <Group gap="xs" style={{ overflow: "hidden" }}>
+              <motion.div
+                initial={{ scale: 0, rotate: -30 }}
+                animate={{ scale: 1, rotate: 0 }}
+                transition={{ type: "spring", stiffness: 220, damping: 14 }}
+                style={{
+                  width: 36,
+                  height: 36,
+                  borderRadius: 10,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  overflow: "hidden",
+                  background: logoImage ? "transparent" : accentGradient,
+                  color: onAccent,
+                  fontWeight: 800,
+                  fontSize: 15,
+                  boxShadow: brandGlow,
+                  flexShrink: 0,
+                }}
+              >
+                {logoImage ? (
+                  <img
+                    src={logoImage}
+                    alt={branding.companyName}
+                    style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: 10 }}
+                  />
+                ) : (
+                  <span>{branding.companyName.charAt(0).toUpperCase()}</span>
+                )}
+              </motion.div>
+              <Stack gap={0} style={{ overflow: "hidden" }}>
+                <Text fw={800} size="sm" truncate style={{ letterSpacing: -0.2, lineHeight: 1.25 }}>
+                  {branding.companyName}
+                </Text>
+                <Text size="xs" c="dimmed" truncate style={{ letterSpacing: 0.5, lineHeight: 1.2 }}>
+                  {tagline}
+                </Text>
+              </Stack>
+            </Group>
+            <Tooltip label="Collapse sidebar" position="right">
+              <ActionIcon variant="subtle" color="gray" radius="md" onClick={toggleSidebar}>
+                <PanelLeftClose size={18} />
+              </ActionIcon>
+            </Tooltip>
+          </Group>
+        ) : (
+          <Stack align="center" py="md" gap="xs">
+            <motion.div
+              style={{
+                width: 36,
+                height: 36,
+                borderRadius: 10,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                overflow: "hidden",
+                background: logoImage ? "transparent" : accentGradient,
+                color: onAccent,
+                fontWeight: 800,
+                fontSize: 15,
+                boxShadow: brandGlow,
+              }}
             >
-              {t("nav.workspace")}
-            </Text>
+              {logoImage ? (
+                <img
+                  src={logoImage}
+                  alt={branding.companyName}
+                  style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: 10 }}
+                />
+              ) : (
+                <span>{branding.companyName.charAt(0).toUpperCase()}</span>
+              )}
+            </motion.div>
+            <Tooltip label="Expand sidebar" position="right">
+              <ActionIcon variant="subtle" color="gray" radius="md" onClick={toggleSidebar}>
+                <PanelLeftOpen size={18} />
+              </ActionIcon>
+            </Tooltip>
+          </Stack>
+        )}
+
+        {/* Nav list */}
+        <ScrollArea offsetScrollbars style={{ flex: 1 }}>
+          <Stack gap={4} px={sidebarCollapsed ? 8 : 10} data-tour="nav">
+            {!sidebarCollapsed && (
+              <Text
+                size="xs"
+                px="sm"
+                pb={4}
+                style={{ color: "var(--app-muted)", letterSpacing: 1.2, fontWeight: 700, fontSize: 11 }}
+              >
+                {t("nav.workspace")}
+              </Text>
+            )}
             {navItems.map((item, index) => {
               const active = view === item.key;
-              return (
+              const buttonContent = (
                 <motion.button
                   key={item.key}
-                  initial={{ opacity: 0, x: -16 }}
+                  initial={{ opacity: 0, x: -12 }}
                   animate={{ opacity: 1, x: 0 }}
                   transition={{
-                    delay: 0.05 + index * 0.05,
+                    delay: 0.03 + index * 0.03,
                     ease: [0.22, 1, 0.36, 1],
-                    duration: 0.35,
+                    duration: 0.25,
                   }}
                   onClick={() => goTo(item.key)}
                   data-tour={`nav-${item.key}`}
@@ -468,80 +534,110 @@ export default function AppShell({
                     position: "relative",
                     display: "flex",
                     alignItems: "center",
+                    justifyContent: sidebarCollapsed ? "center" : "flex-start",
                     gap: 12,
                     width: "100%",
-                    padding: "11px 14px",
+                    padding: sidebarCollapsed ? "10px 0" : "10px 12px",
                     borderRadius: 12,
                     border: "none",
-                    background: "transparent",
-                    color: active ? "#fff" : "#A9B6D6",
+                    background: active ? "var(--app-hover)" : "transparent",
+                    color: active ? "var(--app-accent)" : "var(--app-text-soft)",
                     cursor: "pointer",
                     fontFamily: "inherit",
-                    fontSize: 14,
+                    fontSize: 13.5,
                     fontWeight: active ? 700 : 500,
                     textAlign: "left",
-                    transition: "color 0.18s ease",
+                    transition: "all 0.15s ease",
                   }}
-                  whileHover={{ x: 3 }}
-                  whileTap={{ scale: 0.97 }}
+                  whileHover={{ scale: 1.01 }}
+                  whileTap={{ scale: 0.98 }}
                 >
-                  {active && (
-                    <motion.span
-                      layoutId="nav-pill"
-                      transition={{ type: "spring", stiffness: 380, damping: 30 }}
-                      style={{
-                        position: "absolute",
-                        inset: 0,
-                        borderRadius: 12,
-                        background: navPillBackground,
-                        border: `1px solid ${navPillBorder}`,
-                        boxShadow: navPillShadow,
-                      }}
-                    />
-                  )}
                   <span
                     style={{
-                      position: "relative",
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center",
-                      width: 34,
-                      height: 34,
-                      borderRadius: 10,
-                      background: active ? accentGradient : "rgba(255,255,255,0.06)",
-                      color: active ? onAccent : "#A9B6D6",
+                      width: 32,
+                      height: 32,
+                      borderRadius: 9,
+                      background: active ? accentGradient : "var(--app-soft)",
+                      color: active ? onAccent : "inherit",
                       flexShrink: 0,
-                      transition: "background 0.2s ease, color 0.2s ease",
                     }}
                   >
                     {item.icon}
                   </span>
-                  <span style={{ position: "relative", flex: 1 }}>
-                    {t(`nav.${item.key}`)}
-                  </span>
+                  {!sidebarCollapsed && (
+                    <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {t(`nav.${item.key}`)}
+                    </span>
+                  )}
                 </motion.button>
               );
+
+              if (sidebarCollapsed) {
+                return (
+                  <Tooltip key={item.key} label={t(`nav.${item.key}`)} position="right" withArrow offset={10}>
+                    {buttonContent}
+                  </Tooltip>
+                );
+              }
+              return buttonContent;
             })}
           </Stack>
         </ScrollArea>
 
-        {/* Sidebar footer — user card */}
-        <Box px="sm" pb="md">
-          <motion.div
-            initial={{ opacity: 0, y: 16 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.3, duration: 0.4 }}
-          >
+        {/* Need Help? Card (Breathable & Friendly) */}
+        {!sidebarCollapsed && (
+          <Box px="sm" pb="xs">
             <Box
+              p="sm"
               style={{
                 borderRadius: 16,
-                padding: 12,
-                background: "rgba(255,255,255,0.05)",
-                border: "1px solid rgba(255,255,255,0.08)",
+                background: "linear-gradient(135deg, rgba(79, 97, 237, 0.07) 0%, rgba(79, 97, 237, 0.02) 100%)",
+                border: "1px solid rgba(79, 97, 237, 0.15)",
+                textAlign: "center",
               }}
             >
-              <Group justify="space-between" mb="xs">
-                <Group gap="xs">
+              <Group justify="center" mb={4}>
+                <ThemeIcon size="md" radius="xl" color="indigo" variant="light">
+                  <CircleHelp size={16} />
+                </ThemeIcon>
+              </Group>
+              <Text size="xs" fw={700} style={{ letterSpacing: -0.2 }}>
+                Need help?
+              </Text>
+              <Text size="11px" c="dimmed" mb="xs" style={{ lineHeight: 1.3 }}>
+                Questions about sales or stock?
+              </Text>
+              <Button
+                variant="light"
+                color="indigo"
+                size="compact-xs"
+                radius="pill"
+                fullWidth
+                onClick={() => goTo("help")}
+                style={{ fontWeight: 600 }}
+              >
+                Open Guides
+              </Button>
+            </Box>
+          </Box>
+        )}
+
+        {/* Sidebar footer — user card */}
+        <Box px={sidebarCollapsed ? "xs" : "sm"} pb="sm">
+          {!sidebarCollapsed ? (
+            <Box
+              style={{
+                borderRadius: 14,
+                padding: 10,
+                background: "var(--app-soft)",
+                border: "1px solid var(--app-border)",
+              }}
+            >
+              <Group justify="space-between" mb="xs" wrap="nowrap">
+                <Group gap="xs" wrap="nowrap" style={{ overflow: "hidden" }}>
                   <Avatar
                     color={ROLE_COLORS[user.role]}
                     radius="xl"
@@ -550,11 +646,11 @@ export default function AppShell({
                   >
                     {user.fullName.charAt(0).toUpperCase()}
                   </Avatar>
-                  <Stack gap={0}>
-                    <Text size="sm" fw={600} style={{ lineHeight: 1.2 }}>
+                  <Stack gap={0} style={{ overflow: "hidden" }}>
+                    <Text size="xs" fw={700} truncate style={{ lineHeight: 1.2 }}>
                       {user.fullName}
                     </Text>
-                    <Text size="xs" style={{ color: "#A9B6D6", lineHeight: 1.3 }}>
+                    <Text size="11px" c="dimmed" truncate style={{ lineHeight: 1.2 }}>
                       {user.email}
                     </Text>
                   </Stack>
@@ -563,71 +659,68 @@ export default function AppShell({
                   color={ROLE_COLORS[user.role]}
                   variant="light"
                   size="xs"
-                  styles={{ label: { textTransform: "uppercase" } }}
+                  styles={{ label: { textTransform: "uppercase", fontSize: 10 } }}
                 >
                   {user.role}
                 </Badge>
               </Group>
               <Button
                 variant="subtle"
-                color="gray"
+                color="red"
                 fullWidth
                 size="xs"
-                leftSection={<LogOut size={14} />}
+                radius="md"
+                leftSection={<LogOut size={13} />}
                 onClick={onLogout}
-                styles={{
-                  root: { color: "#C7CFE4", "&:hover": { background: "rgba(255,255,255,0.08)", color: "#fff" } },
-                  label: { fontWeight: 600 },
-                }}
               >
                 {t("sidebar.signOut")}
               </Button>
             </Box>
-          </motion.div>
-        </Box>
-
-        {/* Platform watermark — secondary, below the user card */}
-        <Box px="sm" pb="sm" style={{ textAlign: "center" }}>
-          <Text size="xs" style={{ color: "#5A6B96", letterSpacing: 0.5, fontSize: 11 }}>
-            {watermark}
-          </Text>
+          ) : (
+            <Stack align="center" gap="xs">
+              <Tooltip label={`${user.fullName} (${user.role})`} position="right">
+                <Avatar
+                  color={ROLE_COLORS[user.role]}
+                  radius="xl"
+                  size="sm"
+                  style={{ fontWeight: 700, cursor: "pointer" }}
+                >
+                  {user.fullName.charAt(0).toUpperCase()}
+                </Avatar>
+              </Tooltip>
+              <Tooltip label={t("sidebar.signOut")} position="right">
+                <ActionIcon variant="subtle" color="red" radius="md" size="sm" onClick={onLogout}>
+                  <LogOut size={15} />
+                </ActionIcon>
+              </Tooltip>
+            </Stack>
+          )}
         </Box>
       </Box>
 
       {/* ==================== CONTENT ==================== */}
-      <Box style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
+      <Box style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, height: "100%", overflow: "hidden" }}>
         {/* Top bar */}
         <Box
           style={{
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
-            padding: "18px 28px",
+            padding: "14px 28px",
             borderBottom: "1px solid var(--app-border)",
-            background: "color-mix(in srgb, var(--app-bg) 85%, transparent)",
-            backdropFilter: "blur(8px)",
+            background: "color-mix(in srgb, var(--app-surface) 90%, transparent)",
+            backdropFilter: "blur(12px)",
             position: "sticky",
             top: 0,
-            zIndex: 50,
+            zIndex: 40,
           }}
         >
-          <motion.div
-            key={view}
-            initial={{ opacity: 0, x: -12 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
-          >
-            <Stack gap={0}>
-              <Text size="sm" style={{ color: accentLabel, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase" }}>
-                {current ? t(`nav.${current.key}`) : ""}
-              </Text>
-              <Text fw={800} size="lg" style={{ color: INK.text, letterSpacing: -0.3 }}>
-                {current ? t(`nav.${current.key}Desc`) : ""}
-              </Text>
-            </Stack>
-          </motion.div>
-
-          <Group gap="md" wrap="nowrap">
+          <Group gap="md" align="center">
+            {sidebarCollapsed && (
+              <ActionIcon variant="light" color="gray" radius="md" size="md" onClick={toggleSidebar} title="Expand sidebar">
+                <PanelLeftOpen size={18} />
+              </ActionIcon>
+            )}
             <Box data-tour="topbar-search">
               <SearchBar
                 onSelect={(result) => {
@@ -636,7 +729,10 @@ export default function AppShell({
                 }}
               />
             </Box>
-            <Text size="sm" c="dimmed" style={{ whiteSpace: "nowrap" }}>
+          </Group>
+
+          <Group gap="sm" wrap="nowrap">
+            <Text size="xs" fw={500} c="dimmed" style={{ whiteSpace: "nowrap" }} visibleFrom="sm">
               {today}
             </Text>
             {backupMsg && (
@@ -650,8 +746,8 @@ export default function AppShell({
               >
                 <Button
                   variant="filled"
-                  size="sm"
-                  leftSection={<Download size={15} />}
+                  size="xs"
+                  leftSection={<Download size={14} />}
                   onClick={() => setUpdateOpen(true)}
                   styles={{
                     root: {
@@ -729,7 +825,27 @@ export default function AppShell({
               exit="exit"
               style={{ padding: 28, minHeight: "100%" }}
             >
-              {view === "home" && <DashboardHome user={user} />}
+              {view === "home" && (
+                <Box
+                  style={{
+                    display: "flex",
+                    gap: 28,
+                    minHeight: "100%",
+                    alignItems: "flex-start",
+                  }}
+                >
+                  <Box style={{ flex: 1, minWidth: 0 }}>
+                    <DashboardHome user={user} onNavigate={(m) => goTo(m as DashboardView)} />
+                  </Box>
+                  <Box visibleFrom="lg" style={{ width: 300, flexShrink: 0 }}>
+                    <RightContextPanel
+                      user={user}
+                      onNavigate={(m) => goTo(m as DashboardView)}
+                      onTriggerBackup={handleBackup}
+                    />
+                  </Box>
+                </Box>
+              )}
               {view === "inventory" && (
                 <InventoryPage user={user} onOpenImport={() => goTo("import")} />
               )}

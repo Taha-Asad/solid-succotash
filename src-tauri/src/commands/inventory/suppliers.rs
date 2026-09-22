@@ -166,8 +166,9 @@ pub async fn update_supplier(
 
     bump_version(pool.inner(), "suppliers", &supplier_id).await?;
 
-    let supplier = sqlx::query_as::<_, PublicSupplier>("SELECT * FROM suppliers WHERE id = ?")
+    let supplier = sqlx::query_as::<_, PublicSupplier>("SELECT * FROM suppliers WHERE id = ? AND company_id = ?")
         .bind(&supplier_id)
+        .bind(company_id)
         .fetch_one(pool.inner())
         .await
         .map_err(|e| AppError::internal(format!("Database error: {e}")))?;
@@ -226,8 +227,9 @@ pub async fn set_supplier_active(
         return Err(AppError::internal("Supplier not found".to_string()));
     }
 
-    let supplier = sqlx::query_as::<_, PublicSupplier>("SELECT * FROM suppliers WHERE id = ?")
+    let supplier = sqlx::query_as::<_, PublicSupplier>("SELECT * FROM suppliers WHERE id = ? AND company_id = ?")
         .bind(&supplier_id)
+        .bind(company_id)
         .fetch_one(pool.inner())
         .await
         .map_err(|e| AppError::internal(format!("Database error: {e}")))?;

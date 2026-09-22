@@ -113,17 +113,17 @@ export default function SearchBar({ onSelect }: SearchBarProps) {
               setOpened(false);
             }
           }}
-          w={320}
+          w={{ base: 220, sm: 280, md: 340 }}
           size="sm"
-          radius="md"
+          radius="xl"
+          className="pill-search"
           styles={{
             input: {
               background: "var(--app-surface)",
-              border: `1px solid ${INK.border}`,
-              "&:focus": {
-                borderColor: INK.gold,
-                boxShadow: `0 0 0 1px ${INK.gold}`,
-              },
+              borderRadius: "9999px",
+              paddingLeft: "38px",
+              border: "1px solid var(--app-border)",
+              boxShadow: "0 2px 8px -2px rgba(18, 28, 56, 0.04)",
             },
           }}
         />

@@ -68,8 +68,8 @@ pub async fn record_po_payment(
         .bind(clean(&reference)).bind(clean(&notes)).bind(&user.id)
         .execute(&mut *tx).await.map_err(|e| AppError::internal(format!("Error: {e}")))?;
 
-    sqlx::query("UPDATE purchase_orders SET amount_paid = ?, balance_due = ?, status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
-        .bind(new_paid).bind(new_balance).bind(new_status).bind(&po_id)
+    sqlx::query("UPDATE purchase_orders SET amount_paid = ?, balance_due = ?, status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND company_id = ?")
+        .bind(new_paid).bind(new_balance).bind(new_status).bind(&po_id).bind(company_id)
         .execute(&mut *tx).await.map_err(|e| AppError::internal(format!("Error: {e}")))?;
 
     tx.commit().await.map_err(|e| AppError::internal(format!("Error: {e}")))?;

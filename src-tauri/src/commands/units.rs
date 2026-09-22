@@ -202,8 +202,9 @@ pub async fn update_unit(
         }
     })?;
 
-    let unit = sqlx::query_as::<_, PublicUnit>("SELECT * FROM units WHERE id = ?")
+    let unit = sqlx::query_as::<_, PublicUnit>("SELECT * FROM units WHERE id = ? AND company_id = ?")
         .bind(&unit_id)
+        .bind(company_id)
         .fetch_one(pool.inner())
         .await
         .map_err(|e| AppError::internal(format!("Database error: {e}")))?;

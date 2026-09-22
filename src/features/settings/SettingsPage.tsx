@@ -97,7 +97,7 @@ import type {
 
 import {
   Trash2, Upload, Check, Languages as LanguagesIcon, Send, RefreshCw, Zap, AlertTriangle,
-  CheckCircle, XCircle, ArrowRight, Settings,
+  CheckCircle, XCircle, ArrowRight, ArrowLeft, Settings,
 } from "lucide-react";
 
 import { INK } from "../../theme";
@@ -108,6 +108,7 @@ import {
   LANGUAGE_ORDER,
   type Lang,
 } from "../../i18n/translations";
+import SettingsHub, { type SettingsSection } from "./SettingsHub";
 
 // ==========================================
 // PROPS
@@ -125,71 +126,136 @@ interface SettingsPageProps {
 export default function SettingsPage({ user, onLogout }: SettingsPageProps) {
   const canEdit = user.role === "owner";
   const { t } = useI18n();
+  const [activeSection, setActiveSection] = useState<SettingsSection | null>(null);
+
+  if (activeSection === null) {
+    return <SettingsHub user={user} onSelectSection={setActiveSection} />;
+  }
 
   return (
-    <Stack>
-      <Title order={3}>{t("settings.title")}</Title>
-      <Tabs defaultValue="company">
-        <Tabs.List>
-          <Tabs.Tab value="company">{t("settings.tab.company")}</Tabs.Tab>
-          <Tabs.Tab value="invoice">{t("settings.tab.invoice")}</Tabs.Tab>
-          {canEdit && (
-            <Tabs.Tab value="fbr">FBR Integration</Tabs.Tab>
-          )}
-          {canEdit && (
-            <Tabs.Tab value="modules">Modules</Tabs.Tab>
-          )}
-          {canEdit && (
-            <Tabs.Tab value="theme">{t("settings.tab.theme")}</Tabs.Tab>
-          )}
-          <Tabs.Tab value="backup">{t("settings.tab.backup")}</Tabs.Tab>
-          {canEdit && (
-            <Tabs.Tab value="retention">{t("settings.tab.retention")}</Tabs.Tab>
-          )}
-          {canEdit && (
-            <Tabs.Tab value="audit">{t("settings.tab.audit")}</Tabs.Tab>
-          )}
-          <Tabs.Tab value="language">{t("settings.tab.language")}</Tabs.Tab>
-        </Tabs.List>
+    <Stack gap="lg">
+      <Group justify="space-between" align="center">
+        <Button
+          variant="subtle"
+          color="gray"
+          size="sm"
+          leftSection={<ArrowLeft size={16} />}
+          onClick={() => setActiveSection(null)}
+          radius="md"
+        >
+          ← All Settings
+        </Button>
+      </Group>
 
-        <Tabs.Panel value="company" pt="md">
+      {activeSection === "company" && (
+        <Stack gap="md">
+          <Box>
+            <Title order={4}>My Business Profile</Title>
+            <Text size="sm" c="dimmed">
+              Update your shop name, official contacts, and tax registrations.
+            </Text>
+          </Box>
           <CompanyProfileTab />
-        </Tabs.Panel>
-        <Tabs.Panel value="invoice" pt="md">
-          <InvoiceSettingsTab />
-        </Tabs.Panel>
-        {canEdit && (
-          <Tabs.Panel value="fbr" pt="md">
-            <FbrSettingsTab />
-          </Tabs.Panel>
-        )}
-        {canEdit && (
-          <Tabs.Panel value="modules" pt="md">
-            <ModulesTab companyId={user.companyId ?? ""} />
-          </Tabs.Panel>
-        )}
-        {canEdit && (
-          <Tabs.Panel value="theme" pt="md">
-            <ThemeBrandingTab />
-          </Tabs.Panel>
-        )}
-        <Tabs.Panel value="backup" pt="md">
-          <BackupRestoreTab onLogout={onLogout} />
-        </Tabs.Panel>
-        {canEdit && (
-          <Tabs.Panel value="retention" pt="md">
-            <RetentionTab />
-          </Tabs.Panel>
-        )}
-        {canEdit && (
-          <Tabs.Panel value="audit" pt="md">
-            <AuditLogTab />
-          </Tabs.Panel>
-        )}
-        <Tabs.Panel value="language" pt="md">
-          <LanguageTab />
-        </Tabs.Panel>
-      </Tabs>
+        </Stack>
+      )}
+
+      {activeSection === "invoicing" && (
+        <Stack gap="md">
+          <Box>
+            <Title order={4}>Sales, Receipts & FBR</Title>
+            <Text size="sm" c="dimmed">
+              Configure receipt numbering, designs, and FBR POS digital invoicing.
+            </Text>
+          </Box>
+          <Tabs defaultValue="invoice">
+            <Tabs.List mb="md">
+              <Tabs.Tab value="invoice">{t("settings.tab.invoice")}</Tabs.Tab>
+              {canEdit && <Tabs.Tab value="fbr">FBR Integration</Tabs.Tab>}
+            </Tabs.List>
+            <Tabs.Panel value="invoice">
+              <InvoiceSettingsTab />
+            </Tabs.Panel>
+            {canEdit && (
+              <Tabs.Panel value="fbr">
+                <FbrSettingsTab />
+              </Tabs.Panel>
+            )}
+          </Tabs>
+        </Stack>
+      )}
+
+      {activeSection === "backup" && (
+        <Stack gap="md">
+          <Box>
+            <Title order={4}>Data Safety & Backups</Title>
+            <Text size="sm" c="dimmed">
+              Save instant database snapshots or restore your historical records.
+            </Text>
+          </Box>
+          <Tabs defaultValue="backup">
+            <Tabs.List mb="md">
+              <Tabs.Tab value="backup">{t("settings.tab.backup")}</Tabs.Tab>
+              {canEdit && <Tabs.Tab value="retention">{t("settings.tab.retention")}</Tabs.Tab>}
+            </Tabs.List>
+            <Tabs.Panel value="backup">
+              <BackupRestoreTab onLogout={onLogout} />
+            </Tabs.Panel>
+            {canEdit && (
+              <Tabs.Panel value="retention">
+                <RetentionTab />
+              </Tabs.Panel>
+            )}
+          </Tabs>
+        </Stack>
+      )}
+
+      {activeSection === "appearance" && (
+        <Stack gap="md">
+          <Box>
+            <Title order={4}>Theme & Language</Title>
+            <Text size="sm" c="dimmed">
+              Customize receipt branding colors, store logos, and app language.
+            </Text>
+          </Box>
+          <Tabs defaultValue="theme">
+            <Tabs.List mb="md">
+              {canEdit && <Tabs.Tab value="theme">{t("settings.tab.theme")}</Tabs.Tab>}
+              <Tabs.Tab value="language">{t("settings.tab.language")}</Tabs.Tab>
+            </Tabs.List>
+            {canEdit && (
+              <Tabs.Panel value="theme">
+                <ThemeBrandingTab />
+              </Tabs.Panel>
+            )}
+            <Tabs.Panel value="language">
+              <LanguageTab />
+            </Tabs.Panel>
+          </Tabs>
+        </Stack>
+      )}
+
+      {activeSection === "advanced" && canEdit && (
+        <Stack gap="md">
+          <Box>
+            <Title order={4}>Modules & Activity Audit</Title>
+            <Text size="sm" c="dimmed">
+              Toggle optional business capabilities and review staff audit events.
+            </Text>
+          </Box>
+          <Tabs defaultValue="modules">
+            <Tabs.List mb="md">
+              <Tabs.Tab value="modules">Feature Modules</Tabs.Tab>
+              <Tabs.Tab value="audit">{t("settings.tab.audit")}</Tabs.Tab>
+            </Tabs.List>
+            <Tabs.Panel value="modules">
+              <ModulesTab companyId={user.companyId ?? ""} />
+            </Tabs.Panel>
+            <Tabs.Panel value="audit">
+              <AuditLogTab />
+            </Tabs.Panel>
+          </Tabs>
+        </Stack>
+      )}
     </Stack>
   );
 }

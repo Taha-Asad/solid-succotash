@@ -265,8 +265,9 @@ pub async fn update_product(
 
     bump_version(pool.inner(), "products", &product_id).await?;
 
-    let product = sqlx::query_as::<_, PublicProduct>("SELECT * FROM products WHERE id = ?")
+    let product = sqlx::query_as::<_, PublicProduct>("SELECT * FROM products WHERE id = ? AND company_id = ?")
         .bind(&product_id)
+        .bind(company_id)
         .fetch_one(pool.inner())
         .await
         .map_err(|e| AppError::internal(format!("Database error: {e}")))?;
@@ -531,8 +532,9 @@ pub async fn adjust_stock(
         .map_err(|e| AppError::internal(format!("Failed to commit transaction: {e}")))?;
 
     // 4. Return updated product
-    let product = sqlx::query_as::<_, PublicProduct>("SELECT * FROM products WHERE id = ?")
+    let product = sqlx::query_as::<_, PublicProduct>("SELECT * FROM products WHERE id = ? AND company_id = ?")
         .bind(&product_id)
+        .bind(company_id)
         .fetch_one(pool.inner())
         .await
         .map_err(|e| AppError::internal(format!("Database error: {e}")))?;

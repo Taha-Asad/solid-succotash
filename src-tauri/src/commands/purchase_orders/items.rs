@@ -241,8 +241,8 @@ pub async fn receive_po_items(
     }
 
     // Mark PO as received
-    sqlx::query("UPDATE purchase_orders SET status = 'received', received_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
-        .bind(&po_id).execute(&mut *tx).await.map_err(|e| AppError::internal(format!("Error: {e}")))?;
+    sqlx::query("UPDATE purchase_orders SET status = 'received', received_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND company_id = ?")
+        .bind(&po_id).bind(company_id).execute(&mut *tx).await.map_err(|e| AppError::internal(format!("Error: {e}")))?;
 
     tx.commit().await.map_err(|e| AppError::internal(format!("Error: {e}")))?;
 

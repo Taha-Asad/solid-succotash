@@ -44,8 +44,9 @@ pub(crate) async fn recalc_po_totals(pool: &SqlitePool, po_id: &str, company_id:
     // Compute balance_due in Rust — do NOT use `balance_due = grand_total - amount_paid`
     // inside the same UPDATE that sets grand_total, because SQLite evaluates the
     // right-hand side with the OLD value of grand_total, not the new one.
-    let amount_paid = sqlx::query_as::<_, (i64,)>("SELECT amount_paid FROM purchase_orders WHERE id = ?")
+    let amount_paid = sqlx::query_as::<_, (i64,)>("SELECT amount_paid FROM purchase_orders WHERE id = ? AND company_id = ?")
         .bind(po_id)
+        .bind(company_id)
         .fetch_one(pool)
         .await
         .map_err(|e| AppError::internal(format!("Error: {e}")))?

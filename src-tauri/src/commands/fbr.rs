@@ -623,6 +623,7 @@ pub async fn get_fbr_config(
     session: State<'_, SessionState>,
 ) -> Result<Option<FbrConfigRow>, AppError> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
+    check_permission(pool.inner(), &current_user.role, "settings", "view").await?;
     let company_id = current_user
         .company_id
         .ok_or_else(|| AppError::internal("User is not assigned to a company".to_string()))?;
@@ -671,18 +672,32 @@ pub async fn save_fbr_config(
 
     let id = match existing {
         Some(id) => {
-            sqlx::query(
-                "UPDATE fbr_config \
-                 SET environment = ?, is_active = ?, pral_token = ?, updated_at = CURRENT_TIMESTAMP \
-                 WHERE company_id = ?",
-            )
-            .bind(&environment)
-            .bind(is_active)
-            .bind(&pral_token)
-            .bind(&company_id)
-            .execute(pool.inner())
-            .await
-            .map_err(|e| AppError::internal(format!("Database error: {e}")))?;
+            if let Some(token) = pral_token.as_ref().filter(|t| !t.trim().is_empty()) {
+                sqlx::query(
+                    "UPDATE fbr_config \
+                     SET environment = ?, is_active = ?, pral_token = ?, updated_at = CURRENT_TIMESTAMP \
+                     WHERE company_id = ?",
+                )
+                .bind(&environment)
+                .bind(is_active)
+                .bind(token)
+                .bind(&company_id)
+                .execute(pool.inner())
+                .await
+                .map_err(|e| AppError::internal(format!("Database error: {e}")))?;
+            } else {
+                sqlx::query(
+                    "UPDATE fbr_config \
+                     SET environment = ?, is_active = ?, updated_at = CURRENT_TIMESTAMP \
+                     WHERE company_id = ?",
+                )
+                .bind(&environment)
+                .bind(is_active)
+                .bind(&company_id)
+                .execute(pool.inner())
+                .await
+                .map_err(|e| AppError::internal(format!("Database error: {e}")))?;
+            }
             id
         }
         None => {

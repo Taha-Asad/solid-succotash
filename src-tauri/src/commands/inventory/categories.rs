@@ -189,8 +189,9 @@ pub async fn update_category(
 
     bump_version(pool.inner(), "categories", &category_id).await?;
 
-    let category = sqlx::query_as::<_, PublicCategory>("SELECT * FROM categories WHERE id = ?")
+    let category = sqlx::query_as::<_, PublicCategory>("SELECT * FROM categories WHERE id = ? AND company_id = ?")
         .bind(&category_id)
+        .bind(company_id)
         .fetch_one(pool.inner())
         .await
         .map_err(|e| AppError::internal(format!("Database error: {e}")))?;
@@ -249,8 +250,9 @@ pub async fn set_category_active(
         return Err(AppError::internal("Category not found".to_string()));
     }
 
-    let category = sqlx::query_as::<_, PublicCategory>("SELECT * FROM categories WHERE id = ?")
+    let category = sqlx::query_as::<_, PublicCategory>("SELECT * FROM categories WHERE id = ? AND company_id = ?")
         .bind(&category_id)
+        .bind(company_id)
         .fetch_one(pool.inner())
         .await
         .map_err(|e| AppError::internal(format!("Database error: {e}")))?;
