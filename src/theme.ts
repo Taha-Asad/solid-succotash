@@ -38,20 +38,20 @@ const gold: MantineColorsTuple = [
   "#4F3610", // 9
 ];
 
-// ---- Dark-mode neutral scale (navy-tinted) ----------------------------
-// Replaces Mantine's default grey-dark so dark mode stays on-brand.
+// ---- Dark-mode neutral scale (clean Slate scale) --------------------
+// Replaces Mantine's default grey-dark with crisp, high-contrast Slate.
 
 const dark: MantineColorsTuple = [
-  "#E9EDF6", // 0  primary text
-  "#CAD3E4", // 1
-  "#A7B4CE", // 2
-  "#7E8CAB", // 3
-  "#53607E", // 4
-  "#303B57", // 5
-  "#1E2842", // 6
-  "#161F37", // 7  body background
-  "#101A30", // 8  card / surface
-  "#0A1224", // 9  deepest
+  "#F8FAFC", // 0  primary text (slate-50)
+  "#E2E8F0", // 1  slate-200
+  "#CBD5E1", // 2  slate-300
+  "#94A3B8", // 3  slate-400
+  "#64748B", // 4  slate-500
+  "#475569", // 5  slate-600
+  "#38496B", // 6  slate-border-strong
+  "#243048", // 7  body borders / soft (matches --app-border)
+  "#141C2E", // 8  card / surface (matches --app-surface)
+  "#0B111E", // 9  deepest background (matches --app-bg)
 ];
 
 // ---- Semantic tokens used directly by pages ---------------------------

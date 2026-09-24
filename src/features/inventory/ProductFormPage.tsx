@@ -1,12 +1,12 @@
 // ==========================================
 // ADD / EDIT PRODUCT PAGE
-// Full-page, clean, humanistic 2-column layout
-// Modeled directly after reference design (Kusale / add_item_ref.jpg)
+// Full-page, humanistic 2-column layout with Live Margin Engine
 // ==========================================
 
 import { useState, useEffect } from "react";
 import {
   Box,
+  Badge,
   Button,
   Group,
   Stack,
@@ -22,12 +22,18 @@ import {
   Tooltip,
   Divider,
   SimpleGrid,
+  Modal,
+  Card,
 } from "@mantine/core";
 import { useForm } from "@mantine/form";
 import {
   Barcode,
   Sparkles,
   AlertCircle,
+  AlertTriangle,
+  TrendingUp,
+  TrendingDown,
+  Percent,
 } from "lucide-react";
 
 import { listUnits, getErrorMessage } from "../../api/backend";
@@ -37,6 +43,14 @@ import type {
   PublicSupplier,
   PublicUnit,
 } from "../../types/backend";
+import { INK } from "../../theme";
+
+// Monospace tabular figures for financial clarity
+const LEDGER_NUM: React.CSSProperties = {
+  fontFamily:
+    'ui-monospace, "SF Mono", "Roboto Mono", "JetBrains Mono", Menlo, monospace',
+  fontVariantNumeric: "tabular-nums",
+};
 
 interface ProductFormPageProps {
   initial: PublicProduct | null;
@@ -66,6 +80,7 @@ export default function ProductFormPage({
   const isEdit = initial !== null;
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [lossModalOpen, setLossModalOpen] = useState(false);
   const [units, setUnits] = useState<PublicUnit[]>([]);
 
   useEffect(() => {
@@ -91,8 +106,12 @@ export default function ProductFormPage({
       isTaxable: true,
     },
     validate: {
-      name: (val) => (val.trim().length === 0 ? "Product name is required" : null),
-      sellPrice: (val) => (val < 0 ? "Selling price cannot be negative" : null),
+      name: (val) =>
+        val.trim().length === 0 ? "Product name is required" : null,
+      sellPrice: (val) =>
+        val < 0 ? "Selling price cannot be negative" : null,
+      costPrice: (val) =>
+        val < 0 ? "Cost price cannot be negative" : null,
     },
   });
 
@@ -102,9 +121,44 @@ export default function ProductFormPage({
     form.setFieldValue("sku", `SKU-${random}`);
   };
 
-  async function handleSubmit(values: typeof form.values) {
+  // Pricing & Live Margin Calculations
+  const cost = Number(form.values.costPrice) || 0;
+  const sell = Number(form.values.sellPrice) || 0;
+  const stockQty = Number(form.values.quantityInStock) || 0;
+  const unit = form.values.unit || "units";
+
+  const profit = sell - cost;
+  const isLoss = cost > 0 && sell > 0 && profit < 0;
+  const markupPercent =
+    cost > 0 ? ((sell - cost) / cost) * 100 : sell > 0 ? 100 : 0;
+  const marginPercent = sell > 0 ? ((sell - cost) / sell) * 100 : 0;
+
+  const applyMarkup = (percent: number) => {
+    if (cost > 0) {
+      const calculatedSell =
+        Math.round(cost * (1 + percent / 100) * 100) / 100;
+      form.setFieldValue("sellPrice", calculatedSell);
+    }
+  };
+
+  function handleFormSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    const validation = form.validate();
+    if (validation.hasErrors) return;
+
+    // Loss guardrail: warn merchant if selling below purchase cost
+    if (isLoss) {
+      setLossModalOpen(true);
+      return;
+    }
+
+    void executeSave(form.values);
+  }
+
+  async function executeSave(values: typeof form.values) {
     setLoading(true);
     setError(null);
+    setLossModalOpen(false);
     try {
       await onSave({
         sku: values.sku.trim() || `SKU-${Date.now().toString().slice(-6)}`,
@@ -138,20 +192,25 @@ export default function ProductFormPage({
       .map((s) => ({ value: s.id, label: s.name ?? "Unnamed" })),
   ];
 
-  const unitOptions = units.length > 0
-    ? units.map((u) => ({ value: u.name, label: u.symbol ? `${u.name} (${u.symbol})` : u.name }))
-    : [
-        { value: "pcs", label: "Pieces (pcs)" },
-        { value: "kg", label: "Kilograms (kg)" },
-        { value: "box", label: "Boxes (box)" },
-        { value: "litre", label: "Litres (ltr)" },
-        { value: "meter", label: "Meters (mtr)" },
-        { value: "pack", label: "Packs (pk)" },
-      ];
+  const unitOptions =
+    units.length > 0
+      ? units.map((u) => ({
+          value: u.name,
+          label: u.symbol ? `${u.name} (${u.symbol})` : u.name,
+        }))
+      : [
+          { value: "pcs", label: "Pieces (pcs)" },
+          { value: "kg", label: "Kilograms (kg)" },
+          { value: "box", label: "Boxes (box)" },
+          { value: "carton", label: "Cartons (ctn)" },
+          { value: "litre", label: "Litres (ltr)" },
+          { value: "meter", label: "Meters (mtr)" },
+          { value: "pack", label: "Packs (pk)" },
+        ];
 
   return (
     <Box pb={40}>
-      <form onSubmit={form.onSubmit(handleSubmit)}>
+      <form onSubmit={handleFormSubmit}>
         {/* ==================== TOP ACTION HEADER ==================== */}
         <Group justify="space-between" align="center" mb={28} wrap="wrap" gap="md">
           <Stack gap={4}>
@@ -174,17 +233,17 @@ export default function ProductFormPage({
                 style={{ cursor: "pointer" }}
                 onClick={onCancel}
               >
-                Product List
+                Products
               </Text>
               <Text size="xs" c="dimmed">
                 ›
               </Text>
-              <Text size="xs" fw={600} c="indigo">
+              <Text size="xs" fw={700} style={{ color: "var(--app-accent)" }}>
                 {isEdit ? "Edit Product" : "Add Product"}
               </Text>
             </Group>
 
-            <Title order={2} style={{ letterSpacing: -0.5 }}>
+            <Title order={2} style={{ letterSpacing: -0.5, color: INK.text }}>
               {isEdit ? `Edit: ${initial.name}` : "Add New Product"}
             </Title>
           </Stack>
@@ -194,10 +253,10 @@ export default function ProductFormPage({
             <Button
               variant="default"
               size="sm"
-              radius="pill"
+              radius="md"
               onClick={onCancel}
               style={{
-                borderColor: "var(--app-border)",
+                borderColor: INK.border,
                 background: "var(--app-surface)",
                 fontWeight: 600,
               }}
@@ -207,13 +266,12 @@ export default function ProductFormPage({
             <Button
               type="submit"
               size="sm"
-              radius="pill"
+              radius="md"
               loading={loading}
               style={{
-                background: "#4F61ED",
+                background: "var(--app-accent, #1d2b54)",
                 color: "#ffffff",
                 fontWeight: 600,
-                boxShadow: "0 4px 14px -2px rgba(79, 97, 237, 0.35)",
               }}
             >
               {isEdit ? "Save Changes" : "Add Product"}
@@ -238,23 +296,23 @@ export default function ProductFormPage({
           style={{
             display: "grid",
             gridTemplateColumns: "minmax(0, 1.8fr) minmax(0, 1.1fr)",
-            gap: 28,
+            gap: 24,
             alignItems: "flex-start",
           }}
         >
           {/* ==================== LEFT COLUMN (Main Details) ==================== */}
-          <Stack gap={24}>
+          <Stack gap={20}>
             {/* Card 1: General Information */}
-            <Box
-              p={24}
+            <Card
+              p={20}
+              radius="md"
+              withBorder
               style={{
                 background: "var(--app-surface)",
-                border: "1px solid var(--app-border)",
-                borderRadius: 20,
-                boxShadow: "0 4px 18px -4px rgba(18, 28, 56, 0.03)",
+                borderColor: INK.border,
               }}
             >
-              <Title order={4} mb={18} style={{ letterSpacing: -0.2 }}>
+              <Title order={4} mb={16} style={{ letterSpacing: -0.2, color: INK.text }}>
                 General Information
               </Title>
               <Stack gap="md">
@@ -265,8 +323,7 @@ export default function ProductFormPage({
                   radius="md"
                   {...form.getInputProps("name")}
                   styles={{
-                    label: { fontWeight: 600, fontSize: 13, marginBottom: 6 },
-                    input: { background: "var(--app-soft)", borderColor: "var(--app-border)" },
+                    label: { fontWeight: 600, fontSize: 13, marginBottom: 4 },
                   }}
                 />
 
@@ -284,8 +341,7 @@ export default function ProductFormPage({
                     }
                     {...form.getInputProps("sku")}
                     styles={{
-                      label: { fontWeight: 600, fontSize: 13, marginBottom: 6 },
-                      input: { background: "var(--app-soft)", borderColor: "var(--app-border)" },
+                      label: { fontWeight: 600, fontSize: 13, marginBottom: 4 },
                     }}
                   />
                   <TextInput
@@ -295,8 +351,7 @@ export default function ProductFormPage({
                     radius="md"
                     {...form.getInputProps("barcode")}
                     styles={{
-                      label: { fontWeight: 600, fontSize: 13, marginBottom: 6 },
-                      input: { background: "var(--app-soft)", borderColor: "var(--app-border)" },
+                      label: { fontWeight: 600, fontSize: 13, marginBottom: 4 },
                     }}
                   />
                 </Group>
@@ -304,125 +359,240 @@ export default function ProductFormPage({
                 <Textarea
                   label="Description / Storage Notes"
                   placeholder="Enter details about pack size, shelf location, or customer specs..."
-                  minRows={3}
+                  minRows={2}
                   radius="md"
                   {...form.getInputProps("description")}
                   styles={{
-                    label: { fontWeight: 600, fontSize: 13, marginBottom: 6 },
-                    input: { background: "var(--app-soft)", borderColor: "var(--app-border)" },
+                    label: { fontWeight: 600, fontSize: 13, marginBottom: 4 },
                   }}
                 />
               </Stack>
-            </Box>
+            </Card>
 
-            {/* Card 2: Pricing */}
-            <Box
-              p={24}
+            {/* Card 2: Pricing & Live Margin Calculator */}
+            <Card
+              p={20}
+              radius="md"
+              withBorder
               style={{
                 background: "var(--app-surface)",
-                border: "1px solid var(--app-border)",
-                borderRadius: 20,
-                boxShadow: "0 4px 18px -4px rgba(18, 28, 56, 0.03)",
+                borderColor: INK.border,
               }}
             >
-              <Title order={4} mb={18} style={{ letterSpacing: -0.2 }}>
-                Pricing & Taxation
-              </Title>
-              <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="md">
+              <Group justify="space-between" align="center" mb={16} wrap="wrap" gap="xs">
+                <Box>
+                  <Title order={4} style={{ letterSpacing: -0.2, color: INK.text }}>
+                    Pricing & Profit Margin
+                  </Title>
+                  <Text size="xs" c="dimmed">
+                    Track wholesale buying costs, retail prices, and gross profit return
+                  </Text>
+                </Box>
+                {cost > 0 && (
+                  <Group gap={6} align="center">
+                    <Text size="xs" c="dimmed">Quick Target:</Text>
+                    {[
+                      { label: "+15% Wholesale", pct: 15 },
+                      { label: "+25% Retail", pct: 25 },
+                      { label: "+35% Standard", pct: 35 },
+                      { label: "+50% Premium", pct: 50 },
+                    ].map(({ label, pct }) => (
+                      <Button
+                        key={pct}
+                        variant="subtle"
+                        size="compact-xs"
+                        radius="md"
+                        onClick={() => applyMarkup(pct)}
+                        style={{
+                          fontSize: 10,
+                          fontWeight: 600,
+                          background: "var(--app-soft)",
+                          color: INK.text,
+                          border: `1px solid ${INK.border}`,
+                        }}
+                      >
+                        {label}
+                      </Button>
+                    ))}
+                  </Group>
+                )}
+              </Group>
+
+              <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="md" mb="md">
                 <NumberInput
-                  label="Cost Price (Buying)"
+                  label="Cost Price (Wholesale / Buying)"
+                  description="What you pay the supplier"
                   placeholder="0.00"
                   min={0}
                   decimalScale={2}
                   radius="md"
+                  leftSection={<Text size="xs" fw={700} c="dimmed">Rs.</Text>}
                   {...form.getInputProps("costPrice")}
                   styles={{
-                    label: { fontWeight: 600, fontSize: 13, marginBottom: 6 },
-                    input: { background: "var(--app-soft)", borderColor: "var(--app-border)" },
+                    label: { fontWeight: 600, fontSize: 13, marginBottom: 2 },
                   }}
                 />
                 <NumberInput
-                  label="Selling Price (Retail)"
+                  label="Selling Price (Retail / Counter)"
+                  description="What customer pays at checkout"
                   placeholder="0.00"
                   min={0}
                   decimalScale={2}
                   required
                   radius="md"
+                  leftSection={<Text size="xs" fw={700} c="dimmed">Rs.</Text>}
                   {...form.getInputProps("sellPrice")}
                   styles={{
-                    label: { fontWeight: 600, fontSize: 13, marginBottom: 6 },
-                    input: { background: "var(--app-soft)", borderColor: "var(--app-border)" },
+                    label: { fontWeight: 600, fontSize: 13, marginBottom: 2 },
                   }}
                 />
                 <NumberInput
-                  label="Tax Rate (GST %)"
+                  label="Sales Tax (GST %)"
+                  description="Applicable federal/provincial tax"
                   placeholder="0"
                   min={0}
                   max={100}
                   decimalScale={2}
                   radius="md"
+                  rightSection={<Percent size={14} color="var(--app-muted)" />}
                   {...form.getInputProps("taxRate")}
                   styles={{
-                    label: { fontWeight: 600, fontSize: 13, marginBottom: 6 },
-                    input: { background: "var(--app-soft)", borderColor: "var(--app-border)" },
+                    label: { fontWeight: 600, fontSize: 13, marginBottom: 2 },
                   }}
                 />
               </SimpleGrid>
-            </Box>
+
+              {/* Live Margin Indicator Strip */}
+              {cost > 0 && sell > 0 ? (
+                !isLoss ? (
+                  <Box
+                    p="sm"
+                    style={{
+                      borderRadius: 10,
+                      background: "rgba(5, 150, 105, 0.08)",
+                      border: "1px solid rgba(5, 150, 105, 0.25)",
+                    }}
+                  >
+                    <Group justify="space-between" align="center" wrap="wrap" gap="xs">
+                      <Group gap="xs">
+                        <TrendingUp size={18} color="#059669" />
+                        <Text size="sm" fw={700} style={{ color: "#059669" }}>
+                          Gross Profit: +Rs. {profit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} / {unit}
+                        </Text>
+                      </Group>
+                      <Group gap="xs">
+                        <Badge color="green" variant="light" size="sm">
+                          {markupPercent.toFixed(1)}% Markup
+                        </Badge>
+                        <Badge color="teal" variant="filled" size="sm">
+                          {marginPercent.toFixed(1)}% Profit Margin
+                        </Badge>
+                      </Group>
+                    </Group>
+
+                    {stockQty > 0 && (
+                      <Text size="xs" c="dimmed" mt={4}>
+                        Projected inventory profit on {stockQty} {unit}:{" "}
+                        <Text component="span" fw={700} style={{ ...LEDGER_NUM, color: "#059669" }}>
+                          +Rs. {(profit * stockQty).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </Text>
+                      </Text>
+                    )}
+                  </Box>
+                ) : (
+                  <Box
+                    p="sm"
+                    style={{
+                      borderRadius: 10,
+                      background: "rgba(220, 38, 38, 0.08)",
+                      border: "1px solid rgba(220, 38, 38, 0.3)",
+                    }}
+                  >
+                    <Group justify="space-between" align="center" wrap="wrap" gap="xs">
+                      <Group gap="xs">
+                        <TrendingDown size={18} color="#dc2626" />
+                        <Text size="sm" fw={700} style={{ color: "#dc2626" }}>
+                          Loss Warning: -Rs. {Math.abs(profit).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} per {unit} sold
+                        </Text>
+                      </Group>
+                      <Badge color="red" variant="filled" size="sm">
+                        {marginPercent.toFixed(1)}% Negative Margin
+                      </Badge>
+                    </Group>
+                    <Text size="xs" c="dimmed" mt={4}>
+                      Your selling price is lower than wholesale cost. Selling at this rate will erode capital.
+                    </Text>
+                  </Box>
+                )
+              ) : cost === 0 && sell > 0 ? (
+                <Box
+                  p="xs"
+                  style={{
+                    borderRadius: 8,
+                    background: "var(--app-soft)",
+                    border: `1px solid ${INK.border}`,
+                  }}
+                >
+                  <Text size="xs" c="dimmed">
+                    💡 Tip: Enter a wholesale cost price above to track your profit margin and prevent accidental loss-making sales.
+                  </Text>
+                </Box>
+              ) : null}
+            </Card>
 
             {/* Card 3: Inventory & Units */}
-            <Box
-              p={24}
+            <Card
+              p={20}
+              radius="md"
+              withBorder
               style={{
                 background: "var(--app-surface)",
-                border: "1px solid var(--app-border)",
-                borderRadius: 20,
-                boxShadow: "0 4px 18px -4px rgba(18, 28, 56, 0.03)",
+                borderColor: INK.border,
               }}
             >
-              <Title order={4} mb={18} style={{ letterSpacing: -0.2 }}>
+              <Title order={4} mb={16} style={{ letterSpacing: -0.2, color: INK.text }}>
                 Inventory & Stock Units
               </Title>
               <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">
                 <NumberInput
                   label={isEdit ? "Stock Count" : "Initial Stock Quantity"}
+                  description="Number of units currently in store or storage"
                   placeholder="0"
                   min={0}
                   radius="md"
                   {...form.getInputProps("quantityInStock")}
                   styles={{
-                    label: { fontWeight: 600, fontSize: 13, marginBottom: 6 },
-                    input: { background: "var(--app-soft)", borderColor: "var(--app-border)" },
+                    label: { fontWeight: 600, fontSize: 13, marginBottom: 2 },
                   }}
                 />
                 <Select
                   label="Measurement Unit"
+                  description="Packaging unit for billing and stock adjustment"
                   data={unitOptions}
                   radius="md"
                   {...form.getInputProps("unit")}
                   styles={{
-                    label: { fontWeight: 600, fontSize: 13, marginBottom: 6 },
-                    input: { background: "var(--app-soft)", borderColor: "var(--app-border)" },
+                    label: { fontWeight: 600, fontSize: 13, marginBottom: 2 },
                   }}
                 />
               </SimpleGrid>
-            </Box>
+            </Card>
           </Stack>
 
           {/* ==================== RIGHT COLUMN (Organization & Status) ==================== */}
-          <Stack gap={24}>
+          <Stack gap={20}>
             {/* Card 1: Category & Supplier */}
-            <Box
-              p={24}
+            <Card
+              p={20}
+              radius="md"
+              withBorder
               style={{
                 background: "var(--app-surface)",
-                border: "1px solid var(--app-border)",
-                borderRadius: 20,
-                boxShadow: "0 4px 18px -4px rgba(18, 28, 56, 0.03)",
+                borderColor: INK.border,
               }}
             >
-              <Title order={4} mb={18} style={{ letterSpacing: -0.2 }}>
-                Category & Brand
+              <Title order={4} mb={16} style={{ letterSpacing: -0.2, color: INK.text }}>
+                Category & Supplier
               </Title>
               <Stack gap="md">
                 <Select
@@ -434,8 +604,7 @@ export default function ProductFormPage({
                   radius="md"
                   {...form.getInputProps("categoryId")}
                   styles={{
-                    label: { fontWeight: 600, fontSize: 13, marginBottom: 6 },
-                    input: { background: "var(--app-soft)", borderColor: "var(--app-border)" },
+                    label: { fontWeight: 600, fontSize: 13, marginBottom: 2 },
                   }}
                 />
 
@@ -448,24 +617,23 @@ export default function ProductFormPage({
                   radius="md"
                   {...form.getInputProps("supplierId")}
                   styles={{
-                    label: { fontWeight: 600, fontSize: 13, marginBottom: 6 },
-                    input: { background: "var(--app-soft)", borderColor: "var(--app-border)" },
+                    label: { fontWeight: 600, fontSize: 13, marginBottom: 2 },
                   }}
                 />
               </Stack>
-            </Box>
+            </Card>
 
             {/* Card 2: Status & Settings */}
-            <Box
-              p={24}
+            <Card
+              p={20}
+              radius="md"
+              withBorder
               style={{
                 background: "var(--app-surface)",
-                border: "1px solid var(--app-border)",
-                borderRadius: 20,
-                boxShadow: "0 4px 18px -4px rgba(18, 28, 56, 0.03)",
+                borderColor: INK.border,
               }}
             >
-              <Title order={4} mb={18} style={{ letterSpacing: -0.2 }}>
+              <Title order={4} mb={16} style={{ letterSpacing: -0.2, color: INK.text }}>
                 Item Status
               </Title>
               <Stack gap="lg">
@@ -475,18 +643,20 @@ export default function ProductFormPage({
                       Active for POS & Sales
                     </Text>
                     <Text size="xs" c="dimmed">
-                      Item is available for billing
+                      Item is active and searchable at checkout
                     </Text>
                   </Stack>
                   <Switch
                     checked={form.values.isActive}
-                    onChange={(e) => form.setFieldValue("isActive", e.currentTarget.checked)}
-                    color="indigo"
+                    onChange={(e) =>
+                      form.setFieldValue("isActive", e.currentTarget.checked)
+                    }
+                    color="teal"
                     size="md"
                   />
                 </Group>
 
-                <Divider color="var(--app-border)" />
+                <Divider color={INK.border} />
 
                 <Group justify="space-between" align="center">
                   <Stack gap={2}>
@@ -494,21 +664,92 @@ export default function ProductFormPage({
                       Subject to Sales Tax
                     </Text>
                     <Text size="xs" c="dimmed">
-                      Calculate tax at checkout
+                      Apply GST rate during invoice calculations
                     </Text>
                   </Stack>
                   <Switch
                     checked={form.values.isTaxable}
-                    onChange={(e) => form.setFieldValue("isTaxable", e.currentTarget.checked)}
-                    color="indigo"
+                    onChange={(e) =>
+                      form.setFieldValue("isTaxable", e.currentTarget.checked)
+                    }
+                    color="teal"
                     size="md"
                   />
                 </Group>
               </Stack>
-            </Box>
+            </Card>
           </Stack>
         </Box>
       </form>
+
+      {/* ==================== LOSS GUARDRAIL CONFIRMATION MODAL ==================== */}
+      <Modal
+        opened={lossModalOpen}
+        onClose={() => setLossModalOpen(false)}
+        title={
+          <Group gap={8}>
+            <AlertTriangle size={20} color="#dc2626" />
+            <Text fw={700} size="md" c="red">
+              Confirm Below-Cost Selling Price
+            </Text>
+          </Group>
+        }
+        centered
+        radius="md"
+      >
+        <Stack gap="md">
+          <Text size="sm">
+            You are setting a selling price that is <strong>lower than your purchase cost</strong>:
+          </Text>
+
+          <Box
+            p="sm"
+            style={{
+              background: "rgba(220, 38, 38, 0.08)",
+              border: "1px solid rgba(220, 38, 38, 0.25)",
+              borderRadius: 8,
+            }}
+          >
+            <Group justify="space-between" mb={4}>
+              <Text size="xs" c="dimmed">Wholesale Purchase Cost:</Text>
+              <Text size="xs" fw={700} style={LEDGER_NUM}>Rs. {cost.toFixed(2)}</Text>
+            </Group>
+            <Group justify="space-between" mb={4}>
+              <Text size="xs" c="dimmed">Retail Selling Price:</Text>
+              <Text size="xs" fw={700} style={LEDGER_NUM}>Rs. {sell.toFixed(2)}</Text>
+            </Group>
+            <Divider my={4} />
+            <Group justify="space-between">
+              <Text size="xs" fw={700} c="red">Loss Per Unit:</Text>
+              <Text size="sm" fw={800} style={{ ...LEDGER_NUM, color: "#dc2626" }}>
+                -Rs. {Math.abs(profit).toFixed(2)} ({marginPercent.toFixed(1)}%)
+              </Text>
+            </Group>
+          </Box>
+
+          <Text size="xs" c="dimmed">
+            Is this intentional (e.g. damaged stock liquidation, seasonal clearance), or was the selling price entered with a typo?
+          </Text>
+
+          <Group justify="flex-end" gap="sm" mt="xs">
+            <Button
+              variant="default"
+              onClick={() => setLossModalOpen(false)}
+              size="sm"
+            >
+              Go Back & Fix Price
+            </Button>
+            <Button
+              color="red"
+              onClick={() => void executeSave(form.values)}
+              loading={loading}
+              size="sm"
+            >
+              Yes, Save Below Cost
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
     </Box>
   );
 }

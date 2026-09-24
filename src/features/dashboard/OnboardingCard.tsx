@@ -1,15 +1,20 @@
+// ============================================================================
+// STORE SETUP CHECKLIST (Non-blocking, Anti-slop Onboarding)
+// Clean, token-driven launchpad for Pakistani retail merchants.
+// Designed under Crow Parliament ethos (Julian Mercer MERCER-UX & Marcus Sterling)
+// ============================================================================
+
 import { useState } from "react";
 import {
   Box,
   Button,
   Group,
   RingProgress,
-  Stack,
   Text,
-  ThemeIcon,
   ActionIcon,
   Tooltip,
   Collapse,
+  Badge,
 } from "@mantine/core";
 import {
   Building2,
@@ -26,6 +31,12 @@ import {
 } from "lucide-react";
 import type { PublicUser } from "../../types/backend";
 
+const LEDGER_NUM: React.CSSProperties = {
+  fontFamily:
+    'ui-monospace, "SF Mono", "Roboto Mono", "JetBrains Mono", Menlo, monospace',
+  fontVariantNumeric: "tabular-nums",
+};
+
 interface OnboardingCardProps {
   user: PublicUser;
   hasCompanyDetails: boolean;
@@ -41,17 +52,25 @@ export default function OnboardingCard({
   hasInvoices,
   onNavigate,
 }: OnboardingCardProps) {
-  const storageKey = `ijaz_onboarding_dismissed_${user.id}`;
+  const dismissKey = `ijaz_onboarding_dismissed_${user.id}`;
+  const collapseKey = `ijaz_onboarding_collapsed_${user.id}`;
+
   const [dismissed, setDismissed] = useState<boolean>(() => {
     try {
-      return localStorage.getItem(storageKey) === "true";
+      return localStorage.getItem(dismissKey) === "true";
     } catch {
       return false;
     }
   });
-  const [collapsed, setCollapsed] = useState<boolean>(false);
 
-  // Backup check from local storage or default
+  const [collapsed, setCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(collapseKey) === "true";
+    } catch {
+      return false;
+    }
+  });
+
   const [hasBackup] = useState<boolean>(() => {
     try {
       return localStorage.getItem(`ijaz_backup_performed_${user.id}`) === "true";
@@ -63,39 +82,39 @@ export default function OnboardingCard({
   const steps = [
     {
       id: "company",
-      title: "Shop Details & Branding",
-      description: "Set your business name, contact, and receipt header",
+      title: "Store Profile & Bill Header",
+      description: "Set your store name, NTN, phone and address for invoices",
       completed: hasCompanyDetails,
-      actionLabel: "Edit Profile",
+      actionLabel: "Configure",
       module: "settings",
-      icon: <Building2 size={18} />,
+      icon: <Building2 size={16} />,
     },
     {
       id: "products",
-      title: "Add Your First Product",
-      description: "Enter a product name, price, and stock or import from Excel",
+      title: "Add Products & Pricing",
+      description: "Enter retail inventory or import directly from Excel/CSV",
       completed: hasProducts,
       actionLabel: "Add Item",
       module: "inventory",
-      icon: <PackagePlus size={18} />,
+      icon: <PackagePlus size={16} />,
     },
     {
       id: "invoices",
-      title: "Create a Customer Bill",
-      description: "Generate your first sale and preview the receipt layout",
+      title: "Record First Customer Sale",
+      description: "Issue a sales invoice and verify the printed receipt",
       completed: hasInvoices,
       actionLabel: "New Bill",
       module: "invoices",
-      icon: <ReceiptText size={18} />,
+      icon: <ReceiptText size={16} />,
     },
     {
       id: "backup",
-      title: "Protect Your Records",
-      description: "Save a 1-click database copy to your computer or USB",
+      title: "Create Database Backup",
+      description: "Download a local backup to keep your accounts safe",
       completed: hasBackup,
-      actionLabel: "View Backups",
+      actionLabel: "Backup",
       module: "settings",
-      icon: <ShieldCheck size={18} />,
+      icon: <ShieldCheck size={16} />,
     },
   ];
 
@@ -105,123 +124,127 @@ export default function OnboardingCard({
   function handleDismiss() {
     setDismissed(true);
     try {
-      localStorage.setItem(storageKey, "true");
+      localStorage.setItem(dismissKey, "true");
     } catch {
       // ignore
     }
   }
 
-  if (dismissed && completedCount === steps.length) {
+  function toggleCollapse() {
+    const next = !collapsed;
+    setCollapsed(next);
+    try {
+      localStorage.setItem(collapseKey, String(next));
+    } catch {
+      // ignore
+    }
+  }
+
+  // Once all steps are completed, cleanly retire from the dashboard
+  if (completedCount === steps.length) {
     return null;
   }
 
+  // When dismissed by user, offer an unobtrusive mini-pill
   if (dismissed) {
     return (
       <Box
-        className="floating-card"
-        px="lg"
-        py="xs"
-        mb="lg"
+        px="md"
+        py={6}
         style={{
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          borderRadius: 14,
+          borderRadius: 10,
+          background: "var(--app-surface)",
+          border: "1px solid var(--app-border)",
         }}
       >
         <Group gap="xs">
-          <Sparkles size={16} color="var(--app-accent)" />
-          <Text size="sm" fw={600}>
-            Setup Guide: {completedCount} of {steps.length} steps completed
+          <Sparkles size={14} color="var(--app-accent)" />
+          <Text size="xs" fw={600} style={{ color: "var(--app-text)" }}>
+            Setup Checklist: <span style={LEDGER_NUM}>{completedCount} of {steps.length}</span> completed ({progressPercent}%)
           </Text>
         </Group>
         <Button
           variant="subtle"
-          size="xs"
+          size="compact-xs"
           onClick={() => {
             setDismissed(false);
-            localStorage.removeItem(storageKey);
+            try {
+              localStorage.removeItem(dismissKey);
+            } catch {
+              // ignore
+            }
           }}
         >
-          Resume Guide
+          Resume Setup
         </Button>
       </Box>
     );
   }
 
   return (
-    <Box className="hero-welcome-card" p={{ base: "md", md: "xl" }} mb="xl">
-      <Group justify="space-between" align="flex-start" wrap="nowrap" mb="sm">
-        <Group gap="md" align="center">
-          <ThemeIcon
-            size={48}
-            radius={16}
-            style={{
-              background: "linear-gradient(135deg, #4f61ed 0%, #7687f9 100%)",
-              color: "#ffffff",
-              boxShadow: "0 6px 16px -4px rgba(79, 97, 237, 0.4)",
-            }}
-          >
-            <Sparkles size={24} />
-          </ThemeIcon>
-          <Stack gap={2}>
-            <Group gap="xs">
-              <Text fw={800} size="xl" style={{ letterSpacing: -0.3 }}>
-                Welcome, {user.fullName || "Business Owner"}!
-              </Text>
-            </Group>
-            <Text size="sm" c="dimmed">
-              Follow these simple steps to get your store up and running smoothly.
-            </Text>
-          </Stack>
-        </Group>
-
-        <Group gap="xs">
-          <Tooltip label={collapsed ? "Expand guide" : "Collapse guide"}>
-            <ActionIcon
-              variant="subtle"
-              color="gray"
-              radius="xl"
-              onClick={() => setCollapsed(!collapsed)}
-            >
-              {collapsed ? <ChevronDown size={18} /> : <ChevronUp size={18} />}
-            </ActionIcon>
-          </Tooltip>
-          <Tooltip label="Dismiss guide">
-            <ActionIcon
-              variant="subtle"
-              color="gray"
-              radius="xl"
-              onClick={handleDismiss}
-            >
-              <X size={18} />
-            </ActionIcon>
-          </Tooltip>
-        </Group>
-      </Group>
-
-      {/* Progress & Quick stats */}
-      <Group justify="space-between" align="center" mt="md" mb={collapsed ? 0 : "md"}>
-        <Group gap="sm">
+    <Box
+      p="md"
+      style={{
+        background: "var(--app-surface)",
+        border: "1px solid var(--app-border)",
+        borderRadius: 16,
+        boxShadow: "0 2px 8px -2px rgba(0,0,0,0.04)",
+      }}
+    >
+      <Group justify="space-between" align="center" wrap="nowrap">
+        <Group gap="sm" align="center">
           <RingProgress
-            size={52}
-            thickness={5}
+            size={42}
+            thickness={4}
             roundCaps
-            sections={[{ value: progressPercent, color: "#4f61ed" }]}
+            sections={[{ value: progressPercent, color: "var(--app-accent)" }]}
             label={
-              <Text c="var(--app-accent)" fw={800} ta="center" size="xs">
+              <Text c="var(--app-accent)" fw={700} ta="center" size="10px" style={LEDGER_NUM}>
                 {progressPercent}%
               </Text>
             }
           />
-          <Stack gap={0}>
-            <Text size="xs" fw={700} c="dimmed" style={{ letterSpacing: 0.8, textTransform: "uppercase" }}>
-              Launch Progress
+          <div>
+            <Group gap={6} align="center">
+              <Text fw={700} size="sm" style={{ color: "var(--app-text)" }}>
+                Store Setup Checklist
+              </Text>
+              <Badge size="xs" variant="light" color={progressPercent === 100 ? "green" : "blue"} style={LEDGER_NUM}>
+                {completedCount} / {steps.length} Done
+              </Badge>
+            </Group>
+            <Text size="xs" c="dimmed">
+              Complete these setup tasks to get your store fully operational.
             </Text>
-            <Text fw={700} size="sm">
-              {completedCount} of {steps.length} Steps Completed
-            </Text>
-          </Stack>
+          </div>
+        </Group>
+
+        <Group gap={4}>
+          <Tooltip label={collapsed ? "Expand checklist" : "Minimize checklist"}>
+            <ActionIcon
+              variant="subtle"
+              color="gray"
+              size="sm"
+              radius="md"
+              onClick={toggleCollapse}
+            >
+              {collapsed ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
+            </ActionIcon>
+          </Tooltip>
+          <Tooltip label="Dismiss setup guide">
+            <ActionIcon
+              variant="subtle"
+              color="gray"
+              size="sm"
+              radius="md"
+              onClick={handleDismiss}
+            >
+              <X size={16} />
+            </ActionIcon>
+          </Tooltip>
         </Group>
       </Group>
 
@@ -229,72 +252,83 @@ export default function OnboardingCard({
         <Box
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
-            gap: 16,
-            marginTop: 16,
+            gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+            gap: 12,
+            marginTop: 14,
           }}
         >
           {steps.map((step) => (
             <Box
               key={step.id}
-              className="floating-card"
-              p="md"
+              p="sm"
               style={{
-                borderRadius: 16,
+                borderRadius: 12,
                 background: step.completed ? "var(--app-soft)" : "var(--app-surface)",
-                border: step.completed
-                  ? "1px solid var(--app-border)"
-                  : "1px solid rgba(79, 97, 237, 0.2)",
-                opacity: step.completed ? 0.85 : 1,
+                border: "1px solid var(--app-border)",
+                display: "flex",
+                flexDirection: "column",
+                justifyContent: "space-between",
+                gap: 8,
               }}
             >
-              <Group justify="space-between" mb="xs">
-                <ThemeIcon
-                  size={34}
-                  radius={10}
-                  variant="light"
-                  color={step.completed ? "green" : "blue"}
-                >
-                  {step.icon}
-                </ThemeIcon>
-                {step.completed ? (
-                  <Group gap={4}>
-                    <CheckCircle2 size={16} color="var(--mantine-color-green-6)" />
-                    <Text size="xs" fw={700} c="green">
-                      Done
-                    </Text>
-                  </Group>
-                ) : (
-                  <Group gap={4}>
-                    <Circle size={14} color="var(--app-muted)" />
-                    <Text size="xs" c="dimmed">
-                      Pending
-                    </Text>
-                  </Group>
-                )}
-              </Group>
+              <div>
+                <Group justify="space-between" align="center" mb={6}>
+                  <Box
+                    style={{
+                      width: 28,
+                      height: 28,
+                      borderRadius: 7,
+                      background: step.completed
+                        ? "color-mix(in srgb, #1E8E5A 15%, transparent)"
+                        : "color-mix(in srgb, var(--app-accent) 15%, transparent)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      color: step.completed ? "#1E8E5A" : "var(--app-accent)",
+                    }}
+                  >
+                    {step.icon}
+                  </Box>
+                  {step.completed ? (
+                    <Group gap={4}>
+                      <CheckCircle2 size={14} color="#1E8E5A" />
+                      <Text size="11px" fw={700} c="green">
+                        Completed
+                      </Text>
+                    </Group>
+                  ) : (
+                    <Group gap={4}>
+                      <Circle size={12} color="var(--app-muted)" />
+                      <Text size="11px" c="dimmed">
+                        Pending
+                      </Text>
+                    </Group>
+                  )}
+                </Group>
 
-              <Text fw={700} size="sm" mb={2}>
-                {step.title}
-              </Text>
-              <Text size="xs" c="dimmed" mb="md" style={{ minHeight: 34 }}>
-                {step.description}
-              </Text>
+                <Text fw={600} size="xs" style={{ color: "var(--app-text)" }} lineClamp={1}>
+                  {step.title}
+                </Text>
+                <Text size="11px" c="dimmed" mt={2} lineClamp={2} style={{ minHeight: 28 }}>
+                  {step.description}
+                </Text>
+              </div>
 
               <Button
                 variant={step.completed ? "default" : "filled"}
-                size="xs"
+                size="compact-xs"
+                radius="sm"
                 fullWidth
-                radius="md"
-                rightSection={<ArrowRight size={13} />}
+                rightSection={<ArrowRight size={11} />}
                 onClick={() => onNavigate(step.module)}
                 style={{
-                  background: step.completed
-                    ? undefined
-                    : "linear-gradient(135deg, #4f61ed 0%, #687bf7 100%)",
+                  backgroundColor: step.completed ? undefined : "var(--app-accent)",
+                  color: step.completed ? "var(--app-text)" : "#ffffff",
+                  fontWeight: 600,
+                  fontSize: 11,
                 }}
               >
-                {step.actionLabel}
+                {step.completed ? "Review" : step.actionLabel}
               </Button>
             </Box>
           ))}

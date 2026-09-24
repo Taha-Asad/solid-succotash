@@ -37,6 +37,8 @@ import {
   Card,
   Group,
   Modal,
+  Drawer,
+  Accordion,
   NumberInput,
   Pagination,
   Select,
@@ -53,6 +55,8 @@ import {
   ScrollArea,
   Alert,
   Divider,
+  Menu,
+  SegmentedControl,
 } from "@mantine/core";
 
 import { useForm } from "@mantine/form";
@@ -61,6 +65,9 @@ import { useMediaQuery } from "@mantine/hooks";
 import {
   Package,
   PackagePlus,
+  PackageMinus,
+  ClipboardCheck,
+  ArrowRight,
   Tags,
   Truck,
   Plus,
@@ -72,11 +79,16 @@ import {
   CalendarClock,
   CalendarDays,
   Trash2,
-  TrendingUp,
   Download,
-  MoreVertical,
   CheckCircle2,
+  SlidersHorizontal,
+  Check,
+  MoreHorizontal,
+  X,
+  ChevronRight,
 } from "lucide-react";
+
+import { useI18n } from "../../i18n/I18nProvider";
 
 import {
   listCategories,
@@ -176,24 +188,6 @@ function daysUntil(dateStr: string): number {
   );
 }
 
-// Small reusable "eyebrow" label — used above section titles to give
-// each panel a consistent, formal document-like header rhythm.
-function Eyebrow({ children }: { children: React.ReactNode }) {
-  return (
-    <Text
-      size="xs"
-      fw={700}
-      style={{
-        color: INK.goldDeep,
-        letterSpacing: 1.4,
-        textTransform: "uppercase",
-      }}
-    >
-      {children}
-    </Text>
-  );
-}
-
 // Reusable empty state — states what happened and the next action,
 // rather than a bare "no data" line.
 function EmptyState({
@@ -231,85 +225,130 @@ function EmptyState({
   );
 }
 
+// Reusable product visual avatar initial generator
+function getProductInitials(name: string): string {
+  const clean = name.trim();
+  if (!clean) return "PR";
+  const parts = clean.split(/\s+/);
+  if (parts.length >= 2) {
+    return (parts[0][0] + parts[1][0]).toUpperCase();
+  }
+  return clean.slice(0, 2).toUpperCase();
+}
+
+// Consistent subtle hue based on product name hash
+function getProductColor(name: string): { bg: string; text: string } {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) {
+    hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const hues = [
+    { bg: "rgba(59, 130, 246, 0.12)", text: "#3b82f6" }, // blue
+    { bg: "rgba(16, 185, 129, 0.12)", text: "#10b981" }, // green
+    { bg: "rgba(139, 92, 246, 0.12)", text: "#8b5cf6" }, // purple
+    { bg: "rgba(245, 158, 11, 0.12)", text: "#f59e0b" }, // amber
+    { bg: "rgba(236, 72, 153, 0.12)", text: "#ec4899" }, // pink
+    { bg: "rgba(14, 165, 233, 0.12)", text: "#0ea5e9" }, // sky
+    { bg: "rgba(99, 102, 241, 0.12)", text: "#6366f1" }, // indigo
+  ];
+  return hues[Math.abs(hash) % hues.length];
+}
+
+// Financial profit and margin calculator
+function calculateMargin(costPricePaisa: number, sellPricePaisa: number) {
+  const cost = costPricePaisa / 100;
+  const sell = sellPricePaisa / 100;
+  const profit = sell - cost;
+  const marginPercent = sell > 0 ? (profit / sell) * 100 : 0;
+  return { profit, marginPercent };
+}
+
 // ==========================================
 // MAIN COMPONENT
 // ==========================================
 
 export default function InventoryPage({ onOpenImport }: InventoryPageProps) {
-  const perms = usePermissions();
   const isMobileHeader = useMediaQuery("(max-width: 36em)");
   const [isFormMode, setIsFormMode] = useState(false);
+  const [activeTab, setActiveTab] = useState<string | null>("products");
 
   return (
     <Stack gap="lg">
       {!isFormMode && (
-        <Group justify="space-between" align="flex-end" wrap="wrap">
-          <Stack gap={2}>
-            <Eyebrow>Inventory</Eyebrow>
-            <Title order={2} style={{ color: INK.text, letterSpacing: -0.3 }}>
+        <Group justify="space-between" align="flex-end" wrap="wrap" gap="md">
+          <Stack gap={4}>
+            <Box
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                background: "var(--app-accent-soft)",
+                color: "var(--app-accent)",
+                borderRadius: 999,
+                padding: "3px 10px",
+                fontSize: 11,
+                fontWeight: 700,
+                letterSpacing: "0.6px",
+                textTransform: "uppercase",
+                width: "fit-content",
+              }}
+            >
+              <Package size={12} />
+              <span>Inventory Workspace</span>
+            </Box>
+            <Title order={2} style={{ color: "var(--app-text)", letterSpacing: -0.4, fontWeight: 800 }}>
               Inventory Management
             </Title>
             <Text size="sm" c="dimmed">
-              Track products, stock levels, categories and suppliers in one place.
+              Unified catalog for live stock tracking, batch expirations, pricing margins, and supplier records.
             </Text>
           </Stack>
-          {perms.canManage && (
-            <Button
-              leftSection={<FileSpreadsheet size={16} />}
-              variant="filled"
-              color="dark"
-              fullWidth={isMobileHeader}
-              styles={{
-                root: {
-                  backgroundColor: INK.navy,
-                  "&:hover": { backgroundColor: INK.navySoft },
-                },
-              }}
-              onClick={() => {
-                onOpenImport?.();
-                reportOnboardingEvent({ type: "wizard-opened" });
-              }}
-              data-tour="import-button"
-            >
-              Import from Excel / CSV
-            </Button>
-          )}
         </Group>
       )}
 
       <Tabs
-        defaultValue="products"
-        variant="outline"
+        value={activeTab}
+        onChange={setActiveTab}
+        variant="pills"
+        radius="md"
         styles={{
           tab: {
             fontWeight: 600,
+            fontSize: 13,
+            padding: "8px 16px",
+            borderColor: "transparent",
+            color: "var(--app-text-soft)",
             "&[data-active]": {
-              color: INK.text,
-              borderColor: INK.gold,
+              backgroundColor: "var(--app-accent)",
+              color: "#ffffff",
             },
           },
           list: {
-            flexWrap: "wrap",
-            rowGap: 4,
+            gap: 6,
+            background: "var(--app-soft)",
+            padding: 4,
+            borderRadius: 12,
+            border: "1px solid var(--app-border)",
+            width: "fit-content",
           },
         }}
       >
         {!isFormMode && (
           <Tabs.List grow={isMobileHeader}>
-            <Tabs.Tab value="products" leftSection={<Package size={16} />}>
-              Products
+            <Tabs.Tab value="products" leftSection={<Package size={15} />}>
+              Products Catalog
             </Tabs.Tab>
-            <Tabs.Tab value="categories" leftSection={<Tags size={16} />}>
+            <Tabs.Tab value="categories" leftSection={<Tags size={15} />}>
               Categories
             </Tabs.Tab>
-            <Tabs.Tab value="suppliers" leftSection={<Truck size={16} />}>
+            <Tabs.Tab value="suppliers" leftSection={<Truck size={15} />}>
               Suppliers
             </Tabs.Tab>
           </Tabs.List>
         )}
 
         <Tabs.Panel value="products" pt={isFormMode ? 0 : "md"}>
-          <ProductsTab onFormModeChange={setIsFormMode} />
+          <ProductsTab onFormModeChange={setIsFormMode} onOpenImport={onOpenImport} />
         </Tabs.Panel>
 
         <Tabs.Panel value="categories" pt="md">
@@ -425,30 +464,43 @@ function CategoriesTab() {
   }
 
   return (
-    <Card
-      withBorder
-      radius="md"
-      padding="lg"
-      style={{ borderColor: INK.border }}
+    <Box
+      style={{
+        background: "var(--app-surface)",
+        border: "1px solid var(--app-border)",
+        borderRadius: 16,
+        overflow: "hidden",
+        boxShadow: "0 4px 20px -2px rgba(0, 0, 0, 0.04)",
+      }}
     >
-      <Stack>
-        <Group justify="space-between" wrap="wrap">
+      <Box p="md" style={{ borderBottom: "1px solid var(--app-border)", background: "var(--app-soft)" }}>
+        <Group justify="space-between" wrap="wrap" gap="sm">
           <TextInput
             placeholder="Search categories..."
-            leftSection={<Search size={15} />}
+            leftSection={<Search size={15} color="var(--app-muted)" />}
             value={query}
             onChange={(e) => setQuery(e.currentTarget.value)}
-            w={{ base: "100%", sm: 260 }}
+            radius="md"
+            w={{ base: "100%", sm: 300 }}
+            styles={{
+              input: {
+                background: "var(--app-surface)",
+                borderColor: "var(--app-border)",
+                color: "var(--app-text)",
+                fontSize: 13,
+              },
+            }}
           />
           <Group gap="sm">
-            <Text size="sm" c="dimmed">
-              {filtered.length} of {categories.length} categories
+            <Text size="xs" c="dimmed">
+              Showing <strong style={{ color: "var(--app-text)" }}>{filtered.length}</strong> of {categories.length} categories
             </Text>
             {canCreate && (
               <Button
                 size="sm"
-                leftSection={<Plus size={16} />}
-                style={{ backgroundColor: INK.navy }}
+                radius="md"
+                leftSection={<Plus size={15} />}
+                style={{ backgroundColor: "var(--app-accent)", color: "#ffffff", fontWeight: 600, fontSize: 13 }}
                 onClick={openCreate}
               >
                 Add Category
@@ -456,127 +508,168 @@ function CategoriesTab() {
             )}
           </Group>
         </Group>
+      </Box>
 
-        {error && (
-          <Alert color="red" variant="light" icon={<AlertTriangle size={16} />}>
+      {error && (
+        <Box p="md">
+          <Alert color="red" variant="light" radius="md" icon={<AlertTriangle size={16} />}>
             {error}
           </Alert>
-        )}
+        </Box>
+      )}
 
-        {loading ? (
+      {loading ? (
+        <Box p={40} ta="center">
           <Text c="dimmed" size="sm">
             Loading categories…
           </Text>
-        ) : filtered.length === 0 ? (
-          <EmptyState
-            icon={<Tags size={20} />}
-            title={categories.length === 0 ? "No categories yet" : "No matches"}
-            description={
-              categories.length === 0
-                ? "Create a category to start organizing products by type."
-                : "Try a different search term, or clear the search."
-            }
-          />
-        ) : (
-          <ScrollArea>
-            <Table
-              striped
-              highlightOnHover
-              withTableBorder
-              verticalSpacing="sm"
-              miw={640}
-            >
-              <Table.Thead>
-                <Table.Tr>
-                  <Table.Th>Name</Table.Th>
-                  <Table.Th>SKU Prefix</Table.Th>
-                  <Table.Th>Description</Table.Th>
-                  <Table.Th>Status</Table.Th>
-                  <Table.Th>Created</Table.Th>
-                  {(canEdit || canDelete) && <Table.Th>Actions</Table.Th>}
-                </Table.Tr>
-              </Table.Thead>
-              <Table.Tbody>
-                {filtered.map((cat) => (
-                  <Table.Tr key={cat.id}>
-                    <Table.Td>
-                      <Text fw={600} size="sm" style={{ color: INK.text }}>
+        </Box>
+      ) : filtered.length === 0 ? (
+        <EmptyState
+          icon={<Tags size={20} />}
+          title={categories.length === 0 ? "No categories yet" : "No matches"}
+          description={
+            categories.length === 0
+              ? "Create a category to start organizing products by type."
+              : "Try a different search term, or clear the search."
+          }
+        />
+      ) : (
+        <ScrollArea>
+          <Table
+            highlightOnHover
+            verticalSpacing="md"
+            horizontalSpacing="lg"
+            miw={640}
+            styles={{
+              thead: {
+                background: "var(--app-soft)",
+                borderBottom: "1px solid var(--app-border)",
+              },
+              th: {
+                color: "var(--app-muted)",
+                fontSize: 11,
+                fontWeight: 700,
+                textTransform: "uppercase",
+                letterSpacing: 0.6,
+                paddingTop: 14,
+                paddingBottom: 14,
+              },
+              td: {
+                paddingTop: 14,
+                paddingBottom: 14,
+                borderColor: "var(--app-border)",
+              },
+            }}
+          >
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>Name</Table.Th>
+                <Table.Th>SKU Prefix</Table.Th>
+                <Table.Th>Description</Table.Th>
+                <Table.Th>Status</Table.Th>
+                <Table.Th>Created</Table.Th>
+                {(canEdit || canDelete) && <Table.Th ta="right">Actions</Table.Th>}
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {filtered.map((cat) => (
+                <Table.Tr key={cat.id}>
+                  <Table.Td>
+                    <Group gap="sm">
+                      <Box
+                        style={{
+                          width: 32,
+                          height: 32,
+                          borderRadius: 8,
+                          background: "var(--app-soft)",
+                          color: "var(--app-accent)",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                        }}
+                      >
+                        <Tags size={15} />
+                      </Box>
+                      <Text fw={600} size="sm" style={{ color: "var(--app-text)" }}>
                         {cat.name}
                       </Text>
-                    </Table.Td>
-                    <Table.Td>
-                      {cat.skuPrefix ? (
-                        <Badge variant="light" color="violet" radius="sm">
-                          {cat.skuPrefix}
-                        </Badge>
-                      ) : (
-                        <Text size="sm" c="dimmed">
-                          —
-                        </Text>
-                      )}
-                    </Table.Td>
-                    <Table.Td>
-                      <Text size="sm" c="dimmed">
-                        {cat.description || "—"}
-                      </Text>
-                    </Table.Td>
-                    <Table.Td>
-                      <Badge
-                        color={cat.isActive ? "green" : "red"}
-                        variant="light"
-                        radius="sm"
-                      >
-                        {cat.isActive ? "Active" : "Inactive"}
+                    </Group>
+                  </Table.Td>
+                  <Table.Td>
+                    {cat.skuPrefix ? (
+                      <Badge variant="light" color="violet" radius="sm">
+                        {cat.skuPrefix}
                       </Badge>
-                    </Table.Td>
-                    <Table.Td>
-                      <Text size="xs" c="dimmed" style={LEDGER_NUM}>
-                        {formatDate(cat.createdAt)}
+                    ) : (
+                      <Text size="sm" c="dimmed">
+                        —
                       </Text>
-                    </Table.Td>
-                    {(canEdit || canDelete) && (
-                      <Table.Td>
-                        <Group gap="xs">
-                          {canEdit && (
-                            <Tooltip label="Edit">
-                              <ActionIcon
-                                variant="subtle"
-                                color="dark"
-                                onClick={() => openEdit(cat)}
-                              >
-                                <Pencil size={15} />
-                              </ActionIcon>
-                            </Tooltip>
-                          )}
-                          {canDelete && (
-                            <Tooltip label="Delete">
-                              <ActionIcon
-                                variant="subtle"
-                                color="red"
-                                onClick={() => handleDelete(cat)}
-                              >
-                                <Trash2 size={15} />
-                              </ActionIcon>
-                            </Tooltip>
-                          )}
-                          {canEdit && (
-                            <Switch
-                              checked={cat.isActive}
-                              onChange={() => handleToggle(cat)}
-                              size="sm"
-                              color="green"
-                            />
-                          )}
-                        </Group>
-                      </Table.Td>
                     )}
-                  </Table.Tr>
-                ))}
-              </Table.Tbody>
-            </Table>
-          </ScrollArea>
-        )}
-      </Stack>
+                  </Table.Td>
+                  <Table.Td>
+                    <Text size="sm" c="dimmed">
+                      {cat.description || "—"}
+                    </Text>
+                  </Table.Td>
+                  <Table.Td>
+                    <Badge
+                      color={cat.isActive ? "green" : "red"}
+                      variant="light"
+                      radius="sm"
+                    >
+                      {cat.isActive ? "Active" : "Inactive"}
+                    </Badge>
+                  </Table.Td>
+                  <Table.Td>
+                    <Text size="xs" c="dimmed" style={LEDGER_NUM}>
+                      {formatDate(cat.createdAt)}
+                    </Text>
+                  </Table.Td>
+                  {(canEdit || canDelete) && (
+                    <Table.Td ta="right">
+                      <Group gap="xs" justify="flex-end">
+                        {canEdit && (
+                          <Tooltip label="Edit Category" withArrow>
+                            <ActionIcon
+                              variant="subtle"
+                              color="blue"
+                              radius="md"
+                              onClick={() => openEdit(cat)}
+                            >
+                              <Pencil size={15} />
+                            </ActionIcon>
+                          </Tooltip>
+                        )}
+                        {canDelete && (
+                          <Tooltip label="Delete Category" withArrow>
+                            <ActionIcon
+                              variant="subtle"
+                              color="red"
+                              radius="md"
+                              onClick={() => handleDelete(cat)}
+                            >
+                              <Trash2 size={15} />
+                            </ActionIcon>
+                          </Tooltip>
+                        )}
+                        {canEdit && (
+                          <Switch
+                            checked={cat.isActive}
+                            onChange={() => handleToggle(cat)}
+                            size="sm"
+                            color="green"
+                          />
+                        )}
+                      </Group>
+                    </Table.Td>
+                  )}
+                </Table.Tr>
+              ))}
+            </Table.Tbody>
+          </Table>
+        </ScrollArea>
+      )}
 
       <CategoryModal
         opened={modalOpen}
@@ -584,7 +677,7 @@ function CategoriesTab() {
         onSave={handleSave}
         initial={editingCategory}
       />
-    </Card>
+    </Box>
   );
 }
 
@@ -716,7 +809,7 @@ function CategoryModal({
             <Button
               type="submit"
               loading={loading}
-              style={{ backgroundColor: INK.navy }}
+              style={{ backgroundColor: "var(--app-accent)", color: "#ffffff", fontWeight: 600 }}
             >
               {initial ? "Save Changes" : "Create Category"}
             </Button>
@@ -831,30 +924,43 @@ function SuppliersTab() {
   }
 
   return (
-    <Card
-      withBorder
-      radius="md"
-      padding="lg"
-      style={{ borderColor: INK.border }}
+    <Box
+      style={{
+        background: "var(--app-surface)",
+        border: "1px solid var(--app-border)",
+        borderRadius: 16,
+        overflow: "hidden",
+        boxShadow: "0 4px 20px -2px rgba(0, 0, 0, 0.04)",
+      }}
     >
-      <Stack>
-        <Group justify="space-between" wrap="wrap">
+      <Box p="md" style={{ borderBottom: "1px solid var(--app-border)", background: "var(--app-soft)" }}>
+        <Group justify="space-between" wrap="wrap" gap="sm">
           <TextInput
             placeholder="Search suppliers..."
-            leftSection={<Search size={15} />}
+            leftSection={<Search size={15} color="var(--app-muted)" />}
             value={query}
             onChange={(e) => setQuery(e.currentTarget.value)}
-            w={{ base: "100%", sm: 260 }}
+            radius="md"
+            w={{ base: "100%", sm: 300 }}
+            styles={{
+              input: {
+                background: "var(--app-surface)",
+                borderColor: "var(--app-border)",
+                color: "var(--app-text)",
+                fontSize: 13,
+              },
+            }}
           />
           <Group gap="sm">
-            <Text size="sm" c="dimmed">
-              {filtered.length} of {suppliers.length} suppliers
+            <Text size="xs" c="dimmed">
+              Showing <strong style={{ color: "var(--app-text)" }}>{filtered.length}</strong> of {suppliers.length} suppliers
             </Text>
             {canCreate && (
               <Button
                 size="sm"
-                leftSection={<Plus size={16} />}
-                style={{ backgroundColor: INK.navy }}
+                radius="md"
+                leftSection={<Plus size={15} />}
+                style={{ backgroundColor: "var(--app-accent)", color: "#ffffff", fontWeight: 600, fontSize: 13 }}
                 onClick={openCreate}
               >
                 Add Supplier
@@ -862,117 +968,158 @@ function SuppliersTab() {
             )}
           </Group>
         </Group>
+      </Box>
 
-        {error && (
-          <Alert color="red" variant="light" icon={<AlertTriangle size={16} />}>
+      {error && (
+        <Box p="md">
+          <Alert color="red" variant="light" radius="md" icon={<AlertTriangle size={16} />}>
             {error}
           </Alert>
-        )}
+        </Box>
+      )}
 
-        {loading ? (
+      {loading ? (
+        <Box p={40} ta="center">
           <Text c="dimmed" size="sm">
             Loading suppliers…
           </Text>
-        ) : filtered.length === 0 ? (
-          <EmptyState
-            icon={<Truck size={20} />}
-            title={suppliers.length === 0 ? "No suppliers yet" : "No matches"}
-            description={
-              suppliers.length === 0
-                ? "Add a supplier to start linking products to where they're bought."
-                : "Try a different search term, or clear the search."
-            }
-          />
-        ) : (
-          <ScrollArea>
-            <Table
-              striped
-              highlightOnHover
-              withTableBorder
-              verticalSpacing="sm"
-              miw={640}
-            >
-              <Table.Thead>
-                <Table.Tr>
-                  <Table.Th>Name</Table.Th>
-                  <Table.Th>Contact</Table.Th>
-                  <Table.Th>Email</Table.Th>
-                  <Table.Th>Phone</Table.Th>
-                  <Table.Th>Status</Table.Th>
-                  {(canEdit || canDelete) && <Table.Th>Actions</Table.Th>}
-                </Table.Tr>
-              </Table.Thead>
-              <Table.Tbody>
-                {filtered.map((sup) => (
-                  <Table.Tr key={sup.id}>
-                    <Table.Td>
-                      <Text fw={600} size="sm" style={{ color: INK.text }}>
+        </Box>
+      ) : filtered.length === 0 ? (
+        <EmptyState
+          icon={<Truck size={20} />}
+          title={suppliers.length === 0 ? "No suppliers yet" : "No matches"}
+          description={
+            suppliers.length === 0
+              ? "Add a supplier to start linking products to where they're bought."
+              : "Try a different search term, or clear the search."
+          }
+        />
+      ) : (
+        <ScrollArea>
+          <Table
+            highlightOnHover
+            verticalSpacing="md"
+            horizontalSpacing="lg"
+            miw={640}
+            styles={{
+              thead: {
+                background: "var(--app-soft)",
+                borderBottom: "1px solid var(--app-border)",
+              },
+              th: {
+                color: "var(--app-muted)",
+                fontSize: 11,
+                fontWeight: 700,
+                textTransform: "uppercase",
+                letterSpacing: 0.6,
+                paddingTop: 14,
+                paddingBottom: 14,
+              },
+              td: {
+                paddingTop: 14,
+                paddingBottom: 14,
+                borderColor: "var(--app-border)",
+              },
+            }}
+          >
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>Name</Table.Th>
+                <Table.Th>Contact Person</Table.Th>
+                <Table.Th>Email</Table.Th>
+                <Table.Th>Phone</Table.Th>
+                <Table.Th>Status</Table.Th>
+                {(canEdit || canDelete) && <Table.Th ta="right">Actions</Table.Th>}
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {filtered.map((sup) => (
+                <Table.Tr key={sup.id}>
+                  <Table.Td>
+                    <Group gap="sm">
+                      <Box
+                        style={{
+                          width: 32,
+                          height: 32,
+                          borderRadius: 8,
+                          background: "var(--app-soft)",
+                          color: "var(--app-accent)",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                        }}
+                      >
+                        <Truck size={15} />
+                      </Box>
+                      <Text fw={600} size="sm" style={{ color: "var(--app-text)" }}>
                         {sup.name}
                       </Text>
+                    </Group>
+                  </Table.Td>
+                  <Table.Td>
+                    <Text size="sm">{sup.contactPerson || "—"}</Text>
+                  </Table.Td>
+                  <Table.Td>
+                    <Text size="sm">{sup.email || "—"}</Text>
+                  </Table.Td>
+                  <Table.Td>
+                    <Text size="sm" style={LEDGER_NUM}>
+                      {sup.phone || "—"}
+                    </Text>
+                  </Table.Td>
+                  <Table.Td>
+                    <Badge
+                      color={sup.isActive ? "green" : "red"}
+                      variant="light"
+                      radius="sm"
+                    >
+                      {sup.isActive ? "Active" : "Inactive"}
+                    </Badge>
+                  </Table.Td>
+                  {(canEdit || canDelete) && (
+                    <Table.Td ta="right">
+                      <Group gap="xs" justify="flex-end">
+                        {canEdit && (
+                          <Tooltip label="Edit Supplier" withArrow>
+                            <ActionIcon
+                              variant="subtle"
+                              color="blue"
+                              radius="md"
+                              onClick={() => openEdit(sup)}
+                            >
+                              <Pencil size={15} />
+                            </ActionIcon>
+                          </Tooltip>
+                        )}
+                        {canDelete && (
+                          <Tooltip label="Delete Supplier" withArrow>
+                            <ActionIcon
+                              variant="subtle"
+                              color="red"
+                              radius="md"
+                              onClick={() => handleDelete(sup)}
+                            >
+                              <Trash2 size={15} />
+                            </ActionIcon>
+                          </Tooltip>
+                        )}
+                        {canEdit && (
+                          <Switch
+                            checked={sup.isActive}
+                            onChange={() => handleToggle(sup)}
+                            size="sm"
+                            color="green"
+                          />
+                        )}
+                      </Group>
                     </Table.Td>
-                    <Table.Td>
-                      <Text size="sm">{sup.contactPerson || "—"}</Text>
-                    </Table.Td>
-                    <Table.Td>
-                      <Text size="sm">{sup.email || "—"}</Text>
-                    </Table.Td>
-                    <Table.Td>
-                      <Text size="sm" style={LEDGER_NUM}>
-                        {sup.phone || "—"}
-                      </Text>
-                    </Table.Td>
-                    <Table.Td>
-                      <Badge
-                        color={sup.isActive ? "green" : "red"}
-                        variant="light"
-                        radius="sm"
-                      >
-                        {sup.isActive ? "Active" : "Inactive"}
-                      </Badge>
-                    </Table.Td>
-                    {(canEdit || canDelete) && (
-                      <Table.Td>
-                        <Group gap="xs">
-                          {canEdit && (
-                            <Tooltip label="Edit">
-                              <ActionIcon
-                                variant="subtle"
-                                color="dark"
-                                onClick={() => openEdit(sup)}
-                              >
-                                <Pencil size={15} />
-                              </ActionIcon>
-                            </Tooltip>
-                          )}
-                          {canDelete && (
-                            <Tooltip label="Delete">
-                              <ActionIcon
-                                variant="subtle"
-                                color="red"
-                                onClick={() => handleDelete(sup)}
-                              >
-                                <Trash2 size={15} />
-                              </ActionIcon>
-                            </Tooltip>
-                          )}
-                          {canEdit && (
-                            <Switch
-                              checked={sup.isActive}
-                              onChange={() => handleToggle(sup)}
-                              size="sm"
-                              color="green"
-                            />
-                          )}
-                        </Group>
-                      </Table.Td>
-                    )}
-                  </Table.Tr>
-                ))}
-              </Table.Tbody>
-            </Table>
-          </ScrollArea>
-        )}
-      </Stack>
+                  )}
+                </Table.Tr>
+              ))}
+            </Table.Tbody>
+          </Table>
+        </ScrollArea>
+      )}
 
       <SupplierModal
         opened={modalOpen}
@@ -980,7 +1127,7 @@ function SuppliersTab() {
         onSave={handleSave}
         initial={editingSupplier}
       />
-    </Card>
+    </Box>
   );
 }
 
@@ -1120,7 +1267,7 @@ function SupplierModal({
             <Button
               type="submit"
               loading={loading}
-              style={{ backgroundColor: INK.navy }}
+              style={{ backgroundColor: "var(--app-accent)", color: "#ffffff", fontWeight: 600 }}
             >
               {initial ? "Save Changes" : "Create Supplier"}
             </Button>
@@ -1195,9 +1342,10 @@ function exportProductsToCsv(
 
 interface ProductsTabProps {
   onFormModeChange?: (active: boolean) => void;
+  onOpenImport?: () => void;
 }
 
-function ProductsTab({ onFormModeChange }: ProductsTabProps) {
+function ProductsTab({ onFormModeChange, onOpenImport }: ProductsTabProps) {
   const perms = usePermissions();
   const canCreate = perms.can("inventory", "create");
   const canEdit = perms.can("inventory", "edit");
@@ -1211,6 +1359,8 @@ function ProductsTab({ onFormModeChange }: ProductsTabProps) {
 
   // Mode: list vs form (dedicated Kusale full-page)
   const [viewMode, setViewMode] = useState<"list" | "form">("list");
+  const { dir } = useI18n();
+  const [filterDrawerOpen, setFilterDrawerOpen] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
   const [selectedStatus, setSelectedStatus] = useState<string>("all");
   const [page, setPage] = useState(1);
@@ -1329,10 +1479,15 @@ function ProductsTab({ onFormModeChange }: ProductsTabProps) {
       );
     } else if (selectedStatus === "out_of_stock") {
       result = result.filter((p) => p.quantityInStock <= 0);
+    } else if (selectedStatus === "expiring") {
+      const expiringIds = new Set(expiringBatches.map((b) => b.productId));
+      result = result.filter(
+        (p) => expiringIds.has(p.id) || (p.nextExpiryDate && daysUntil(p.nextExpiryDate) <= 30),
+      );
     }
 
     return result;
-  }, [products, query, selectedCategory, selectedStatus, categoryMap, supplierMap]);
+  }, [products, query, selectedCategory, selectedStatus, categoryMap, supplierMap, expiringBatches]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const paginatedProducts = useMemo(() => {
@@ -1489,436 +1644,284 @@ function ProductsTab({ onFormModeChange }: ProductsTabProps) {
   );
 
   return (
-    <Stack gap="xl">
-      {/* ---- 4 Summary Cards (Directly Modeled on Pharmly Reference) ---- */}
-      <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }} spacing="lg">
-        {/* Card 1: Total Products (Hero Emerald) */}
+    <Stack gap="lg">
+      {/* ---- Executive Metrics Ribbon (Interactive & Glancable) ---- */}
+      <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }} spacing="md">
+        {/* Metric 1: Total Catalog */}
         <Box
-          p={22}
+          p={16}
+          onClick={() => {
+            setSelectedStatus("all");
+            setPage(1);
+          }}
           style={{
-            background: "#103830",
-            borderRadius: 20,
-            color: "#ffffff",
-            boxShadow: "0 6px 20px -4px rgba(16, 56, 48, 0.25)",
+            background: "var(--app-surface)",
+            border: selectedStatus === "all" ? "2px solid var(--app-accent)" : "1px solid var(--app-border)",
+            borderRadius: 14,
+            cursor: "pointer",
+            transition: "all 0.15s ease",
             display: "flex",
             flexDirection: "column",
             justifyContent: "space-between",
-            minHeight: 140,
+            minHeight: 110,
           }}
         >
-          <Group justify="space-between" align="flex-start">
-            <Stack gap={2}>
-              <Text size="sm" fw={600} style={{ color: "#ffffff", letterSpacing: -0.2 }}>
-                Total Products
-              </Text>
-              <Text size="xs" style={{ color: "#82a8a0" }}>
-                Active in catalog
-              </Text>
-            </Stack>
-            <ActionIcon variant="subtle" color="gray" size="sm" radius="pill">
-              <MoreVertical size={16} color="#82a8a0" />
-            </ActionIcon>
+          <Group justify="space-between" align="center">
+            <Text size="xs" fw={700} style={{ color: "var(--app-muted)", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+              Total Catalog
+            </Text>
+            <Badge size="xs" variant="light" color="blue">
+              All SKUs
+            </Badge>
           </Group>
-
-          <Group justify="space-between" align="baseline" mt={12}>
-            <Text fw={800} size="30px" style={{ ...LEDGER_NUM, color: "#ffffff", lineHeight: 1 }}>
+          <Group justify="space-between" align="baseline" mt={6}>
+            <Text fw={800} size="26px" style={{ ...LEDGER_NUM, color: "var(--app-text)", lineHeight: 1 }}>
               {totalProducts.toLocaleString()}
             </Text>
-            <Box
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 4,
-                background: "#1a4940",
-                color: "#6ee7b7",
-                borderRadius: 999,
-                padding: "3px 10px",
-                fontSize: 12,
-                fontWeight: 700,
-              }}
-            >
-              <TrendingUp size={12} strokeWidth={2.5} />
-              <span>100% Tracked</span>
-            </Box>
+            <Text size="xs" c="dimmed">
+              Valuation: <strong style={{ color: "var(--app-text)", ...LEDGER_NUM }}>Rs. {(totalValue / 100).toLocaleString(undefined, { minimumFractionDigits: 0 })}</strong>
+            </Text>
           </Group>
-
-          <Text size="xs" mt={10} style={{ color: "#82a8a0" }}>
-            Stock Valuation:{" "}
-            <strong style={{ color: "#ffffff", ...LEDGER_NUM }}>
-              Rs. {(totalValue / 100).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-            </strong>
-          </Text>
         </Box>
 
-        {/* Card 2: In Stock */}
+        {/* Metric 2: In Stock (Healthy) */}
         <Box
-          p={22}
+          p={16}
+          onClick={() => {
+            setSelectedStatus("in_stock");
+            setPage(1);
+          }}
           style={{
             background: "var(--app-surface)",
-            border: "1px solid var(--app-border)",
-            borderRadius: 20,
-            boxShadow: "0 4px 18px -4px rgba(18, 28, 56, 0.03)",
+            border: selectedStatus === "in_stock" ? "2px solid #10b981" : "1px solid var(--app-border)",
+            borderRadius: 14,
+            cursor: "pointer",
+            transition: "all 0.15s ease",
             display: "flex",
             flexDirection: "column",
             justifyContent: "space-between",
-            minHeight: 140,
+            minHeight: 110,
           }}
         >
-          <Group justify="space-between" align="flex-start">
-            <Stack gap={2}>
-              <Text size="sm" fw={600} style={{ color: "var(--app-text)", letterSpacing: -0.2 }}>
-                In Stock
-              </Text>
-              <Text size="xs" c="dimmed">
-                Healthy levels (≥10)
-              </Text>
-            </Stack>
-            <ActionIcon variant="subtle" color="gray" size="sm" radius="pill">
-              <MoreVertical size={16} />
-            </ActionIcon>
+          <Group justify="space-between" align="center">
+            <Text size="xs" fw={700} style={{ color: "var(--app-muted)", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+              In Stock (Healthy)
+            </Text>
+            <Badge size="xs" variant="light" color="green" leftSection={<CheckCircle2 size={10} />}>
+              ≥10 Units
+            </Badge>
           </Group>
-
-          <Group justify="space-between" align="baseline" mt={12}>
-            <Text fw={800} size="30px" style={{ ...LEDGER_NUM, color: "var(--app-text)", lineHeight: 1 }}>
+          <Group justify="space-between" align="baseline" mt={6}>
+            <Text fw={800} size="26px" style={{ ...LEDGER_NUM, color: "var(--app-text)", lineHeight: 1 }}>
               {inStockProducts.length.toLocaleString()}
             </Text>
-            <Box
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 4,
-                background: "#ecfdf5",
-                color: "#059669",
-                borderRadius: 999,
-                padding: "3px 10px",
-                fontSize: 12,
-                fontWeight: 700,
-              }}
-            >
-              <CheckCircle2 size={12} strokeWidth={2.5} />
-              <span>Healthy</span>
-            </Box>
+            <Text size="xs" c="dimmed">
+              Total Units: <strong style={{ color: "var(--app-text)", ...LEDGER_NUM }}>{totalStock.toLocaleString()}</strong>
+            </Text>
           </Group>
-
-          <Text size="xs" mt={10} c="dimmed">
-            Total Units:{" "}
-            <strong style={{ color: "var(--app-text)", ...LEDGER_NUM }}>
-              {totalStock.toLocaleString()} units
-            </strong>
-          </Text>
         </Box>
 
-        {/* Card 3: Low Stock */}
+        {/* Metric 3: Low Stock (<10) */}
         <Box
-          p={22}
+          p={16}
+          onClick={() => {
+            setSelectedStatus("low_stock");
+            setPage(1);
+          }}
           style={{
             background: "var(--app-surface)",
-            border: "1px solid var(--app-border)",
-            borderRadius: 20,
-            boxShadow: "0 4px 18px -4px rgba(18, 28, 56, 0.03)",
+            border: selectedStatus === "low_stock" ? "2px solid #f59e0b" : "1px solid var(--app-border)",
+            borderRadius: 14,
+            cursor: "pointer",
+            transition: "all 0.15s ease",
             display: "flex",
             flexDirection: "column",
             justifyContent: "space-between",
-            minHeight: 140,
+            minHeight: 110,
           }}
         >
-          <Group justify="space-between" align="flex-start">
-            <Stack gap={2}>
-              <Text size="sm" fw={600} style={{ color: "var(--app-text)", letterSpacing: -0.2 }}>
-                Low Stock
-              </Text>
-              <Text size="xs" c="dimmed">
-                Running low (&lt;10)
-              </Text>
-            </Stack>
-            <ActionIcon variant="subtle" color="gray" size="sm" radius="pill">
-              <MoreVertical size={16} />
-            </ActionIcon>
+          <Group justify="space-between" align="center">
+            <Text size="xs" fw={700} style={{ color: "var(--app-muted)", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+              Low Stock Warning
+            </Text>
+            <Badge size="xs" variant="light" color="yellow" leftSection={<AlertTriangle size={10} />}>
+              &lt;10 Units
+            </Badge>
           </Group>
-
-          <Group justify="space-between" align="baseline" mt={12}>
-            <Text fw={800} size="30px" style={{ ...LEDGER_NUM, color: "var(--app-text)", lineHeight: 1 }}>
+          <Group justify="space-between" align="baseline" mt={6}>
+            <Text fw={800} size="26px" style={{ ...LEDGER_NUM, color: lowStockCount > 0 ? "#f59e0b" : "var(--app-text)", lineHeight: 1 }}>
               {lowStockCount.toLocaleString()}
             </Text>
-            <Box
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 4,
-                background: "#fffbeb",
-                color: "#d97706",
-                borderRadius: 999,
-                padding: "3px 10px",
-                fontSize: 12,
-                fontWeight: 700,
-              }}
-            >
-              <AlertTriangle size={12} strokeWidth={2.5} />
-              <span>Needs Reorder</span>
-            </Box>
+            <Text size="xs" c="dimmed">
+              {lowStockCount > 0 ? "Reorder needed" : "Adequately stocked"}
+            </Text>
           </Group>
-
-          <Text size="xs" mt={10} c="dimmed">
-            {lowStockCount > 0
-              ? `${lowStockCount} items below safety buffer`
-              : "All items adequately stocked"}
-          </Text>
         </Box>
 
-        {/* Card 4: Out of Stock */}
+        {/* Metric 4: Out of Stock */}
         <Box
-          p={22}
+          p={16}
+          onClick={() => {
+            setSelectedStatus("out_of_stock");
+            setPage(1);
+          }}
           style={{
             background: "var(--app-surface)",
-            border: "1px solid var(--app-border)",
-            borderRadius: 20,
-            boxShadow: "0 4px 18px -4px rgba(18, 28, 56, 0.03)",
+            border: selectedStatus === "out_of_stock" ? "2px solid #ef4444" : "1px solid var(--app-border)",
+            borderRadius: 14,
+            cursor: "pointer",
+            transition: "all 0.15s ease",
             display: "flex",
             flexDirection: "column",
             justifyContent: "space-between",
-            minHeight: 140,
+            minHeight: 110,
           }}
         >
-          <Group justify="space-between" align="flex-start">
-            <Stack gap={2}>
-              <Text size="sm" fw={600} style={{ color: "var(--app-text)", letterSpacing: -0.2 }}>
-                Out of Stock
-              </Text>
-              <Text size="xs" c="dimmed">
-                Zero units remaining
-              </Text>
-            </Stack>
-            <ActionIcon variant="subtle" color="gray" size="sm" radius="pill">
-              <MoreVertical size={16} />
-            </ActionIcon>
+          <Group justify="space-between" align="center">
+            <Text size="xs" fw={700} style={{ color: "var(--app-muted)", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+              Out of Stock
+            </Text>
+            <Badge size="xs" variant="light" color="red">
+              0 Units
+            </Badge>
           </Group>
-
-          <Group justify="space-between" align="baseline" mt={12}>
-            <Text
-              fw={800}
-              size="30px"
-              style={{
-                ...LEDGER_NUM,
-                color: outOfStockCount > 0 ? "#e11d48" : "var(--app-text)",
-                lineHeight: 1,
-              }}
-            >
+          <Group justify="space-between" align="baseline" mt={6}>
+            <Text fw={800} size="26px" style={{ ...LEDGER_NUM, color: outOfStockCount > 0 ? "#ef4444" : "var(--app-text)", lineHeight: 1 }}>
               {outOfStockCount.toLocaleString()}
             </Text>
-            <Box
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 4,
-                background: outOfStockCount > 0 ? "#fef2f2" : "#ecfdf5",
-                color: outOfStockCount > 0 ? "#e11d48" : "#059669",
-                borderRadius: 999,
-                padding: "3px 10px",
-                fontSize: 12,
-                fontWeight: 700,
-              }}
-            >
-              {outOfStockCount > 0 ? (
-                <AlertTriangle size={12} strokeWidth={2.5} />
-              ) : (
-                <CheckCircle2 size={12} strokeWidth={2.5} />
-              )}
-              <span>{outOfStockCount > 0 ? "Depleted" : "Zero Out"}</span>
-            </Box>
+            <Text size="xs" c="dimmed">
+              {outOfStockCount > 0 ? "Unavailable for sale" : "No depleted items"}
+            </Text>
           </Group>
-
-          <Text size="xs" mt={10} c="dimmed">
-            {outOfStockCount > 0
-              ? "Immediate supplier restock required"
-              : "No unfulfilled product demand"}
-          </Text>
         </Box>
       </SimpleGrid>
 
-      {/* ---- Expiring Batches Notice (if any) ---- */}
-      {expiringBatches.length > 0 && (
-        <Card
-          withBorder
-          radius="md"
-          padding="lg"
-          style={{ borderColor: INK.border }}
+      {/* ---- Expiring Batches Quick Alert Banner (if any batches expire within 30 days) ---- */}
+      {expiringBatches.length > 0 && selectedStatus !== "expiring" && (
+        <Box
+          p="sm"
+          style={{
+            background: "rgba(245, 158, 11, 0.08)",
+            border: "1px solid rgba(245, 158, 11, 0.3)",
+            borderRadius: 12,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            flexWrap: "wrap",
+            gap: 12,
+          }}
         >
-          <Stack>
-            <Group justify="space-between" wrap="wrap">
-              <Group gap={8}>
-                <CalendarClock size={18} color={INK.warning} />
-                <Text fw={700} style={{ color: INK.text }}>
-                  Expiring Stock
-                </Text>
-              </Group>
-              <Text size="sm" c="dimmed">
-                {expiringBatches.length}{" "}
-                {expiringBatches.length === 1 ? "batch" : "batches"} expiring
-                within 30 days
-              </Text>
-            </Group>
-            <ScrollArea>
-              <Table
-                striped
-                highlightOnHover
-                withTableBorder
-                verticalSpacing="xs"
-                miw={720}
-              >
-                <Table.Thead>
-                  <Table.Tr>
-                    <Table.Th>Product</Table.Th>
-                    <Table.Th>Batch</Table.Th>
-                    <Table.Th>Expiry Date</Table.Th>
-                    <Table.Th ta="right">Qty</Table.Th>
-                    <Table.Th>Status</Table.Th>
-                    <Table.Th>Source</Table.Th>
-                    <Table.Th ta="right">Action</Table.Th>
-                  </Table.Tr>
-                </Table.Thead>
-                <Table.Tbody>
-                  {expiringBatches.map((b) => (
-                    <Table.Tr key={b.id}>
-                      <Table.Td>
-                        <Text size="sm" fw={600} style={{ color: INK.text }}>
-                          {b.productName}
-                        </Text>
-                        <Text size="xs" c="dimmed">
-                          {b.productSku}
-                        </Text>
-                      </Table.Td>
-                      <Table.Td>
-                        <Text size="sm" c="dimmed">
-                          {b.batchNumber || "—"}
-                        </Text>
-                      </Table.Td>
-                      <Table.Td>
-                        <Text size="sm" style={LEDGER_NUM}>
-                          {formatDate(b.expiryDate)}
-                        </Text>
-                      </Table.Td>
-                      <Table.Td ta="right">
-                        <Text size="sm" fw={700} style={LEDGER_NUM}>
-                          {b.quantity}
-                        </Text>
-                      </Table.Td>
-                      <Table.Td>
-                        <Badge
-                          color={b.status === "expired" ? "red" : "yellow"}
-                          variant="light"
-                          radius="sm"
-                        >
-                          {b.status === "expired" ? "Expired" : "Expiring"}
-                        </Badge>
-                      </Table.Td>
-                      <Table.Td>
-                        <Text size="sm" c="dimmed">
-                          {b.source}
-                        </Text>
-                      </Table.Td>
-                      <Table.Td ta="right">
-                        {b.quantity > 0 && (
-                          <Button
-                            size="xs"
-                            color="red"
-                            variant="light"
-                            leftSection={<Trash2 size={13} />}
-                            onClick={() => setWriteOffTarget(b)}
-                          >
-                            Write off
-                          </Button>
-                        )}
-                      </Table.Td>
-                    </Table.Tr>
-                  ))}
-                </Table.Tbody>
-              </Table>
-            </ScrollArea>
-          </Stack>
-        </Card>
+          <Group gap={8}>
+            <CalendarClock size={17} color="#f59e0b" />
+            <Text size="xs" fw={600} style={{ color: "var(--app-text)" }}>
+              <span style={{ color: "#f59e0b", fontWeight: 700 }}>{expiringBatches.length} batch(es)</span> expire within 30 days. Review expiry dates and manage write-offs.
+            </Text>
+          </Group>
+          <Button
+            size="xs"
+            variant="light"
+            color="yellow"
+            radius="md"
+            onClick={() => {
+              setSelectedStatus("expiring");
+              setPage(1);
+            }}
+            rightSection={<ChevronRight size={13} />}
+          >
+            Review Expiring Batches ({expiringBatches.length})
+          </Button>
+        </Box>
       )}
 
-      {/* ---- Toolbar (Directly from Pharmly Reference) ---- */}
-      <Group justify="space-between" align="center" wrap="wrap" gap="md">
-        {/* Left: Search & Dropdowns */}
-        <Group gap="sm" wrap="wrap" style={{ flex: 1 }}>
-          <TextInput
-            placeholder="Search products by name, SKU, category..."
-            leftSection={<Search size={16} color="#94a3b8" />}
-            value={query}
-            onChange={(e) => {
-              setQuery(e.currentTarget.value);
-              setPage(1);
-            }}
-            radius="pill"
-            style={{ minWidth: 260, flex: 1, maxWidth: 360 }}
-            styles={{
-              input: {
-                background: "var(--app-surface)",
-                borderColor: "var(--app-border)",
-                fontSize: 13,
-              },
-            }}
-          />
-
-          <Select
-            placeholder="All Categories"
-            data={[
-              { value: "all", label: "All Categories" },
-              ...categories.map((c) => ({ value: c.id, label: c.name })),
-            ]}
-            value={selectedCategory}
-            onChange={(val) => {
-              setSelectedCategory(val ?? "all");
-              setPage(1);
-            }}
-            radius="pill"
-            w={170}
-            styles={{
-              input: {
-                background: "var(--app-surface)",
-                borderColor: "var(--app-border)",
-                fontSize: 13,
-              },
-            }}
-          />
-
-          <Select
-            placeholder="All Stock Levels"
-            data={[
-              { value: "all", label: "All Stock Levels" },
-              { value: "in_stock", label: "In Stock (≥10)" },
-              { value: "low_stock", label: "Low Stock (<10)" },
-              { value: "out_of_stock", label: "Out of Stock" },
-            ]}
-            value={selectedStatus}
-            onChange={(val) => {
-              setSelectedStatus(val ?? "all");
-              setPage(1);
-            }}
-            radius="pill"
-            w={160}
-            styles={{
-              input: {
-                background: "var(--app-surface)",
-                borderColor: "var(--app-border)",
-                fontSize: 13,
-              },
-            }}
-          />
+      {/* ---- Segmented Status View Tabs & Action Bar ---- */}
+      <Group justify="space-between" align="center" wrap="wrap" gap="sm">
+        {/* Status view pills */}
+        <Group gap={6} wrap="wrap">
+          {[
+            { id: "all", label: "All Items", count: totalProducts },
+            { id: "in_stock", label: "In Stock", count: inStockProducts.length, color: "green" },
+            { id: "low_stock", label: "Low Stock", count: lowStockCount, color: "yellow" },
+            { id: "out_of_stock", label: "Out of Stock", count: outOfStockCount, color: "red" },
+            ...(expiringBatches.length > 0 ? [{ id: "expiring", label: "Expiring Soon", count: expiringBatches.length, color: "orange" }] : []),
+          ].map((tab) => {
+            const active = selectedStatus === tab.id;
+            return (
+              <Button
+                key={tab.id}
+                size="xs"
+                variant={active ? "filled" : "subtle"}
+                color={active ? (tab.color ?? "blue") : "gray"}
+                radius="pill"
+                onClick={() => {
+                  setSelectedStatus(tab.id);
+                  setPage(1);
+                }}
+                styles={{
+                  root: {
+                    fontWeight: active ? 700 : 500,
+                    fontSize: 12,
+                    background: active ? undefined : "transparent",
+                    color: active ? "#ffffff" : "var(--app-text)",
+                    border: active ? "none" : "1px solid var(--app-border)",
+                    "&:hover": {
+                      background: active ? undefined : "var(--app-soft)",
+                    },
+                  },
+                }}
+              >
+                {tab.label}
+                <Badge
+                  size="xs"
+                  variant={active ? "filled" : "outline"}
+                  color={active ? "dark" : tab.color ?? "gray"}
+                  ml={6}
+                  style={{
+                    backgroundColor: active ? "rgba(0,0,0,0.25)" : undefined,
+                    color: active ? "#ffffff" : undefined,
+                  }}
+                >
+                  {tab.count}
+                </Badge>
+              </Button>
+            );
+          })}
         </Group>
 
-        {/* Right: Actions */}
+        {/* Actions: Import, Export & Add Product */}
         <Group gap="sm">
+          {onOpenImport && perms.canManage && (
+            <Button
+              variant="default"
+              radius="md"
+              size="sm"
+              leftSection={<FileSpreadsheet size={14} />}
+              onClick={() => {
+                onOpenImport();
+                reportOnboardingEvent({ type: "wizard-opened" });
+              }}
+              data-tour="import-button"
+              style={{
+                borderColor: "var(--app-border)",
+                background: "var(--app-surface)",
+                color: "var(--app-text)",
+                fontWeight: 600,
+                fontSize: 13,
+              }}
+            >
+              Import
+            </Button>
+          )}
+
           <Button
             variant="default"
-            radius="pill"
+            radius="md"
             size="sm"
             leftSection={<Download size={14} />}
             onClick={() => exportProductsToCsv(filtered, categoryMap, supplierMap)}
             style={{
               borderColor: "var(--app-border)",
               background: "var(--app-surface)",
+              color: "var(--app-text)",
               fontWeight: 600,
               fontSize: 13,
             }}
@@ -1928,42 +1931,293 @@ function ProductsTab({ onFormModeChange }: ProductsTabProps) {
 
           {canCreate && (
             <Button
-              radius="pill"
+              radius="md"
               size="sm"
               onClick={openCreate}
               data-tour="add-product"
-              leftSection={
-                <Box
-                  style={{
-                    width: 20,
-                    height: 20,
-                    borderRadius: 999,
-                    background: "#0c2722",
-                    color: "#cbf849",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                >
-                  <Plus size={13} strokeWidth={3} />
-                </Box>
-              }
+              leftSection={<Plus size={15} />}
               style={{
-                backgroundColor: "#cbf849",
-                color: "#0c2722",
-                fontWeight: 700,
+                background: "var(--app-accent)",
+                color: "#ffffff",
+                fontWeight: 600,
                 fontSize: 13,
-                paddingLeft: 12,
-                paddingRight: 18,
-                border: "none",
-                boxShadow: "0 2px 10px rgba(203, 248, 73, 0.35)",
               }}
             >
-              Add New Product
+              Add Product
             </Button>
           )}
         </Group>
       </Group>
+
+      {/* ---- Toolbar (Search + Category Select + Filter Drawer Trigger) ---- */}
+      <Group justify="space-between" align="center" wrap="wrap" gap="sm">
+        <Group gap="sm" style={{ flex: 1, minWidth: 280 }}>
+          <TextInput
+            placeholder="Search by name, SKU, category, supplier..."
+            leftSection={<Search size={15} color="var(--app-muted)" />}
+            rightSection={
+              query ? (
+                <ActionIcon size="xs" variant="subtle" color="gray" onClick={() => setQuery("")}>
+                  <X size={12} />
+                </ActionIcon>
+              ) : null
+            }
+            value={query}
+            onChange={(e) => {
+              setQuery(e.currentTarget.value);
+              setPage(1);
+            }}
+            radius="md"
+            style={{ flex: 1, minWidth: 220 }}
+            styles={{
+              input: {
+                background: "var(--app-surface)",
+                borderColor: "var(--app-border)",
+                color: "var(--app-text)",
+                fontSize: 13,
+              },
+            }}
+          />
+
+          <Select
+            placeholder="All Categories"
+            data={[{ value: "all", label: "All Categories" }, ...categories.map((c) => ({ value: c.id, label: c.name }))]}
+            value={selectedCategory}
+            onChange={(val) => {
+              setSelectedCategory(val ?? "all");
+              setPage(1);
+            }}
+            radius="md"
+            w={180}
+            styles={{
+              input: {
+                background: "var(--app-surface)",
+                borderColor: "var(--app-border)",
+                color: "var(--app-text)",
+                fontSize: 13,
+              },
+            }}
+          />
+
+          <Button
+            variant="default"
+            radius="md"
+            leftSection={<SlidersHorizontal size={14} />}
+            onClick={() => setFilterDrawerOpen(true)}
+            style={{
+              borderColor: (selectedCategory !== "all" || selectedStatus !== "all") ? "var(--app-accent)" : "var(--app-border)",
+              background: (selectedCategory !== "all" || selectedStatus !== "all") ? "var(--app-accent-soft)" : "var(--app-surface)",
+              color: (selectedCategory !== "all" || selectedStatus !== "all") ? "var(--app-accent)" : "var(--app-text)",
+              fontWeight: 600,
+              fontSize: 13,
+            }}
+          >
+            Filters
+            {(selectedCategory !== "all" || selectedStatus !== "all") && (
+              <Badge size="xs" variant="filled" ml={6} style={{ background: "var(--app-accent)" }}>
+                {(selectedCategory !== "all" ? 1 : 0) + (selectedStatus !== "all" ? 1 : 0)}
+              </Badge>
+            )}
+          </Button>
+
+          {(selectedCategory !== "all" || selectedStatus !== "all" || query) && (
+            <Button
+              variant="subtle"
+              size="xs"
+              color="gray"
+              onClick={() => {
+                setSelectedCategory("all");
+                setSelectedStatus("all");
+                setQuery("");
+                setPage(1);
+              }}
+            >
+              Reset All
+            </Button>
+          )}
+        </Group>
+      </Group>
+
+      {/* ---- Slide-Over Filter Drawer (Radix UI Sheet Pattern) ---- */}
+      <Drawer
+        opened={filterDrawerOpen}
+        onClose={() => setFilterDrawerOpen(false)}
+        position={dir === "rtl" ? "left" : "right"}
+        size={380}
+        title={
+          <Stack gap={2}>
+            <Text fw={700} size="md" style={{ color: "var(--app-text)" }}>
+              All Filters
+            </Text>
+            <Text size="xs" c="dimmed">
+              Filter products by stock status and category
+            </Text>
+          </Stack>
+        }
+        styles={{
+          content: { background: "var(--app-surface)", display: "flex", flexDirection: "column" },
+          body: { flex: 1, display: "flex", flexDirection: "column", padding: 0, overflow: "hidden" },
+          header: { borderBottom: "1px solid var(--app-border)", padding: "16px 20px" },
+        }}
+      >
+        <Box style={{ flex: 1, overflowY: "auto", padding: "12px 16px" }}>
+          <Accordion defaultValue={["status", "category"]} multiple variant="separated" radius="md">
+            {/* Stock Condition Accordion */}
+            <Accordion.Item value="status" style={{ background: "transparent", border: "none" }}>
+              <Accordion.Control style={{ padding: "10px 4px" }}>
+                <Text size="sm" fw={600}>Stock Condition</Text>
+              </Accordion.Control>
+              <Accordion.Panel>
+                <Stack gap={4}>
+                  {[
+                    { id: "all", label: "Any Condition", count: products.length },
+                    { id: "in_stock", label: "In Stock (≥10)", count: inStockProducts.length },
+                    { id: "low_stock", label: "Low Stock (<10)", count: lowStockCount },
+                    { id: "out_of_stock", label: "Out of Stock (0)", count: outOfStockCount },
+                  ].map((opt) => {
+                    const active = selectedStatus === opt.id;
+                    return (
+                      <Box
+                        key={opt.id}
+                        onClick={() => {
+                          setSelectedStatus(opt.id);
+                          setPage(1);
+                        }}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 10,
+                          padding: "10px 12px",
+                          borderRadius: 8,
+                          cursor: "pointer",
+                          background: active ? "var(--app-accent-soft)" : "transparent",
+                          color: active ? "var(--app-accent)" : "var(--app-text)",
+                          fontWeight: active ? 600 : 500,
+                          fontSize: 13,
+                          transition: "all 0.15s ease",
+                        }}
+                      >
+                        <Check
+                          size={16}
+                          style={{
+                            opacity: active ? 1 : 0,
+                            transition: "opacity 0.15s ease",
+                          }}
+                        />
+                        <Text size="sm" style={{ flex: 1 }}>{opt.label}</Text>
+                        <Badge size="xs" variant={active ? "filled" : "outline"}>
+                          {opt.count}
+                        </Badge>
+                      </Box>
+                    );
+                  })}
+                </Stack>
+              </Accordion.Panel>
+            </Accordion.Item>
+
+            {/* Category Accordion */}
+            <Accordion.Item value="category" style={{ background: "transparent", border: "none" }}>
+              <Accordion.Control style={{ padding: "10px 4px" }}>
+                <Text size="sm" fw={600}>Category</Text>
+              </Accordion.Control>
+              <Accordion.Panel>
+                <Stack gap={4}>
+                  <Box
+                    onClick={() => {
+                      setSelectedCategory("all");
+                      setPage(1);
+                    }}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 10,
+                      padding: "10px 12px",
+                      borderRadius: 8,
+                      cursor: "pointer",
+                      background: selectedCategory === "all" ? "var(--app-accent-soft)" : "transparent",
+                      color: selectedCategory === "all" ? "var(--app-accent)" : "var(--app-text)",
+                      fontWeight: selectedCategory === "all" ? 600 : 500,
+                      fontSize: 13,
+                    }}
+                  >
+                    <Check
+                      size={16}
+                      style={{
+                        opacity: selectedCategory === "all" ? 1 : 0,
+                        transition: "opacity 0.15s ease",
+                      }}
+                    />
+                    <Text size="sm" style={{ flex: 1 }}>All Categories</Text>
+                    <Badge size="xs" variant={selectedCategory === "all" ? "filled" : "outline"}>
+                      {products.length}
+                    </Badge>
+                  </Box>
+                  {categories.map((cat) => {
+                    const active = selectedCategory === cat.id;
+                    const count = products.filter((p) => p.categoryId === cat.id).length;
+                    return (
+                      <Box
+                        key={cat.id}
+                        onClick={() => {
+                          setSelectedCategory(cat.id);
+                          setPage(1);
+                        }}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 10,
+                          padding: "10px 12px",
+                          borderRadius: 8,
+                          cursor: "pointer",
+                          background: active ? "var(--app-accent-soft)" : "transparent",
+                          color: active ? "var(--app-accent)" : "var(--app-text)",
+                          fontWeight: active ? 600 : 500,
+                          fontSize: 13,
+                        }}
+                      >
+                        <Check
+                          size={16}
+                          style={{
+                            opacity: active ? 1 : 0,
+                            transition: "opacity 0.15s ease",
+                          }}
+                        />
+                        <Text size="sm" style={{ flex: 1 }}>{cat.name}</Text>
+                        <Badge size="xs" variant={active ? "filled" : "outline"}>
+                          {count}
+                        </Badge>
+                      </Box>
+                    );
+                  })}
+                </Stack>
+              </Accordion.Panel>
+            </Accordion.Item>
+          </Accordion>
+        </Box>
+
+        {/* Sticky Bottom Primary Action Button */}
+        <Box
+          p={16}
+          style={{
+            borderTop: "1px solid var(--app-border)",
+            background: "var(--app-surface)",
+          }}
+        >
+          <Button
+            fullWidth
+            size="md"
+            radius="md"
+            onClick={() => setFilterDrawerOpen(false)}
+            style={{
+              background: "var(--app-accent)",
+              color: "#fff",
+              fontWeight: 600,
+            }}
+          >
+            Show {filtered.length} items
+          </Button>
+        </Box>
+      </Drawer>
 
       {error && (
         <Alert
@@ -1976,17 +2230,146 @@ function ProductsTab({ onFormModeChange }: ProductsTabProps) {
         </Alert>
       )}
 
-      {/* ---- Products Table Card (Pharmly Style) ---- */}
+      {/* ---- Products Table Container (Anti-Slop Executive Layout) ---- */}
       <Box
         style={{
           background: "var(--app-surface)",
           border: "1px solid var(--app-border)",
-          borderRadius: 22,
-          boxShadow: "0 4px 18px -4px rgba(18, 28, 56, 0.03)",
+          borderRadius: 16,
+          boxShadow: "0 4px 20px -2px rgba(0, 0, 0, 0.04)",
           overflow: "hidden",
         }}
       >
-        {loading ? (
+        {selectedStatus === "expiring" ? (
+          /* Dedicated Expiring Batches Table View */
+          <Box>
+            <Box p="md" style={{ background: "var(--app-soft)", borderBottom: "1px solid var(--app-border)" }}>
+              <Group justify="space-between" align="center" wrap="wrap">
+                <Group gap={8}>
+                  <CalendarClock size={18} color="#f59e0b" />
+                  <Text fw={700} size="sm" style={{ color: "var(--app-text)" }}>
+                    Batches Expiring Within 30 Days ({expiringBatches.length})
+                  </Text>
+                </Group>
+                <Button size="xs" variant="subtle" color="gray" onClick={() => setSelectedStatus("all")}>
+                  ← Back to All Products
+                </Button>
+              </Group>
+            </Box>
+
+            {expiringBatches.length === 0 ? (
+              <EmptyState
+                icon={<CheckCircle2 size={20} />}
+                title="No expiring batches"
+                description="All inventory batches have healthy shelf life with no expirations due in the next 30 days."
+              />
+            ) : (
+              <ScrollArea>
+                <Table
+                  highlightOnHover
+                  verticalSpacing="md"
+                  horizontalSpacing="lg"
+                  miw={900}
+                  styles={{
+                    thead: {
+                      background: "var(--app-soft)",
+                      borderBottom: "1px solid var(--app-border)",
+                    },
+                    th: {
+                      color: "var(--app-muted)",
+                      fontSize: 11,
+                      fontWeight: 700,
+                      textTransform: "uppercase",
+                      letterSpacing: 0.6,
+                      paddingTop: 12,
+                      paddingBottom: 12,
+                    },
+                    td: {
+                      paddingTop: 12,
+                      paddingBottom: 12,
+                      borderColor: "var(--app-border)",
+                    },
+                  }}
+                >
+                  <Table.Thead>
+                    <Table.Tr>
+                      <Table.Th>Product</Table.Th>
+                      <Table.Th>Batch Number</Table.Th>
+                      <Table.Th>Expiry Date</Table.Th>
+                      <Table.Th ta="right">Quantity</Table.Th>
+                      <Table.Th>Status</Table.Th>
+                      <Table.Th>Source</Table.Th>
+                      <Table.Th ta="right">Action</Table.Th>
+                    </Table.Tr>
+                  </Table.Thead>
+                  <Table.Tbody>
+                    {expiringBatches.map((b) => {
+                      const days = daysUntil(b.expiryDate);
+                      return (
+                        <Table.Tr key={b.id}>
+                          <Table.Td>
+                            <Stack gap={2}>
+                              <Text fw={600} size="sm" style={{ color: "var(--app-text)" }}>
+                                {b.productName}
+                              </Text>
+                              <Text size="xs" c="dimmed">
+                                SKU: #{b.productSku}
+                              </Text>
+                            </Stack>
+                          </Table.Td>
+                          <Table.Td>
+                            <Text size="xs" fw={600} style={{ ...LEDGER_NUM, color: "var(--app-text)" }}>
+                              {b.batchNumber || "—"}
+                            </Text>
+                          </Table.Td>
+                          <Table.Td>
+                            <Stack gap={2}>
+                              <Text size="sm" style={{ ...LEDGER_NUM, color: "var(--app-text)" }}>
+                                {formatDate(b.expiryDate)}
+                              </Text>
+                              <Badge size="xs" color={days < 0 ? "red" : days <= 7 ? "red" : "yellow"} variant="light">
+                                {days < 0 ? `Expired ${Math.abs(days)}d ago` : `Expires in ${days}d`}
+                              </Badge>
+                            </Stack>
+                          </Table.Td>
+                          <Table.Td ta="right">
+                            <Text size="sm" fw={800} style={{ ...LEDGER_NUM, color: "var(--app-text)" }}>
+                              {b.quantity}
+                            </Text>
+                          </Table.Td>
+                          <Table.Td>
+                            <Badge color={b.status === "expired" ? "red" : "yellow"} variant="light" radius="sm">
+                              {b.status === "expired" ? "Expired" : "Expiring"}
+                            </Badge>
+                          </Table.Td>
+                          <Table.Td>
+                            <Text size="xs" c="dimmed">
+                              {b.source}
+                            </Text>
+                          </Table.Td>
+                          <Table.Td ta="right">
+                            {b.quantity > 0 && (
+                              <Button
+                                size="xs"
+                                color="red"
+                                variant="light"
+                                radius="md"
+                                leftSection={<Trash2 size={13} />}
+                                onClick={() => setWriteOffTarget(b)}
+                              >
+                                Write Off
+                              </Button>
+                            )}
+                          </Table.Td>
+                        </Table.Tr>
+                      );
+                    })}
+                  </Table.Tbody>
+                </Table>
+              </ScrollArea>
+            )}
+          </Box>
+        ) : loading ? (
           <Box p={40} ta="center">
             <Text c="dimmed" size="sm">
               Loading inventory catalog…
@@ -2015,7 +2398,7 @@ function ProductsTab({ onFormModeChange }: ProductsTabProps) {
                   borderBottom: "1px solid var(--app-border)",
                 },
                 th: {
-                  color: "#64748b",
+                  color: "var(--app-muted)",
                   fontSize: 11,
                   fontWeight: 700,
                   textTransform: "uppercase",
@@ -2032,13 +2415,11 @@ function ProductsTab({ onFormModeChange }: ProductsTabProps) {
             >
               <Table.Thead>
                 <Table.Tr>
-                  <Table.Th>Product ID / SKU</Table.Th>
-                  <Table.Th>Product Name</Table.Th>
+                  <Table.Th>Product</Table.Th>
                   <Table.Th>Category</Table.Th>
                   <Table.Th>Supplier</Table.Th>
-                  <Table.Th ta="right">Cost Price</Table.Th>
-                  <Table.Th ta="right">Selling Price</Table.Th>
-                  <Table.Th ta="center">Stock Level</Table.Th>
+                  <Table.Th ta="right">Pricing & Margin</Table.Th>
+                  <Table.Th>Stock Level</Table.Th>
                   {customFieldDefs.map((f) => (
                     <Table.Th key={f.fieldName}>{f.fieldLabel}</Table.Th>
                   ))}
@@ -2051,39 +2432,60 @@ function ProductsTab({ onFormModeChange }: ProductsTabProps) {
                   const inStock = prod.quantityInStock >= 10;
                   const lowStock =
                     prod.quantityInStock > 0 && prod.quantityInStock < 10;
+                  const colorScheme = getProductColor(prod.name);
+                  const margin = calculateMargin(prod.costPrice, prod.sellPrice);
 
                   return (
                     <Table.Tr key={prod.id}>
-                      {/* SKU */}
+                      {/* Product Name & Visual Avatar */}
                       <Table.Td>
-                        <Text
-                          size="xs"
-                          fw={600}
-                          style={{
-                            ...LEDGER_NUM,
-                            color: "var(--app-text-muted)",
-                            background: "var(--app-soft)",
-                            padding: "4px 8px",
-                            borderRadius: 6,
-                            display: "inline-block",
-                          }}
-                        >
-                          #{prod.sku}
-                        </Text>
-                      </Table.Td>
+                        <Group gap="sm" wrap="nowrap">
+                          {/* Item Initial Avatar */}
+                          <Box
+                            style={{
+                              width: 38,
+                              height: 38,
+                              borderRadius: 10,
+                              background: colorScheme.bg,
+                              color: colorScheme.text,
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              fontWeight: 800,
+                              fontSize: 13,
+                              letterSpacing: 0.5,
+                              flexShrink: 0,
+                            }}
+                          >
+                            {getProductInitials(prod.name)}
+                          </Box>
 
-                      {/* Name */}
-                      <Table.Td>
-                        <Stack gap={2}>
-                          <Text fw={600} size="sm" style={{ color: "var(--app-text)" }}>
-                            {prod.name}
-                          </Text>
-                          {prod.unit && (
-                            <Text size="xs" c="dimmed">
-                              Unit: {prod.unit}
+                          <Stack gap={2} style={{ minWidth: 140 }}>
+                            <Text fw={600} size="sm" style={{ color: "var(--app-text)", lineHeight: 1.3 }}>
+                              {prod.name}
                             </Text>
-                          )}
-                        </Stack>
+                            <Group gap={6} wrap="wrap">
+                              <Text
+                                size="xs"
+                                fw={600}
+                                style={{
+                                  ...LEDGER_NUM,
+                                  color: "var(--app-muted)",
+                                  background: "var(--app-soft)",
+                                  padding: "1px 6px",
+                                  borderRadius: 4,
+                                }}
+                              >
+                                #{prod.sku}
+                              </Text>
+                              {prod.unit && (
+                                <Text size="xs" c="dimmed">
+                                  · {prod.unit}
+                                </Text>
+                              )}
+                            </Group>
+                          </Stack>
+                        </Group>
                       </Table.Td>
 
                       {/* Category */}
@@ -2100,53 +2502,77 @@ function ProductsTab({ onFormModeChange }: ProductsTabProps) {
                         </Text>
                       </Table.Td>
 
-                      {/* Cost Price */}
+                      {/* Pricing & Profit Margin */}
                       <Table.Td ta="right">
-                        <Text size="sm" c="dimmed" style={LEDGER_NUM}>
-                          Rs. {paisaToDisplay(prod.costPrice)}
-                        </Text>
+                        <Stack gap={2} align="flex-end">
+                          <Text fw={700} size="sm" style={{ ...LEDGER_NUM, color: "var(--app-text)" }}>
+                            Rs. {paisaToDisplay(prod.sellPrice)}
+                          </Text>
+                          <Group gap={6} justify="flex-end">
+                            <Text size="xs" c="dimmed" style={LEDGER_NUM}>
+                              Cost: Rs. {paisaToDisplay(prod.costPrice)}
+                            </Text>
+                            <Badge
+                              size="xs"
+                              variant="light"
+                              color={margin.profit >= 0 ? "green" : "red"}
+                              radius="sm"
+                            >
+                              {margin.profit >= 0 ? `+${margin.marginPercent.toFixed(0)}%` : `${margin.marginPercent.toFixed(0)}%`}
+                            </Badge>
+                          </Group>
+                        </Stack>
                       </Table.Td>
 
-                      {/* Selling Price */}
-                      <Table.Td ta="right">
-                        <Text
-                          size="sm"
-                          fw={700}
-                          style={{ ...LEDGER_NUM, color: INK.goldDeep }}
-                        >
-                          Rs. {paisaToDisplay(prod.sellPrice)}
-                        </Text>
-                      </Table.Td>
+                      {/* Stock Health & Mini Progress Bar */}
+                      <Table.Td>
+                        <Stack gap={4} style={{ minWidth: 130 }}>
+                          <Group gap={6} align="center">
+                            <span
+                              style={{
+                                width: 7,
+                                height: 7,
+                                borderRadius: "50%",
+                                background: inStock ? "#10b981" : lowStock ? "#f59e0b" : "#ef4444",
+                              }}
+                            />
+                            <Text
+                              size="sm"
+                              fw={700}
+                              style={{
+                                ...LEDGER_NUM,
+                                color: inStock ? "#10b981" : lowStock ? "#f59e0b" : "#ef4444",
+                              }}
+                            >
+                              {prod.quantityInStock} {prod.unit || "units"}
+                            </Text>
+                          </Group>
 
-                      {/* Stock Status Pill Badge (Matching Pharmly) */}
-                      <Table.Td ta="center">
-                        <span
-                          style={{
-                            display: "inline-flex",
-                            alignItems: "center",
-                            gap: 6,
-                            background: inStock ? "#ecfdf5" : lowStock ? "#fffbeb" : "#fef2f2",
-                            color: inStock ? "#047857" : lowStock ? "#b45309" : "#b91c1c",
-                            padding: "4px 12px",
-                            borderRadius: 999,
-                            fontSize: 12,
-                            fontWeight: 700,
-                          }}
-                        >
-                          <span
+                          {/* Mini visual stock bar */}
+                          <Box
                             style={{
-                              width: 6,
-                              height: 6,
+                              width: "100%",
+                              maxWidth: 100,
+                              height: 4,
                               borderRadius: 999,
-                              background: inStock ? "#10b981" : lowStock ? "#f59e0b" : "#ef4444",
+                              background: "var(--app-border)",
+                              overflow: "hidden",
                             }}
-                          />
-                          {inStock
-                            ? `In Stock (${prod.quantityInStock})`
-                            : lowStock
-                            ? `Low Stock (${prod.quantityInStock})`
-                            : "Out of Stock"}
-                        </span>
+                          >
+                            <Box
+                              style={{
+                                width: `${Math.min(100, Math.max(5, (prod.quantityInStock / 15) * 100))}%`,
+                                height: "100%",
+                                background: inStock ? "#10b981" : lowStock ? "#f59e0b" : "#ef4444",
+                                borderRadius: 999,
+                              }}
+                            />
+                          </Box>
+
+                          <Text size="11px" c="dimmed">
+                            {inStock ? "Adequately stocked" : lowStock ? "Low buffer (<10)" : "Depleted"}
+                          </Text>
+                        </Stack>
                       </Table.Td>
 
                       {/* Custom Fields */}
@@ -2182,75 +2608,80 @@ function ProductsTab({ onFormModeChange }: ProductsTabProps) {
                         )}
                       </Table.Td>
 
-                      {/* Actions */}
+                      {/* Actions: Quick Adjust + Context Menu (...) */}
                       {(canEdit || canDelete) && (
                         <Table.Td ta="right">
-                          <Group gap={4} justify="flex-end" wrap="nowrap">
-                            {canEdit && (
-                              <Tooltip label="Stock Movements" withArrow>
-                                <ActionIcon
-                                  variant="subtle"
-                                  color="gray"
-                                  size="sm"
-                                  radius="md"
-                                  onClick={() => openMovements(prod)}
-                                >
-                                  <History size={15} />
-                                </ActionIcon>
-                              </Tooltip>
-                            )}
+                          <Group gap={6} justify="flex-end" wrap="nowrap">
                             {canEdit && (
                               <Tooltip label="Quick Adjust Stock" withArrow>
-                                <ActionIcon
-                                  variant="subtle"
-                                  color="blue"
-                                  size="sm"
+                                <Button
+                                  size="xs"
+                                  variant="default"
                                   radius="md"
+                                  leftSection={<PackagePlus size={13} color="var(--app-accent)" />}
                                   onClick={() => openStock(prod)}
+                                  styles={{
+                                    root: {
+                                      background: "var(--app-surface)",
+                                      borderColor: "var(--app-border)",
+                                      fontSize: 12,
+                                      fontWeight: 600,
+                                      padding: "0 10px",
+                                      height: 30,
+                                      color: "var(--app-text)",
+                                    },
+                                  }}
                                 >
-                                  <PackagePlus size={15} />
-                                </ActionIcon>
+                                  Adjust
+                                </Button>
                               </Tooltip>
                             )}
-                            {canEdit && prod.nextExpiryDate && (
-                              <Tooltip label="Batches / expiry" withArrow>
-                                <ActionIcon
-                                  variant="subtle"
-                                  color="orange"
-                                  size="sm"
-                                  radius="md"
-                                  onClick={() => openBatches(prod)}
-                                >
-                                  <CalendarDays size={15} />
+
+                            <Menu shadow="md" width={180} position="bottom-end" radius="md">
+                              <Menu.Target>
+                                <ActionIcon variant="subtle" color="gray" size="md" radius="md">
+                                  <MoreHorizontal size={16} />
                                 </ActionIcon>
-                              </Tooltip>
-                            )}
-                            {canEdit && (
-                              <Tooltip label="Edit Product" withArrow>
-                                <ActionIcon
-                                  variant="subtle"
-                                  color="indigo"
-                                  size="sm"
-                                  radius="md"
-                                  onClick={() => openEdit(prod)}
-                                >
-                                  <Pencil size={15} />
-                                </ActionIcon>
-                              </Tooltip>
-                            )}
-                            {canDelete && (
-                              <Tooltip label="Delete Product" withArrow>
-                                <ActionIcon
-                                  variant="subtle"
-                                  color="red"
-                                  size="sm"
-                                  radius="md"
-                                  onClick={() => handleDeleteProduct(prod)}
-                                >
-                                  <Trash2 size={15} />
-                                </ActionIcon>
-                              </Tooltip>
-                            )}
+                              </Menu.Target>
+                              <Menu.Dropdown style={{ background: "var(--app-surface)", borderColor: "var(--app-border)" }}>
+                                {canEdit && (
+                                  <Menu.Item
+                                    leftSection={<Pencil size={14} />}
+                                    onClick={() => openEdit(prod)}
+                                  >
+                                    Edit Details
+                                  </Menu.Item>
+                                )}
+                                {canEdit && (
+                                  <Menu.Item
+                                    leftSection={<History size={14} />}
+                                    onClick={() => openMovements(prod)}
+                                  >
+                                    Stock Movements
+                                  </Menu.Item>
+                                )}
+                                {canEdit && (
+                                  <Menu.Item
+                                    leftSection={<CalendarDays size={14} />}
+                                    onClick={() => openBatches(prod)}
+                                  >
+                                    Batches & Expiry
+                                  </Menu.Item>
+                                )}
+                                {canDelete && (
+                                  <>
+                                    <Menu.Divider />
+                                    <Menu.Item
+                                      color="red"
+                                      leftSection={<Trash2 size={14} />}
+                                      onClick={() => handleDeleteProduct(prod)}
+                                    >
+                                      Delete Product
+                                    </Menu.Item>
+                                  </>
+                                )}
+                              </Menu.Dropdown>
+                            </Menu>
                           </Group>
                         </Table.Td>
                       )}
@@ -2262,8 +2693,8 @@ function ProductsTab({ onFormModeChange }: ProductsTabProps) {
           </ScrollArea>
         )}
 
-        {/* Pagination Footer (Matching Pharmly) */}
-        {!loading && filtered.length > 0 && (
+        {/* Pagination Footer */}
+        {!loading && filtered.length > 0 && selectedStatus !== "expiring" && (
           <Box
             p="md"
             style={{
@@ -2309,6 +2740,7 @@ function ProductsTab({ onFormModeChange }: ProductsTabProps) {
         onClose={() => setStockModalOpen(false)}
         onSave={handleStockAdjust}
         product={stockProduct}
+        categoryName={stockProduct?.categoryId ? categoryMap.get(stockProduct.categoryId) : undefined}
       />
 
       {/* ---- Stock Movements Modal ---- */}
@@ -2341,11 +2773,14 @@ function ProductsTab({ onFormModeChange }: ProductsTabProps) {
 
 // ---- Stock Adjustment Modal ----
 
+type AdjustMode = "receive" | "remove" | "count" | "expiry";
+
 function StockAdjustModal({
   opened,
   onClose,
   onSave,
   product,
+  categoryName,
 }: {
   opened: boolean;
   onClose: () => void;
@@ -2357,77 +2792,134 @@ function StockAdjustModal({
     batchNumber?: string;
   }) => Promise<void>;
   product: PublicProduct | null;
+  categoryName?: string;
 }) {
+  const { dir } = useI18n();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const isMobile = useMediaQuery("(max-width: 48em)");
 
-  const form = useForm({
-    initialValues: {
-      movementType: "purchase",
-      quantity: 1,
-      referenceNote: "",
-      expiryDate: "",
-      batchNumber: "",
-      expiryOnly: false,
-    },
-    validate: {
-      quantity: (v, values) => {
-        if (v === 0) {
-          // Quantity 0 is only valid as an "expiry-only" manual adjustment:
-          // attach the expiry date to the current stock without moving units.
-          if (values.expiryOnly || values.expiryDate?.trim()) return null;
-          return "Quantity cannot be zero";
-        }
-        if (v < 0 && values.movementType !== "adjustment")
-          return "Quantity must be positive for this movement type";
-        return null;
-      },
-      expiryDate: (v, values) => {
-        if (values.expiryOnly && !v?.trim())
-          return "Pick an expiry date to attach to the current stock";
-        return null;
-      },
-    },
-  });
+  // 4 Human-Centered Modes
+  const [mode, setMode] = useState<AdjustMode>("receive");
 
+  // Mode 1: Receive Stock
+  const [receiveQty, setReceiveQty] = useState<number | string>(1);
+  const [receiveReason, setReceiveReason] = useState<string>("purchase");
+
+  // Mode 2: Remove Stock
+  const [removeQty, setRemoveQty] = useState<number | string>(1);
+  const [removeReason, setRemoveReason] = useState<string>("damage");
+
+  // Mode 3: Physical Shelf Count
+  const [countedUnits, setCountedUnits] = useState<number | string>(
+    product?.quantityInStock ?? 0
+  );
+
+  // Mode 4 & Optional Batch/Expiry
+  const [expiryDate, setExpiryDate] = useState<string>("");
+  const [batchNumber, setBatchNumber] = useState<string>("");
+
+  // Universal Reference Note
+  const [referenceNote, setReferenceNote] = useState<string>("");
+
+  // Reset form when modal opens or product changes
   useEffect(() => {
-    form.reset();
-    setError(null);
-  }, [product]);
+    if (opened && product) {
+      setMode("receive");
+      setReceiveQty(1);
+      setReceiveReason("purchase");
+      setRemoveQty(1);
+      setRemoveReason("damage");
+      setCountedUnits(product.quantityInStock);
+      setExpiryDate("");
+      setBatchNumber("");
+      setReferenceNote("");
+      setError(null);
+    }
+  }, [opened, product]);
 
-  async function handleSubmit(values: typeof form.values) {
+  const currentStock = product?.quantityInStock ?? 0;
+  const unit = product?.unit ?? "units";
+
+  // Numeric sanitization
+  const numReceiveQty = Math.max(
+    0,
+    typeof receiveQty === "number" ? receiveQty : parseInt(receiveQty, 10) || 0
+  );
+  const numRemoveQty = Math.max(
+    0,
+    typeof removeQty === "number" ? removeQty : parseInt(removeQty, 10) || 0
+  );
+  const numCountedUnits =
+    typeof countedUnits === "number"
+      ? countedUnits
+      : parseInt(countedUnits, 10) || 0;
+  const countDiff = numCountedUnits - currentStock;
+
+  async function handleFormSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!product) return;
     setLoading(true);
     setError(null);
+
     try {
-      // Convert quantity to negative for outgoing types.
-      // "adjustment" passes through signed so the user can fix an
-      // incorrectly-entered quantity in either direction without touching
-      // sales or damage reporting. "Expiry only" forces quantity 0 so the
-      // stock count never moves.
-      let qty = values.expiryOnly ? 0 : values.quantity;
-      if (!values.expiryOnly) {
-        if (
-          values.movementType === "sale" ||
-          values.movementType === "damage"
-        ) {
-          qty = -Math.abs(qty);
-        } else if (
-          values.movementType === "purchase" ||
-          values.movementType === "return"
-        ) {
-          qty = Math.abs(qty);
+      let movementType = "adjustment";
+      let quantity = 0;
+      let note = referenceNote.trim();
+
+      if (mode === "receive") {
+        if (numReceiveQty <= 0) {
+          setError("Please enter at least 1 unit to receive.");
+          setLoading(false);
+          return;
         }
+        movementType = receiveReason;
+        quantity = numReceiveQty;
+      } else if (mode === "remove") {
+        if (numRemoveQty <= 0) {
+          setError("Please enter at least 1 unit to remove.");
+          setLoading(false);
+          return;
+        }
+        if (removeReason.startsWith("damage")) {
+          movementType = "damage";
+        } else if (removeReason === "sale") {
+          movementType = "sale";
+        } else {
+          movementType = "adjustment";
+        }
+        // Backend expects negative integer for stock out
+        quantity = -Math.abs(numRemoveQty);
+      } else if (mode === "count") {
+        if (countDiff === 0) {
+          setError(
+            "The physical count matches current system stock. No adjustment needed."
+          );
+          setLoading(false);
+          return;
+        }
+        movementType = "adjustment";
+        quantity = countDiff;
+        if (!note) {
+          note = `Physical shelf audit: counted ${numCountedUnits} (was ${currentStock})`;
+        }
+      } else if (mode === "expiry") {
+        if (!expiryDate.trim()) {
+          setError("Please choose an expiry date to assign to this stock.");
+          setLoading(false);
+          return;
+        }
+        movementType = "adjustment";
+        quantity = 0;
       }
 
       await onSave({
-        movementType: values.expiryOnly ? "adjustment" : values.movementType,
-        quantity: qty,
-        referenceNote: values.referenceNote,
-        expiryDate: values.expiryDate || undefined,
-        batchNumber: values.batchNumber?.trim() || undefined,
+        movementType,
+        quantity,
+        referenceNote: note,
+        expiryDate: expiryDate.trim() ? expiryDate.trim() : undefined,
+        batchNumber: batchNumber.trim() ? batchNumber.trim() : undefined,
       });
-      form.reset();
+      onClose();
     } catch (err) {
       setError(getErrorMessage(err));
     } finally {
@@ -2435,152 +2927,574 @@ function StockAdjustModal({
     }
   }
 
-  const movementTypes = [
-    { value: "purchase", label: "Purchase (stock IN)" },
-    { value: "return", label: "Customer Return (stock IN)" },
-    { value: "adjustment", label: "Manual Adjustment" },
-    { value: "sale", label: "Sale (stock OUT)" },
-    { value: "damage", label: "Damage/Loss (stock OUT)" },
+  const receiveReasons = [
+    { value: "purchase", label: "Supplier Delivery / Purchase" },
+    { value: "return", label: "Customer Return" },
+    { value: "adjustment", label: "Found / Discovered Uncounted Stock" },
+  ];
+
+  const removeReasons = [
+    { value: "damage", label: "Damaged / Broken / Defective" },
+    { value: "damage_spoil", label: "Expired / Spoiled Goods" },
+    { value: "damage_loss", label: "Lost / Missing / Stolen" },
+    { value: "sale", label: "Direct / Manual Offline Sale" },
+    { value: "adjustment", label: "Inventory Shrinkage / Write-down" },
   ];
 
   return (
-    <Modal
+    <Drawer
       opened={opened}
       onClose={onClose}
+      position={dir === "rtl" ? "left" : "right"}
+      size={460}
       title={
         <Group gap={8}>
-          <PackagePlus size={16} color={INK.gold} />
-          <Text fw={700} style={{ color: INK.text }}>
-            Adjust Stock: {product?.name ?? ""}
-          </Text>
+          <Box
+            p={6}
+            style={{
+              borderRadius: 8,
+              background: "var(--app-accent-soft)",
+              color: "var(--app-accent)",
+            }}
+          >
+            <PackagePlus size={18} />
+          </Box>
+          <Box>
+            <Text fw={700} size="sm" style={{ color: INK.text }}>
+              Adjust Inventory
+            </Text>
+            <Text size="xs" c="dimmed">
+              Update stock quantities, audits, and expiry tracking
+            </Text>
+          </Box>
         </Group>
       }
-      centered
-      radius="md"
-      fullScreen={isMobile}
-      transitionProps={isMobile ? { transition: "slide-up" } : undefined}
+      styles={{
+        header: {
+          background: "var(--app-surface)",
+          borderBottom: `1px solid ${INK.border}`,
+          padding: "16px 20px",
+        },
+        body: {
+          background: "var(--app-bg)",
+          padding: "20px",
+          height: "calc(100% - 65px)",
+          overflowY: "auto",
+        },
+      }}
     >
-      <form onSubmit={form.onSubmit(handleSubmit)}>
+      <form onSubmit={handleFormSubmit}>
         <Stack gap="md">
+          {/* ---- Product Overview Card ---- */}
           <Card
             padding="sm"
-            radius="sm"
-            style={{ background: INK.paper, border: `1px solid ${INK.border}` }}
+            radius="md"
+            style={{
+              background: "var(--app-surface)",
+              border: `1px solid ${INK.border}`,
+            }}
           >
-            <Group justify="space-between">
-              <Text size="sm" c="dimmed">
-                Current stock
-              </Text>
-              <Text fw={700} style={{ ...LEDGER_NUM, color: INK.text }}>
-                {product?.quantityInStock ?? 0} {product?.unit ?? "units"}
-              </Text>
+            <Group justify="space-between" align="flex-start" wrap="nowrap">
+              <Stack gap={4} style={{ minWidth: 0, flex: 1 }}>
+                <Text
+                  fw={700}
+                  size="sm"
+                  style={{ color: INK.text }}
+                  truncate
+                >
+                  {product?.name ?? "Product"}
+                </Text>
+                <Group gap={6} wrap="wrap">
+                  <Badge variant="outline" size="xs" color="gray">
+                    SKU: {product?.sku}
+                  </Badge>
+                  {categoryName && (
+                    <Badge variant="light" size="xs" color="blue">
+                      {categoryName}
+                    </Badge>
+                  )}
+                  <Badge variant="subtle" size="xs" color="gray">
+                    Cost: Rs {product ? (product.costPrice / 100).toFixed(2) : "0.00"}
+                  </Badge>
+                </Group>
+              </Stack>
+              <Box ta="right" style={{ flexShrink: 0 }}>
+                <Text size="xs" c="dimmed" fw={600} tt="uppercase">
+                  On Hand
+                </Text>
+                <Text
+                  fw={800}
+                  size="lg"
+                  style={{
+                    ...LEDGER_NUM,
+                    color: currentStock <= 0 ? INK.danger : INK.text,
+                  }}
+                >
+                  {currentStock.toLocaleString()}{" "}
+                  <Text component="span" size="xs" fw={600} c="dimmed">
+                    {unit}
+                  </Text>
+                </Text>
+              </Box>
             </Group>
           </Card>
 
-          <Switch
-            label="Expiry only — don't change stock quantity"
-            description="Attach an expiry date to the stock this product already has. Nothing is added or removed."
-            checked={form.values.expiryOnly}
-            onChange={(e) => {
-              const on = e.currentTarget.checked;
-              form.setValues({
-                expiryOnly: on,
-                movementType: on ? "adjustment" : form.values.movementType,
-                quantity: on ? 0 : form.values.quantity,
-              });
+          {/* ---- Mode Switcher ---- */}
+          <SegmentedControl
+            value={mode}
+            onChange={(val) => {
+              setMode(val as AdjustMode);
+              setError(null);
             }}
+            data={[
+              {
+                value: "receive",
+                label: (
+                  <Group gap={4} justify="center" wrap="nowrap">
+                    <PackagePlus size={14} color="#059669" />
+                    <Text size="xs" fw={600}>
+                      Receive
+                    </Text>
+                  </Group>
+                ),
+              },
+              {
+                value: "remove",
+                label: (
+                  <Group gap={4} justify="center" wrap="nowrap">
+                    <PackageMinus size={14} color="#dc2626" />
+                    <Text size="xs" fw={600}>
+                      Remove
+                    </Text>
+                  </Group>
+                ),
+              },
+              {
+                value: "count",
+                label: (
+                  <Group gap={4} justify="center" wrap="nowrap">
+                    <ClipboardCheck size={14} color="#2563eb" />
+                    <Text size="xs" fw={600}>
+                      Count
+                    </Text>
+                  </Group>
+                ),
+              },
+              {
+                value: "expiry",
+                label: (
+                  <Group gap={4} justify="center" wrap="nowrap">
+                    <CalendarClock size={14} color="#d97706" />
+                    <Text size="xs" fw={600}>
+                      Expiry
+                    </Text>
+                  </Group>
+                ),
+              },
+            ]}
+            fullWidth
+            radius="md"
+            size="sm"
           />
 
-          <Select
-            label="What kind of change is this?"
-            data={movementTypes}
-            required
-            disabled={form.values.expiryOnly}
-            {...form.getInputProps("movementType")}
-          />
+          {/* ---- Mode 1: Receive Stock ---- */}
+          {mode === "receive" && (
+            <Stack gap="sm">
+              <Box>
+                <Group justify="space-between" mb={6}>
+                  <Text size="xs" fw={600} style={{ color: INK.text }}>
+                    Quantity to Receive
+                  </Text>
+                  <Group gap={4}>
+                    <Text size="xs" c="dimmed">
+                      Quick add:
+                    </Text>
+                    {[5, 10, 25, 50, 100].map((amt) => (
+                      <Button
+                        key={amt}
+                        size="compact-xs"
+                        variant="light"
+                        color="teal"
+                        radius="xl"
+                        onClick={() =>
+                          setReceiveQty((prev) => (Number(prev) || 0) + amt)
+                        }
+                      >
+                        +{amt}
+                      </Button>
+                    ))}
+                  </Group>
+                </Group>
+                <NumberInput
+                  value={receiveQty}
+                  onChange={setReceiveQty}
+                  min={1}
+                  step={1}
+                  size="sm"
+                  placeholder="e.g. 20"
+                  allowNegative={false}
+                  rightSection={
+                    <Text size="xs" c="dimmed" pr="xs" fw={600}>
+                      {unit}
+                    </Text>
+                  }
+                />
+              </Box>
 
-          <NumberInput
-            label="How many units?"
-            placeholder="Enter amount"
-            min={form.values.movementType === "adjustment" ? undefined : 1}
-            required
-            disabled={form.values.expiryOnly}
-            description={
-              form.values.movementType === "adjustment" &&
-              !form.values.expiryOnly
-                ? "Positive adds stock, negative (e.g. -5) removes it. For expiry only, use the switch above."
-                : form.values.expiryOnly
-                  ? "Quantity is locked at 0 in expiry-only mode."
-                  : undefined
-            }
-            {...form.getInputProps("quantity")}
-          />
-
-          {form.values.movementType === "adjustment" &&
-            form.values.quantity !== 0 &&
-            !form.values.expiryOnly &&
-            product && (
-              <Text size="sm" c="dimmed">
-                Resulting stock:{" "}
-                <Text component="span" fw={700} style={{ color: INK.text }}>
-                  {(
-                    product.quantityInStock + form.values.quantity
-                  ).toLocaleString()}{" "}
-                  {product.unit ?? "units"}
-                </Text>
-              </Text>
-            )}
-
-          {form.values.movementType === "adjustment" &&
-            form.values.quantity === 0 &&
-            form.values.expiryDate?.trim() &&
-            product && (
-              <Text size="sm" c="dimmed">
-                Quantity stays{" "}
-                <Text component="span" fw={700} style={{ color: INK.text }}>
-                  {product.quantityInStock.toLocaleString()}{" "}
-                  {product.unit ?? "units"}
-                </Text>{" "}
-                — the expiry date is attached to the stock that has no expiry
-                yet.
-              </Text>
-            )}
-
-          {(form.values.movementType === "purchase" ||
-            form.values.movementType === "return" ||
-            form.values.movementType === "adjustment") && (
-            <>
-              <AppDateInput
-                label="Expiry date (optional)"
-                description={
-                  form.values.movementType === "adjustment"
-                    ? "Pick a date to track this batch's expiry. With quantity 0 this attaches the date to the stock you already have."
-                    : "Pick a date to track this batch's expiry. Leave blank if this stock doesn't expire."
-                }
-                placeholder="Select a date"
+              <Select
+                label="Source / Reason"
+                description="Where did these items arrive from?"
+                data={receiveReasons}
+                value={receiveReason}
+                onChange={(val) => setReceiveReason(val || "purchase")}
                 size="sm"
-                value={form.values.expiryDate}
-                onChange={(value) => form.setFieldValue("expiryDate", value)}
               />
-              <Text size="xs" c="dimmed">
-                Once this product has any batch with an expiry date, sales and
-                write-offs will automatically use up the stock that expires
-                soonest first — so nothing gets left to expire unnecessarily.
-              </Text>
-              <TextInput
-                label="Batch number (optional)"
-                description="e.g. LOT-001 or 2026-A. Leave blank to auto-generate one (B-0001, B-0002, …)."
-                placeholder="Batch number"
-                size="sm"
-                {...form.getInputProps("batchNumber")}
-              />
-            </>
+
+              {/* Live calculation banner */}
+              <Box
+                p="xs"
+                style={{
+                  background: "rgba(5, 150, 105, 0.08)",
+                  border: "1px solid rgba(5, 150, 105, 0.25)",
+                  borderRadius: 8,
+                }}
+              >
+                <Group justify="space-between" align="center">
+                  <Group gap={6}>
+                    <Text size="xs" c="dimmed">
+                      Current: {currentStock}
+                    </Text>
+                    <ArrowRight size={12} color="#059669" />
+                    <Text size="xs" fw={600} c="teal">
+                      Adding: +{numReceiveQty}
+                    </Text>
+                  </Group>
+                  <Group gap={4}>
+                    <Text size="xs" fw={700} c="dimmed">
+                      New Total:
+                    </Text>
+                    <Text
+                      size="sm"
+                      fw={800}
+                      style={{ ...LEDGER_NUM, color: "#059669" }}
+                    >
+                      {(currentStock + numReceiveQty).toLocaleString()} {unit}
+                    </Text>
+                  </Group>
+                </Group>
+              </Box>
+
+              {/* Optional Expiry & Batch info */}
+              <Accordion variant="separated" radius="md">
+                <Accordion.Item value="batch">
+                  <Accordion.Control icon={<CalendarClock size={16} />}>
+                    <Text size="xs" fw={600}>
+                      Batch & Expiry Date (Optional)
+                    </Text>
+                  </Accordion.Control>
+                  <Accordion.Panel>
+                    <Stack gap="xs">
+                      <AppDateInput
+                        label="Expiry Date"
+                        placeholder="Select expiry date"
+                        value={expiryDate}
+                        onChange={setExpiryDate}
+                        size="xs"
+                        description="Enables automatic First-In-First-Out (FIFO) deduction during sales."
+                      />
+                      <TextInput
+                        label="Batch / Lot Number"
+                        placeholder="e.g. BATCH-2026-A"
+                        value={batchNumber}
+                        onChange={(e) =>
+                          setBatchNumber(e.currentTarget.value)
+                        }
+                        size="xs"
+                        description="Leave empty to auto-generate (e.g. B-0001)."
+                      />
+                    </Stack>
+                  </Accordion.Panel>
+                </Accordion.Item>
+              </Accordion>
+            </Stack>
           )}
 
+          {/* ---- Mode 2: Remove Stock ---- */}
+          {mode === "remove" && (
+            <Stack gap="sm">
+              <Box>
+                <Group justify="space-between" mb={6}>
+                  <Text size="xs" fw={600} style={{ color: INK.text }}>
+                    Quantity to Remove
+                  </Text>
+                  <Group gap={4}>
+                    <Text size="xs" c="dimmed">
+                      Quick select:
+                    </Text>
+                    {[1, 2, 5, 10].map((amt) => (
+                      <Button
+                        key={amt}
+                        size="compact-xs"
+                        variant="light"
+                        color="red"
+                        radius="xl"
+                        onClick={() => setRemoveQty(amt)}
+                      >
+                        {amt}
+                      </Button>
+                    ))}
+                    {currentStock > 0 && (
+                      <Button
+                        size="compact-xs"
+                        variant="outline"
+                        color="red"
+                        radius="xl"
+                        onClick={() => setRemoveQty(currentStock)}
+                      >
+                        All ({currentStock})
+                      </Button>
+                    )}
+                  </Group>
+                </Group>
+                <NumberInput
+                  value={removeQty}
+                  onChange={setRemoveQty}
+                  min={1}
+                  step={1}
+                  size="sm"
+                  placeholder="e.g. 5"
+                  allowNegative={false}
+                  rightSection={
+                    <Text size="xs" c="dimmed" pr="xs" fw={600}>
+                      {unit}
+                    </Text>
+                  }
+                />
+              </Box>
+
+              <Select
+                label="Reason for Removal"
+                description="Categorizes the deduction for inventory audit reports"
+                data={removeReasons}
+                value={removeReason}
+                onChange={(val) => setRemoveReason(val || "damage")}
+                size="sm"
+              />
+
+              {/* Live calculation banner */}
+              <Box
+                p="xs"
+                style={{
+                  background: "rgba(220, 38, 38, 0.08)",
+                  border: "1px solid rgba(220, 38, 38, 0.25)",
+                  borderRadius: 8,
+                }}
+              >
+                <Group justify="space-between" align="center">
+                  <Group gap={6}>
+                    <Text size="xs" c="dimmed">
+                      Current: {currentStock}
+                    </Text>
+                    <ArrowRight size={12} color="#dc2626" />
+                    <Text size="xs" fw={600} c="red">
+                      Removing: -{numRemoveQty}
+                    </Text>
+                  </Group>
+                  <Group gap={4}>
+                    <Text size="xs" fw={700} c="dimmed">
+                      New Total:
+                    </Text>
+                    <Text
+                      size="sm"
+                      fw={800}
+                      style={{
+                        ...LEDGER_NUM,
+                        color:
+                          currentStock - numRemoveQty < 0
+                            ? INK.danger
+                            : INK.text,
+                      }}
+                    >
+                      {(currentStock - numRemoveQty).toLocaleString()} {unit}
+                    </Text>
+                  </Group>
+                </Group>
+              </Box>
+
+              {currentStock - numRemoveQty < 0 && (
+                <Alert
+                  color="red"
+                  variant="light"
+                  icon={<AlertTriangle size={16} />}
+                >
+                  Warning: Removing {numRemoveQty} units will result in negative
+                  stock ({(currentStock - numRemoveQty).toLocaleString()}{" "}
+                  {unit}).
+                </Alert>
+              )}
+            </Stack>
+          )}
+
+          {/* ---- Mode 3: Physical Shelf Count ---- */}
+          {mode === "count" && (
+            <Stack gap="sm">
+              <Box>
+                <Text size="xs" fw={600} style={{ color: INK.text }} mb={4}>
+                  Actual Physical Count on Shelf
+                </Text>
+                <Text size="xs" c="dimmed" mb={8}>
+                  Count the physical items in your shop or storage right now. The
+                  system will automatically calculate the adjustment.
+                </Text>
+                <NumberInput
+                  value={countedUnits}
+                  onChange={setCountedUnits}
+                  min={0}
+                  step={1}
+                  size="sm"
+                  placeholder="Enter counted units"
+                  allowNegative={false}
+                  rightSection={
+                    <Text size="xs" c="dimmed" pr="xs" fw={600}>
+                      {unit}
+                    </Text>
+                  }
+                />
+              </Box>
+
+              {/* Live Comparison Box */}
+              <Box
+                p="sm"
+                style={{
+                  background:
+                    countDiff === 0
+                      ? "var(--app-surface)"
+                      : countDiff > 0
+                      ? "rgba(5, 150, 105, 0.08)"
+                      : "rgba(217, 119, 6, 0.08)",
+                  border: `1px solid ${
+                    countDiff === 0
+                      ? INK.border
+                      : countDiff > 0
+                      ? "rgba(5, 150, 105, 0.3)"
+                      : "rgba(217, 119, 6, 0.3)"
+                  }`,
+                  borderRadius: 10,
+                }}
+              >
+                <Stack gap={6}>
+                  <Group justify="space-between">
+                    <Text size="xs" c="dimmed">
+                      System Recorded Stock:
+                    </Text>
+                    <Text size="xs" fw={700} style={LEDGER_NUM}>
+                      {currentStock.toLocaleString()} {unit}
+                    </Text>
+                  </Group>
+                  <Group justify="space-between">
+                    <Text size="xs" c="dimmed">
+                      Your Physical Count:
+                    </Text>
+                    <Text size="xs" fw={700} style={LEDGER_NUM}>
+                      {numCountedUnits.toLocaleString()} {unit}
+                    </Text>
+                  </Group>
+                  <Divider />
+                  <Group justify="space-between" align="center">
+                    <Text size="xs" fw={700} style={{ color: INK.text }}>
+                      Adjustment Required:
+                    </Text>
+                    {countDiff === 0 ? (
+                      <Badge color="gray" variant="light">
+                        0 (Exact Match)
+                      </Badge>
+                    ) : countDiff > 0 ? (
+                      <Badge color="teal" variant="filled">
+                        +{countDiff} {unit} (Surplus)
+                      </Badge>
+                    ) : (
+                      <Badge color="amber" variant="filled">
+                        {countDiff} {unit} (Shortage)
+                      </Badge>
+                    )}
+                  </Group>
+                </Stack>
+              </Box>
+
+              {countDiff === 0 ? (
+                <Text size="xs" c="dimmed" ta="center">
+                  ✨ System records and physical shelf count are already identical. No adjustment required.
+                </Text>
+              ) : countDiff > 0 ? (
+                <Text size="xs" c="teal" fw={500}>
+                  📈 +{countDiff} units will be added to system inventory to match your shelf count.
+                </Text>
+              ) : (
+                <Text size="xs" c="orange" fw={500}>
+                  📉 {Math.abs(countDiff)} units will be deducted from system inventory to match your shelf count.
+                </Text>
+              )}
+            </Stack>
+          )}
+
+          {/* ---- Mode 4: Set Expiry Date Only ---- */}
+          {mode === "expiry" && (
+            <Stack gap="sm">
+              <Box>
+                <Text size="xs" fw={600} style={{ color: INK.text }} mb={4}>
+                  Attach Expiry Date to Existing Stock
+                </Text>
+                <Text size="xs" c="dimmed" mb={8}>
+                  Sets an expiration date for the {currentStock} {unit} currently
+                  in stock without changing the quantity count.
+                </Text>
+              </Box>
+
+              <AppDateInput
+                label="Expiry Date"
+                placeholder="Select expiration date"
+                value={expiryDate}
+                onChange={setExpiryDate}
+                required
+                size="sm"
+              />
+
+              <TextInput
+                label="Batch / Lot Number (Optional)"
+                placeholder="e.g. LOT-2026-A"
+                value={batchNumber}
+                onChange={(e) => setBatchNumber(e.currentTarget.value)}
+                size="sm"
+                description="Helps identify this stock batch in future reports."
+              />
+
+              <Box
+                p="xs"
+                style={{
+                  background: "var(--app-surface)",
+                  border: `1px solid ${INK.border}`,
+                  borderRadius: 8,
+                }}
+              >
+                <Group justify="space-between">
+                  <Text size="xs" c="dimmed">
+                    Stock Quantity Impact:
+                  </Text>
+                  <Text size="xs" fw={700} style={LEDGER_NUM}>
+                    No change ({currentStock} {unit})
+                  </Text>
+                </Group>
+              </Box>
+            </Stack>
+          )}
+
+          {/* ---- Universal Reference Note ---- */}
           <TextInput
-            label="Reference Note"
-            placeholder="e.g. PO-001, Invoice #123"
-            {...form.getInputProps("referenceNote")}
+            label="Reference Note (Optional)"
+            placeholder="e.g. Supplier Invoice #102, shelf audit, unpacking damage"
+            value={referenceNote}
+            onChange={(e) => setReferenceNote(e.currentTarget.value)}
+            size="sm"
           />
 
           {error && (
@@ -2595,21 +3509,48 @@ function StockAdjustModal({
 
           <Divider />
 
-          <Group justify="flex-end">
-            <Button variant="subtle" color="gray" onClick={onClose}>
+          {/* ---- Action Buttons ---- */}
+          <Group justify="flex-end" gap="sm">
+            <Button variant="subtle" color="gray" onClick={onClose} size="sm">
               Cancel
             </Button>
             <Button
               type="submit"
               loading={loading}
-              style={{ backgroundColor: INK.navy }}
+              disabled={mode === "count" && countDiff === 0}
+              size="sm"
+              style={{
+                backgroundColor:
+                  mode === "receive"
+                    ? "#059669"
+                    : mode === "remove"
+                    ? "#dc2626"
+                    : mode === "count"
+                    ? countDiff > 0
+                      ? "#059669"
+                      : countDiff < 0
+                      ? "#d97706"
+                      : "gray"
+                    : "var(--app-accent, #1e3a5f)",
+                color: "#fff",
+              }}
             >
-              Apply Adjustment
+              {mode === "receive" &&
+                `Add ${numReceiveQty} ${unit} to Stock`}
+              {mode === "remove" &&
+                `Deduct ${numRemoveQty} ${unit} from Stock`}
+              {mode === "count" &&
+                (countDiff === 0
+                  ? "Shelf Matches System"
+                  : countDiff > 0
+                  ? `Add +${countDiff} Units (Set to ${numCountedUnits})`
+                  : `Deduct ${Math.abs(countDiff)} Units (Set to ${numCountedUnits})`)}
+              {mode === "expiry" && "Save Expiry Date"}
             </Button>
           </Group>
         </Stack>
       </form>
-    </Modal>
+    </Drawer>
   );
 }
 
@@ -2624,10 +3565,10 @@ function MovementsModal({
   onClose: () => void;
   product: PublicProduct | null;
 }) {
+  const { dir } = useI18n();
   const [movements, setMovements] = useState<PublicStockMovement[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const isMobile = useMediaQuery("(max-width: 48em)");
 
   useEffect(() => {
     if (opened && product) {
@@ -2651,22 +3592,32 @@ function MovementsModal({
   };
 
   return (
-    <Modal
+    <Drawer
       opened={opened}
       onClose={onClose}
+      position={dir === "rtl" ? "left" : "right"}
+      size={560}
       title={
         <Group gap={8}>
-          <History size={16} color={INK.gold} />
-          <Text fw={700} style={{ color: INK.text }}>
+          <History size={18} color="var(--app-accent)" />
+          <Text fw={700} style={{ color: "var(--app-text)" }}>
             Stock History: {product?.name ?? ""}
           </Text>
         </Group>
       }
-      size="lg"
-      centered
-      radius="md"
-      fullScreen={isMobile}
-      transitionProps={isMobile ? { transition: "slide-up" } : undefined}
+      styles={{
+        header: {
+          background: "var(--app-surface)",
+          borderBottom: "1px solid var(--app-border)",
+          padding: "16px 20px",
+        },
+        body: {
+          background: "var(--app-bg)",
+          padding: "20px",
+          height: "calc(100% - 65px)",
+          overflowY: "auto",
+        },
+      }}
     >
       {loading ? (
         <Text c="dimmed" size="sm">
@@ -2740,7 +3691,7 @@ function MovementsModal({
           </Table>
         </ScrollArea>
       )}
-    </Modal>
+    </Drawer>
   );
 }
 
@@ -2757,13 +3708,13 @@ function BatchesModal({
   product: PublicProduct | null;
   onChanged: () => Promise<void>;
 }) {
+  const { dir } = useI18n();
   const [batches, setBatches] = useState<PublicStockBatch[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [writeOffTarget, setWriteOffTarget] = useState<PublicStockBatch | null>(
     null,
   );
-  const isMobile = useMediaQuery("(max-width: 48em)");
 
   async function loadBatches() {
     if (!product) return;
@@ -2786,22 +3737,32 @@ function BatchesModal({
 
   return (
     <>
-      <Modal
+      <Drawer
         opened={opened}
         onClose={onClose}
+        position={dir === "rtl" ? "left" : "right"}
+        size={680}
         title={
           <Group gap={8}>
-            <CalendarDays size={16} color={INK.gold} />
-            <Text fw={700} style={{ color: INK.text }}>
+            <CalendarDays size={18} color="var(--app-accent)" />
+            <Text fw={700} style={{ color: "var(--app-text)" }}>
               Expiry Batches: {product?.name ?? ""}
             </Text>
           </Group>
         }
-        size="lg"
-        centered
-        radius="md"
-        fullScreen={isMobile}
-        transitionProps={isMobile ? { transition: "slide-up" } : undefined}
+        styles={{
+          header: {
+            background: "var(--app-surface)",
+            borderBottom: "1px solid var(--app-border)",
+            padding: "16px 20px",
+          },
+          body: {
+            background: "var(--app-bg)",
+            padding: "20px",
+            height: "calc(100% - 65px)",
+            overflowY: "auto",
+          },
+        }}
       >
         {loading ? (
           <Text c="dimmed" size="sm">
@@ -2901,7 +3862,7 @@ function BatchesModal({
             </Table>
           </ScrollArea>
         )}
-      </Modal>
+      </Drawer>
 
       <WriteOffModal
         batch={writeOffTarget}

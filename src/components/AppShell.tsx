@@ -23,7 +23,6 @@ import {
   Stack,
   Text,
   Tooltip,
-  ThemeIcon,
 } from "@mantine/core";
 
 import RightContextPanel from "../features/dashboard/RightContextPanel";
@@ -363,6 +362,11 @@ export default function AppShell({
       });
       if (!savePath) return;
       const path = await createBackup(savePath);
+      try {
+        localStorage.setItem(`ijaz_backup_performed_${user.id}`, "true");
+      } catch {
+        // ignore
+      }
       setBackupMsg(t("backup.success", { path }));
     } catch (err) {
       setBackupMsg(t("backup.error", { err: getErrorMessage(err) }));
@@ -587,43 +591,6 @@ export default function AppShell({
           </Stack>
         </ScrollArea>
 
-        {/* Need Help? Card (Breathable & Friendly) */}
-        {!sidebarCollapsed && (
-          <Box px="sm" pb="xs">
-            <Box
-              p="sm"
-              style={{
-                borderRadius: 16,
-                background: "linear-gradient(135deg, rgba(79, 97, 237, 0.07) 0%, rgba(79, 97, 237, 0.02) 100%)",
-                border: "1px solid rgba(79, 97, 237, 0.15)",
-                textAlign: "center",
-              }}
-            >
-              <Group justify="center" mb={4}>
-                <ThemeIcon size="md" radius="xl" color="indigo" variant="light">
-                  <CircleHelp size={16} />
-                </ThemeIcon>
-              </Group>
-              <Text size="xs" fw={700} style={{ letterSpacing: -0.2 }}>
-                Need help?
-              </Text>
-              <Text size="11px" c="dimmed" mb="xs" style={{ lineHeight: 1.3 }}>
-                Questions about sales or stock?
-              </Text>
-              <Button
-                variant="light"
-                color="indigo"
-                size="compact-xs"
-                radius="pill"
-                fullWidth
-                onClick={() => goTo("help")}
-                style={{ fontWeight: 600 }}
-              >
-                Open Guides
-              </Button>
-            </Box>
-          </Box>
-        )}
 
         {/* Sidebar footer — user card */}
         <Box px={sidebarCollapsed ? "xs" : "sm"} pb="sm">
@@ -799,18 +766,6 @@ export default function AppShell({
               onReplayTour={() => startReplay()}
             />
             <LanguageMenu />
-            <Tooltip label={t("topbar.settingsTooltip")}>
-              <Button
-                variant="subtle"
-                size="sm"
-                leftSection={<Settings2 size={15} />}
-                onClick={() => goTo("settings")}
-                data-tour="topbar-settings"
-                styles={{ root: { fontWeight: 600 } }}
-              >
-                {t("topbar.settings")}
-              </Button>
-            </Tooltip>
           </Group>
         </Box>
 

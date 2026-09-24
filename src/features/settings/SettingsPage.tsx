@@ -33,7 +33,6 @@ import {
   ActionIcon,
   Switch,
   Textarea,
-  Kbd,
   PasswordInput,
   Tooltip,
   Loader,
@@ -42,6 +41,7 @@ import {
   Center,
   ThemeIcon,
   List,
+  Accordion,
 } from "@mantine/core";
 
 import { useForm } from "@mantine/form";
@@ -98,6 +98,7 @@ import type {
 import {
   Trash2, Upload, Check, Languages as LanguagesIcon, Send, RefreshCw, Zap, AlertTriangle,
   CheckCircle, XCircle, ArrowRight, ArrowLeft, Settings,
+  Receipt, FileText, Printer, Eye, Layers,
 } from "lucide-react";
 
 import { INK } from "../../theme";
@@ -109,6 +110,7 @@ import {
   type Lang,
 } from "../../i18n/translations";
 import SettingsHub, { type SettingsSection } from "./SettingsHub";
+import { printHtmlContent } from "../../utils/printInvoice";
 
 // ==========================================
 // PROPS
@@ -481,15 +483,57 @@ function CompanyProfileTab() {
 }
 
 // ==========================================
-// INVOICE SETTINGS TAB
+// INVOICE SETTINGS & FORMATTING WORKSPACE
 // ==========================================
+
+const INVOICE_PRESETS = [
+  {
+    id: "wholesale_a4",
+    name: "Wholesale Standard (A4)",
+    description: "Standard full-page format with product rows, wholesale cartons/qty, signature lines, and previous balance.",
+    paperSize: "A4 Sheet (210 × 297 mm)",
+    badge: "Recommended",
+    icon: FileText,
+  },
+  {
+    id: "thermal_80mm",
+    name: "Thermal POS Slip (80mm)",
+    description: "Fast receipt for 80mm roll printers. Paper-efficient, high-contrast monospace formatting for counter sales.",
+    paperSize: "80mm Roll",
+    badge: "Counter POS",
+    icon: Receipt,
+  },
+  {
+    id: "compact_a5",
+    name: "Compact Voucher (A5)",
+    description: "Half-sheet format designed for retail shops to save 50% paper while keeping clear rates and totals.",
+    paperSize: "A5 Half-Sheet (148 × 210 mm)",
+    badge: "Paper Saver",
+    icon: Layers,
+  },
+];
+
+const ACCENT_SWATCHES = [
+  "#1d2b54",
+  "#059669",
+  "#2563eb",
+  "#334155",
+  "#b91c1c",
+  "#c9952a",
+];
 
 function InvoiceSettingsTab() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [company, setCompany] = useState<PublicCompany | null>(null);
 
+  // Toggles for visual elements
+  const [showPreviousBalance, setShowPreviousBalance] = useState(true);
+  const [showSignatures, setShowSignatures] = useState(true);
+
+  // Legacy Excel template state
   const [templateAnalysis, setTemplateAnalysis] =
     useState<ExcelTemplateAnalysis | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
@@ -504,36 +548,39 @@ function InvoiceSettingsTab() {
       invoicePrefix: "INV",
       nextNumber: 1,
       defaultDueDays: 30,
-      invoiceFooter: "",
-      termsConditions: "",
-      invoiceDesign: "classic",
+      invoiceFooter: "مال کی واپسی یا تبدیلی صرف 3 دن کے اندر بل کے ساتھ ممکن ہے۔",
+      termsConditions: "1. Goods once sold can be exchanged within 3 days with original receipt.\n2. Payment is strictly due upon receipt.",
+      invoiceDesign: "wholesale_a4",
       designAccentColor: "#1d2b54",
       showQr: true,
-      disclaimer: "",
-      copyright: "",
-      bankDetails: "",
+      disclaimer: "Goods once sold are not returnable.",
+      copyright: "© 2026 Ijaz & Company",
+      bankDetails: "Meezan Bank · A/C: 0101-0102938471 · Title: Ijaz & Company",
     },
   });
 
   useEffect(() => {
-    getInvoiceSettings()
-      .then((s) => {
+    Promise.all([getInvoiceSettings(), getCompany().catch(() => null)])
+      .then(([s, c]) => {
+        let design = s.invoiceDesign ?? "wholesale_a4";
+        if (design === "classic") design = "wholesale_a4";
         form.setValues({
           companyNtn: s.companyNtn ?? "",
           companyStrn: s.companyStrn ?? "",
           companyCnic: s.companyCnic ?? "",
-          invoicePrefix: s.invoicePrefix,
-          nextNumber: s.nextNumber,
-          defaultDueDays: s.defaultDueDays,
+          invoicePrefix: s.invoicePrefix || "INV",
+          nextNumber: s.nextNumber || 1,
+          defaultDueDays: s.defaultDueDays || 30,
           invoiceFooter: s.invoiceFooter ?? "",
           termsConditions: s.termsConditions ?? "",
-          invoiceDesign: s.invoiceDesign,
-          designAccentColor: s.designAccentColor,
-          showQr: s.showQr,
+          invoiceDesign: design,
+          designAccentColor: s.designAccentColor || "#1d2b54",
+          showQr: s.showQr ?? true,
           disclaimer: s.disclaimer ?? "",
           copyright: s.copyright ?? "",
           bankDetails: s.bankDetails ?? "",
         });
+        if (c) setCompany(c);
         setLoading(false);
       })
       .catch(() => setLoading(false));
@@ -545,7 +592,7 @@ function InvoiceSettingsTab() {
     setSuccess(null);
     try {
       await updateInvoiceSettings(values);
-      setSuccess("Invoice settings updated.");
+      setSuccess("Invoice format & settings successfully saved / سیٹنگز محفوظ ہو گئیں");
     } catch (err) {
       setError(getErrorMessage(err));
     } finally {
@@ -610,196 +657,774 @@ function InvoiceSettingsTab() {
     }
   }
 
-  if (loading) return <Text c="dimmed">Loading...</Text>;
+  function handleTestPrint() {
+    const isThermal = form.values.invoiceDesign === "thermal_80mm";
+    const isCompact = form.values.invoiceDesign === "compact_a5";
+    const accent = form.values.designAccentColor || "#1d2b54";
+    const compName = company?.name || "Ijaz & Company Traders";
+    const prefix = form.values.invoicePrefix || "INV";
+
+    const printHtml = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Invoice Test Print</title>
+  <style>
+    @page {
+      size: ${isThermal ? "80mm auto" : isCompact ? "A5 portrait" : "A4 portrait"};
+      margin: ${isThermal ? "2mm" : "12mm"};
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: ${isThermal ? "'Courier New', Courier, monospace" : "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"};
+      font-size: ${isThermal ? "11px" : "12px"};
+      color: #111827;
+      background: #fff;
+      padding: ${isThermal ? "4mm 2mm" : "0"};
+      line-height: 1.4;
+    }
+    .header {
+      border-bottom: 2px solid ${accent};
+      padding-bottom: 8px;
+      margin-bottom: 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+    }
+    .comp-title {
+      font-size: ${isThermal ? "15px" : "20px"};
+      font-weight: 800;
+      color: ${accent};
+    }
+    .meta { font-size: 11px; color: #4b5563; }
+    .inv-title { font-size: 16px; font-weight: 800; text-align: right; color: ${accent}; }
+    .customer-box {
+      background: #f9fafb;
+      padding: 8px 10px;
+      border: 1px solid #e5e7eb;
+      border-radius: 4px;
+      margin-bottom: 12px;
+    }
+    table { width: 100%; border-collapse: collapse; margin: 10px 0; }
+    th {
+      background: ${isThermal ? "transparent" : accent};
+      color: ${isThermal ? "#111" : "#fff"};
+      border-bottom: ${isThermal ? "1px solid #000" : "none"};
+      padding: 6px 8px;
+      text-align: left;
+      font-size: 11px;
+      font-weight: 700;
+    }
+    td { padding: 6px 8px; border-bottom: 1px solid #e5e7eb; font-size: 11px; }
+    .num { text-align: right; font-variant-numeric: tabular-nums; }
+    .totals { margin-top: 10px; margin-left: auto; width: ${isThermal ? "100%" : "280px"}; }
+    .totals-row { display: flex; justify-content: space-between; padding: 3px 0; font-size: 11px; }
+    .totals-row.grand {
+      font-size: 14px;
+      font-weight: 800;
+      border-top: 2px solid #111;
+      padding-top: 6px;
+      margin-top: 4px;
+      color: ${accent};
+    }
+    .signatures {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 36px;
+      padding-top: 8px;
+    }
+    .sig-line {
+      width: 140px;
+      border-top: 1px dashed #6b7280;
+      text-align: center;
+      font-size: 10px;
+      padding-top: 4px;
+      color: #374151;
+    }
+    .footer {
+      margin-top: 20px;
+      text-align: center;
+      font-size: 10px;
+      color: #9ca3af;
+      border-top: 1px solid #e5e7eb;
+      padding-top: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <div class="comp-title">${compName}</div>
+      <div class="meta">${company?.address || "Circular Road, Shah Alam, Lahore"}</div>
+      <div class="meta">Phone: ${company?.phone || "+92 300 1234567"}${form.values.companyNtn ? " · NTN: " + form.values.companyNtn : ""}</div>
+    </div>
+    ${!isThermal ? `
+    <div style="text-align: right;">
+      <div class="inv-title">INVOICE</div>
+      <div style="font-weight: 700; font-size: 12px;"># ${prefix}-000142</div>
+      <div class="meta">Date: ${new Date().toLocaleDateString("en-PK")}</div>
+    </div>` : ""}
+  </div>
+
+  ${isThermal ? `
+    <div style="text-align:center; font-weight:700; margin-bottom:8px; font-size:11px;">
+      INVOICE: ${prefix}-000142 · ${new Date().toLocaleDateString("en-PK")}
+    </div>
+  ` : ""}
+
+  <div class="customer-box">
+    <div style="font-weight: 700; font-size: 10px; text-transform: uppercase; color: #6b7280; margin-bottom: 2px;">Billed To:</div>
+    <div style="font-weight: 700; font-size: 12px;">Al-Madina General Store (Chaudhry Akram)</div>
+    <div style="font-size: 11px; color: #4b5563;">Badami Bagh, Lahore · Phone: 0300-9876543</div>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th style="width: 24px;">#</th>
+        <th>Description</th>
+        <th class="num" style="width: 50px;">Qty</th>
+        <th class="num" style="width: 80px;">Rate</th>
+        <th class="num" style="width: 90px;">Total</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>1</td>
+        <td>Dalda Cooking Oil 5L Can</td>
+        <td class="num">10</td>
+        <td class="num">2,850.00</td>
+        <td class="num">28,500.00</td>
+      </tr>
+      <tr>
+        <td>2</td>
+        <td>Tapal Danedar Tea 450g Pack</td>
+        <td class="num">24</td>
+        <td class="num">620.00</td>
+        <td class="num">14,880.00</td>
+      </tr>
+      <tr>
+        <td>3</td>
+        <td>National Super Kernel Basmati Rice 5kg</td>
+        <td class="num">15</td>
+        <td class="num">1,450.00</td>
+        <td class="num">21,750.00</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="totals">
+    <div class="totals-row"><span>Subtotal:</span><span class="num">Rs. 65,130.00</span></div>
+    <div class="totals-row"><span>Trade Discount (2%):</span><span class="num">-Rs. 1,302.60</span></div>
+    <div class="totals-row"><span>GST (18%):</span><span class="num">Rs. 11,488.93</span></div>
+    <div class="totals-row grand"><span>Total Payable:</span><span class="num">Rs. 75,316.33</span></div>
+    ${showPreviousBalance ? `
+      <div class="totals-row" style="margin-top: 6px; color: #dc2626; font-weight: 700;">
+        <span>Previous Balance:</span><span class="num">Rs. 18,400.00</span>
+      </div>
+      <div class="totals-row" style="font-weight: 800; border-top: 1px dashed #ccc; padding-top: 4px;">
+        <span>Net Total Due:</span><span class="num">Rs. 93,716.33</span>
+      </div>
+    ` : ""}
+  </div>
+
+  ${showSignatures ? `
+    <div class="signatures">
+      <div class="sig-line">Customer Signature</div>
+      <div class="sig-line">Authorized Signature</div>
+    </div>
+  ` : ""}
+
+  <div class="footer">
+    <div>${form.values.invoiceFooter || "Thank you for your business!"}</div>
+    <div>${form.values.termsConditions || "Goods once sold can be exchanged within 7 days with original invoice."}</div>
+  </div>
+</body>
+</html>`;
+
+    printHtmlContent(printHtml);
+  }
+
+  if (loading) return <Text c="dimmed">Loading invoice settings...</Text>;
+
+  const activePreset = INVOICE_PRESETS.find((p) => p.id === form.values.invoiceDesign) || INVOICE_PRESETS[0];
 
   return (
-    <Card withBorder padding="lg" maw={700}>
-      <Title order={5} mb="md">
-        Invoice Settings
-      </Title>
-      <form onSubmit={form.onSubmit(handleSave)}>
-        <Stack gap="md">
-          <Title order={6}>FBR Tax Information</Title>
-          <SimpleGrid cols={3}>
-            <TextInput
-              label="Company NTN"
-              placeholder="1234567-8"
-              {...form.getInputProps("companyNtn")}
-            />
-            <TextInput
-              label="Company STRN"
-              placeholder="STRN number"
-              {...form.getInputProps("companyStrn")}
-            />
-            <TextInput
-              label="Owner CNIC"
-              placeholder="12345-1234567-1"
-              {...form.getInputProps("companyCnic")}
-            />
-          </SimpleGrid>
-
-          <Divider />
-          <Title order={6}>Invoice Numbering</Title>
-          <SimpleGrid cols={3}>
-            <TextInput
-              label="Prefix"
-              placeholder="INV"
-              {...form.getInputProps("invoicePrefix")}
-            />
-            <NumberInput
-              label="Next Number"
-              min={1}
-              {...form.getInputProps("nextNumber")}
-            />
-            <NumberInput
-              label="Default Due Days"
-              min={1}
-              {...form.getInputProps("defaultDueDays")}
-            />
-          </SimpleGrid>
-
-          <Divider />
-          <Title order={6}>Invoice Design</Title>
-          <SimpleGrid cols={2}>
-            <Select
-              label="Design"
-              data={[
-                { value: "classic", label: "Classic" },
-                { value: "modern", label: "Modern" },
-                { value: "minimal", label: "Minimal" },
-                { value: "excel", label: "Excel Template" },
-              ]}
-              {...form.getInputProps("invoiceDesign")}
-            />
-            <ColorInput
-              label="Accent Color"
-              format="hex"
-              swatches={[
-                "#1d2b54",
-                "#2563eb",
-                "#0d9488",
-                "#c9952a",
-                "#b91c1c",
-                "#374151",
-              ]}
-              {...form.getInputProps("designAccentColor")}
-            />
-          </SimpleGrid>
-          <Switch
-            label="Show FBR QR code on finalized invoices"
-            {...form.getInputProps("showQr", { type: "checkbox" })}
-          />
-
-          <Divider />
-          <Title order={6}>Invoice Content</Title>
-          <TextInput
-            label="Footer Text"
-            placeholder="Thank you for your business!"
-            {...form.getInputProps("invoiceFooter")}
-          />
-          <Textarea
-            label="Terms & Conditions"
-            placeholder="Payment due within 30 days..."
-            autosize
-            minRows={2}
-            {...form.getInputProps("termsConditions")}
-          />
-          <Textarea
-            label="Bank Details"
-            placeholder="Meezan Bank · A/C 0101-1234567 · IBAN PK00MEZN..."
-            autosize
-            minRows={2}
-            {...form.getInputProps("bankDetails")}
-          />
-          <Textarea
-            label="Disclaimer"
-            placeholder="Goods once sold are not returnable..."
-            autosize
-            minRows={2}
-            {...form.getInputProps("disclaimer")}
-          />
-          <TextInput
-            label="Copyright"
-            placeholder="© 2026 Ijaz & Company"
-            {...form.getInputProps("copyright")}
-          />
-
-          <Divider />
-          <Title order={6}>Excel Template</Title>
+    <Box pb={40}>
+      {/* Title Header with Unified Action Bar */}
+      <Group justify="space-between" align="center" mb={24} wrap="wrap" gap="md">
+        <Stack gap={2}>
+          <Title order={3} style={{ letterSpacing: -0.3 }}>
+            Invoice & Print Layout
+          </Title>
           <Text size="sm" c="dimmed">
-            Upload an .xlsx invoice layout and the system fills placeholders
-            like <Kbd>{"{{customer_name}}"}</Kbd>, <Kbd>{"{{invoice_number}}"}</Kbd>,{" "}
-            <Kbd>{"{{grand_total}}"}</Kbd> and <Kbd>{"{{items_1_name}}"}</Kbd>.
+            Configure paper specifications, print layout, and business credentials for counter sales.
           </Text>
-          <Group gap="sm">
-            <Button variant="outline" onClick={handleUploadTemplate} loading={uploading}>
-              Upload Template
-            </Button>
-            <Button variant="light" onClick={handleAnalyzeTemplate} loading={analyzing}>
-              Analyze Template
-            </Button>
-            <Button
-              variant="subtle"
-              onClick={handleDownloadSampleTemplate}
-              loading={downloadingSample}
-            >
-              Download Sample
-            </Button>
-          </Group>
-          {templateAnalysis && (
-            <Stack gap={6}>
-              {templateAnalysis.unknownTokens.length > 0 && (
-                <Alert color="red" title="Unknown placeholders found">
-                  {templateAnalysis.unknownTokens.join(", ")}
-                </Alert>
-              )}
-              {templateAnalysis.missingCommonTokens.length > 0 && (
-                <Alert color="yellow" title="Recommended placeholders missing">
-                  {templateAnalysis.missingCommonTokens.join(", ")}
-                </Alert>
-              )}
-              {templateAnalysis.knownTokens.length === 0 &&
-                templateAnalysis.unknownTokens.length === 0 &&
-                templateAnalysis.missingCommonTokens.length > 0 && (
-                  <Alert color="gray" title="No placeholders detected">
-                    Add placeholders like {"{{customer_name}}"} to your template
-                    cells.
-                  </Alert>
-                )}
-              {templateAnalysis.knownTokens.length > 0 &&
-                templateAnalysis.unknownTokens.length === 0 &&
-                templateAnalysis.missingCommonTokens.length === 0 && (
-                  <Alert color="green" title="Template looks good">
-                    All detected placeholders are recognised.
-                  </Alert>
-                )}
-              {templateAnalysis.hasTemplate && templateAnalysis.knownTokens.length > 0 && (
-                <Text size="sm" c="dimmed">
-                  Recognised: {templateAnalysis.knownTokens.length} placeholder
-                  token(s).
-                </Text>
-              )}
-            </Stack>
-          )}
-
-          {error && (
-            <Text c="red" size="sm">
-              {error}
-            </Text>
-          )}
-          {success && (
-            <Text c="green" size="sm">
-              {success}
-            </Text>
-          )}
-          <Group justify="flex-end">
-            <Button type="submit" loading={saving}>
-              Save Settings
-            </Button>
-          </Group>
         </Stack>
-      </form>
-    </Card>
+
+        <Group gap="xs">
+          <Button
+            variant="default"
+            leftSection={<Printer size={16} />}
+            onClick={handleTestPrint}
+          >
+            Test Print
+          </Button>
+          <Button
+            type="button"
+            loading={saving}
+            onClick={() => form.onSubmit(handleSave)()}
+            style={{
+              background: form.values.designAccentColor || "var(--app-accent)",
+              color: "#fff",
+            }}
+          >
+            Save Changes
+          </Button>
+        </Group>
+      </Group>
+
+      {error && (
+        <Alert color="red" variant="light" radius="md" icon={<AlertTriangle size={16} />} mb="md">
+          {error}
+        </Alert>
+      )}
+
+      {success && (
+        <Alert color="green" variant="light" radius="md" icon={<CheckCircle size={16} />} mb="md">
+          {success}
+        </Alert>
+      )}
+
+      {/* 2-Column Responsive Workspace */}
+      <SimpleGrid cols={{ base: 1, lg: 2 }} spacing={24} style={{ alignItems: "flex-start" }}>
+        {/* ==================== LEFT COLUMN: CONTROLS ==================== */}
+        <Stack gap={20}>
+          {/* Card 1: 3 Preset Cards */}
+          <Card withBorder padding="md" radius="md" style={{ background: "var(--app-surface)" }}>
+            <Title order={5} mb={4}>
+              1. Paper Format & Layout
+            </Title>
+            <Text size="xs" c="dimmed" mb={14}>
+              Select the paper dimension and layout corresponding to your shop printer:
+            </Text>
+
+            <Stack gap={10}>
+              {INVOICE_PRESETS.map((preset) => {
+                const isSelected = form.values.invoiceDesign === preset.id;
+                const IconComponent = preset.icon;
+                return (
+                  <Box
+                    key={preset.id}
+                    p={14}
+                    onClick={() => form.setFieldValue("invoiceDesign", preset.id)}
+                    style={{
+                      borderRadius: 8,
+                      border: isSelected
+                        ? `2px solid ${form.values.designAccentColor || "var(--app-accent)"}`
+                        : "1px solid var(--app-border)",
+                      background: isSelected
+                        ? "var(--app-accent-soft)"
+                        : "transparent",
+                      cursor: "pointer",
+                      transition: "border-color 0.15s ease, background 0.15s ease",
+                    }}
+                  >
+                    <Group justify="space-between" align="flex-start" wrap="nowrap">
+                      <Group gap={12} align="flex-start" wrap="nowrap">
+                        <ThemeIcon
+                          size={36}
+                          radius="md"
+                          style={{
+                            background: isSelected
+                              ? form.values.designAccentColor || "var(--app-accent)"
+                              : "var(--app-soft)",
+                            color: isSelected ? "#fff" : "var(--app-muted)",
+                          }}
+                        >
+                          <IconComponent size={18} />
+                        </ThemeIcon>
+                        <div>
+                          <Text fw={700} size="sm">
+                            {preset.name}
+                          </Text>
+                          <Text size="xs" c="dimmed" mt={2}>
+                            {preset.description}
+                          </Text>
+                        </div>
+                      </Group>
+
+                      <Badge
+                        variant={isSelected ? "filled" : "outline"}
+                        size="xs"
+                        style={{
+                          background: isSelected ? form.values.designAccentColor : undefined,
+                          color: isSelected ? "#fff" : undefined,
+                        }}
+                      >
+                        {preset.paperSize}
+                      </Badge>
+                    </Group>
+                  </Box>
+                );
+              })}
+            </Stack>
+          </Card>
+
+          {/* Card 2: Simple Toggles & Styling */}
+          <Card withBorder padding="md" radius="md" style={{ background: "var(--app-surface)" }}>
+            <Title order={5} mb={4}>
+              2. Optional Elements & Color
+            </Title>
+            <Text size="xs" c="dimmed" mb={14}>
+              Toggle layout sections to include on printed bills:
+            </Text>
+
+            <Stack gap={14}>
+              <Group justify="space-between">
+                <div>
+                  <Text size="sm" fw={600}>
+                    Show Previous Ledger Balance
+                  </Text>
+                  <Text size="xs" c="dimmed">
+                    Appends customer's outstanding balance to invoice total to show net balance due.
+                  </Text>
+                </div>
+                <Switch
+                  checked={showPreviousBalance}
+                  onChange={(e) => setShowPreviousBalance(e.currentTarget.checked)}
+                />
+              </Group>
+
+              <Divider />
+
+              <Group justify="space-between">
+                <div>
+                  <Text size="sm" fw={600}>
+                    Dual Signature Lines
+                  </Text>
+                  <Text size="xs" c="dimmed">
+                    Prints dedicated Customer and Authorized Signature acknowledgment lines.
+                  </Text>
+                </div>
+                <Switch
+                  checked={showSignatures}
+                  onChange={(e) => setShowSignatures(e.currentTarget.checked)}
+                />
+              </Group>
+
+              <Divider />
+
+              <Group justify="space-between">
+                <div>
+                  <Text size="sm" fw={600}>
+                    FBR Tax QR Verification Box
+                  </Text>
+                  <Text size="xs" c="dimmed">
+                    Prints digital verification box on finalized POS receipts.
+                  </Text>
+                </div>
+                <Switch
+                  {...form.getInputProps("showQr", { type: "checkbox" })}
+                />
+              </Group>
+
+              <Divider />
+
+              {/* Accent Color */}
+              <div>
+                <Text size="sm" fw={600} mb={8}>
+                  Accent Header Color
+                </Text>
+                <Group gap={10}>
+                  {ACCENT_SWATCHES.map((color) => (
+                    <Box
+                      key={color}
+                      onClick={() => form.setFieldValue("designAccentColor", color)}
+                      style={{
+                        width: 28,
+                        height: 28,
+                        borderRadius: "50%",
+                        background: color,
+                        cursor: "pointer",
+                        border: form.values.designAccentColor === color ? "3px solid #fff" : "2px solid transparent",
+                        boxShadow: form.values.designAccentColor === color ? `0 0 0 2px ${color}` : "none",
+                        transition: "all 0.15s ease",
+                      }}
+                    />
+                  ))}
+                </Group>
+              </div>
+            </Stack>
+          </Card>
+
+          {/* Card 3: Business & Payment Info */}
+          <Card withBorder padding="md" radius="md" style={{ background: "var(--app-surface)" }}>
+            <Title order={5} mb={4}>
+              3. Business, Tax & Terms
+            </Title>
+            <Text size="xs" c="dimmed" mb={14}>
+              Tax registration and commercial terms printed on documents:
+            </Text>
+
+            <Stack gap="sm">
+              <SimpleGrid cols={3}>
+                <TextInput
+                  label="Prefix"
+                  placeholder="INV"
+                  {...form.getInputProps("invoicePrefix")}
+                />
+                <NumberInput
+                  label="Next Number"
+                  min={1}
+                  {...form.getInputProps("nextNumber")}
+                />
+                <NumberInput
+                  label="Due Days"
+                  min={1}
+                  {...form.getInputProps("defaultDueDays")}
+                />
+              </SimpleGrid>
+
+              <SimpleGrid cols={3}>
+                <TextInput
+                  label="Company NTN"
+                  placeholder="1234567-8"
+                  {...form.getInputProps("companyNtn")}
+                />
+                <TextInput
+                  label="Company STRN"
+                  placeholder="STRN number"
+                  {...form.getInputProps("companyStrn")}
+                />
+                <TextInput
+                  label="Owner CNIC"
+                  placeholder="12345-1234567-1"
+                  {...form.getInputProps("companyCnic")}
+                />
+              </SimpleGrid>
+
+              <TextInput
+                label="Footer Note"
+                placeholder="Thank you for your business!"
+                {...form.getInputProps("invoiceFooter")}
+              />
+
+              <Textarea
+                label="Terms & Conditions"
+                placeholder="Goods once sold can be exchanged within 7 days with original invoice."
+                autosize
+                minRows={2}
+                {...form.getInputProps("termsConditions")}
+              />
+
+              <Textarea
+                label="Bank & Payment Details"
+                placeholder="Meezan Bank · Title: Ijaz & Company · A/C: 0101-1234567"
+                autosize
+                minRows={2}
+                {...form.getInputProps("bankDetails")}
+              />
+            </Stack>
+          </Card>
+
+          {/* Card 4 (Collapsible): Advanced Custom Excel (.xlsx) */}
+          <Accordion variant="separated" radius="md">
+            <Accordion.Item value="excel-template">
+              <Accordion.Control icon={<Upload size={16} />}>
+                <Text size="sm" fw={600}>
+                  Advanced: Custom Excel Template (.xlsx)
+                </Text>
+              </Accordion.Control>
+              <Accordion.Panel>
+                <Stack gap="sm">
+                  <Text size="xs" c="dimmed">
+                    If you have a specialized pre-printed stationery template designed in Excel:
+                  </Text>
+                  <Group gap="xs">
+                    <Button size="xs" variant="outline" onClick={handleUploadTemplate} loading={uploading}>
+                      Upload .xlsx
+                    </Button>
+                    <Button size="xs" variant="light" onClick={handleAnalyzeTemplate} loading={analyzing}>
+                      Analyze Placeholders
+                    </Button>
+                    <Button size="xs" variant="subtle" onClick={handleDownloadSampleTemplate} loading={downloadingSample}>
+                      Download Sample
+                    </Button>
+                  </Group>
+
+                  {templateAnalysis && (
+                    <Box mt={6}>
+                      {templateAnalysis.hasTemplate ? (
+                        <Alert color="green" p="xs">
+                          Template loaded: {templateAnalysis.knownTokens.length} detected tokens.
+                        </Alert>
+                      ) : (
+                        <Alert color="gray" p="xs">
+                          No Excel template currently uploaded.
+                        </Alert>
+                      )}
+                    </Box>
+                  )}
+                </Stack>
+              </Accordion.Panel>
+            </Accordion.Item>
+          </Accordion>
+        </Stack>
+
+        {/* ==================== RIGHT COLUMN: LIVE PREVIEW ==================== */}
+        <Box style={{ position: "sticky", top: 16 }}>
+          <Card
+            withBorder
+            padding="lg"
+            radius="md"
+            style={{
+              background: "var(--app-surface)",
+              borderColor: "var(--app-border)",
+            }}
+          >
+            <Group justify="space-between" align="center" mb={16}>
+              <Group gap={8}>
+                <Eye size={16} color="var(--app-muted)" />
+                <Text fw={700} size="sm">
+                  Live Print Preview
+                </Text>
+              </Group>
+
+              <Badge
+                size="sm"
+                variant="light"
+                style={{
+                  color: form.values.designAccentColor || "var(--app-accent)",
+                }}
+              >
+                {activePreset.name}
+              </Badge>
+            </Group>
+
+            {/* Recessed Desk Surface Container */}
+            <Box
+              p={form.values.invoiceDesign === "thermal_80mm" ? 16 : 24}
+              style={{
+                background: "var(--app-soft)",
+                borderRadius: 8,
+                border: "1px solid var(--app-border)",
+              }}
+            >
+              {/* Simulated Paper Sheet */}
+              <Box
+                p={form.values.invoiceDesign === "thermal_80mm" ? 16 : 24}
+                style={{
+                  background: "#ffffff",
+                  color: "#111827",
+                  borderRadius: form.values.invoiceDesign === "thermal_80mm" ? 2 : 4,
+                  border: form.values.invoiceDesign === "thermal_80mm"
+                    ? "1px dashed #9ca3af"
+                    : "1px solid #e5e7eb",
+                  maxWidth: form.values.invoiceDesign === "thermal_80mm" ? 300 : "100%",
+                  margin: "0 auto",
+                  fontFamily: form.values.invoiceDesign === "thermal_80mm"
+                    ? "'Courier New', Courier, monospace"
+                    : "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+                  fontSize: form.values.invoiceDesign === "thermal_80mm" ? 11 : 12,
+                  boxShadow: "0 2px 10px rgba(0, 0, 0, 0.08)",
+                }}
+              >
+                {/* Header */}
+                <Box
+                  pb={10}
+                  mb={12}
+                  style={{
+                    borderBottom: `2px solid ${form.values.designAccentColor || "#1d2b54"}`,
+                    textAlign: form.values.invoiceDesign === "thermal_80mm" ? "center" : "left",
+                  }}
+                >
+                  <Group justify={form.values.invoiceDesign === "thermal_80mm" ? "center" : "space-between"} align="flex-start">
+                    <div>
+                      <Text
+                        fw={800}
+                        size={form.values.invoiceDesign === "thermal_80mm" ? "md" : "lg"}
+                        style={{ color: form.values.designAccentColor || "#1d2b54", letterSpacing: -0.3 }}
+                      >
+                        {company?.name || "Ijaz & Company Traders"}
+                      </Text>
+                      <Text size="xs" c="dimmed">
+                        {company?.phone || "+92 300 1234567"} · {company?.address || "Circular Road, Shah Alam, Lahore"}
+                      </Text>
+                      {form.values.companyNtn && (
+                        <Text size="xs" c="dimmed">NTN: {form.values.companyNtn}</Text>
+                      )}
+                    </div>
+
+                    {form.values.invoiceDesign !== "thermal_80mm" && (
+                      <Box style={{ textAlign: "right" }}>
+                        <Text fw={800} size="md" style={{ color: form.values.designAccentColor || "#1d2b54" }}>
+                          INVOICE
+                        </Text>
+                        <Text size="xs" fw={700}>
+                          {form.values.invoicePrefix}-000142
+                        </Text>
+                        <Text size="xs" c="dimmed">
+                          Date: {new Date().toLocaleDateString("en-PK")}
+                        </Text>
+                      </Box>
+                    )}
+                  </Group>
+
+                  {form.values.invoiceDesign === "thermal_80mm" && (
+                    <Box mt={6} style={{ borderTop: "1px dashed #9ca3af", paddingTop: 4 }}>
+                      <Text size="xs" fw={700}>
+                        INVOICE: {form.values.invoicePrefix}-000142 · {new Date().toLocaleDateString("en-PK")}
+                      </Text>
+                    </Box>
+                  )}
+                </Box>
+
+                {/* Customer Box */}
+                <Box
+                  p={8}
+                  mb={12}
+                  style={{
+                    background: "#f9fafb",
+                    borderRadius: 4,
+                    border: "1px solid #f3f4f6",
+                  }}
+                >
+                  <Text size="xs" fw={700} c="dimmed" style={{ textTransform: "uppercase" }}>
+                    Billed To:
+                  </Text>
+                  <Text size="xs" fw={700}>
+                    Al-Madina General Store (Chaudhry Akram)
+                  </Text>
+                  <Text size="xs" c="dimmed">
+                    0300-9876543 · Badami Bagh, Lahore
+                  </Text>
+                </Box>
+
+                {/* Sample Items Table */}
+                <Table
+                  striped
+                  highlightOnHover={false}
+                  mb={12}
+                  styles={{
+                    table: { fontSize: form.values.invoiceDesign === "thermal_80mm" ? 10 : 11 },
+                    th: {
+                      background: form.values.invoiceDesign === "thermal_80mm"
+                        ? "transparent"
+                        : form.values.designAccentColor || "#1d2b54",
+                      color: form.values.invoiceDesign === "thermal_80mm" ? "#000" : "#fff",
+                      padding: form.values.invoiceDesign === "thermal_80mm" ? "4px 2px" : "6px 8px",
+                    },
+                    td: { padding: form.values.invoiceDesign === "thermal_80mm" ? "4px 2px" : "6px 8px" },
+                  }}
+                >
+                  <Table.Thead>
+                    <Table.Tr>
+                      <Table.Th>#</Table.Th>
+                      <Table.Th>Description</Table.Th>
+                      <Table.Th style={{ textAlign: "right" }}>Qty</Table.Th>
+                      <Table.Th style={{ textAlign: "right" }}>Rate</Table.Th>
+                      <Table.Th style={{ textAlign: "right" }}>Amount</Table.Th>
+                    </Table.Tr>
+                  </Table.Thead>
+                  <Table.Tbody>
+                    <Table.Tr>
+                      <Table.Td>1</Table.Td>
+                      <Table.Td>Dalda Cooking Oil 5L Can</Table.Td>
+                      <Table.Td style={{ textAlign: "right" }}>10</Table.Td>
+                      <Table.Td style={{ textAlign: "right" }}>2,850.00</Table.Td>
+                      <Table.Td style={{ textAlign: "right" }}>28,500.00</Table.Td>
+                    </Table.Tr>
+                    <Table.Tr>
+                      <Table.Td>2</Table.Td>
+                      <Table.Td>Tapal Danedar Tea 450g Pack</Table.Td>
+                      <Table.Td style={{ textAlign: "right" }}>24</Table.Td>
+                      <Table.Td style={{ textAlign: "right" }}>620.00</Table.Td>
+                      <Table.Td style={{ textAlign: "right" }}>14,880.00</Table.Td>
+                    </Table.Tr>
+                  </Table.Tbody>
+                </Table>
+
+                {/* Totals Breakdown */}
+                <Stack gap={3} align="flex-end" mb={12}>
+                  <Group justify="space-between" style={{ width: form.values.invoiceDesign === "thermal_80mm" ? "100%" : 220 }}>
+                    <Text size="xs">Subtotal:</Text>
+                    <Text size="xs" fw={600}>Rs. 43,380.00</Text>
+                  </Group>
+
+                  {showPreviousBalance && (
+                    <Group justify="space-between" style={{ width: form.values.invoiceDesign === "thermal_80mm" ? "100%" : 220 }}>
+                      <Text size="xs" c="red" fw={600}>Previous Balance:</Text>
+                      <Text size="xs" c="red" fw={700}>Rs. 8,500.00</Text>
+                    </Group>
+                  )}
+
+                  <Group
+                    justify="space-between"
+                    style={{
+                      width: form.values.invoiceDesign === "thermal_80mm" ? "100%" : 220,
+                      borderTop: `2px solid ${form.values.designAccentColor || "#1d2b54"}`,
+                      paddingTop: 4,
+                    }}
+                  >
+                    <Text size="sm" fw={800} style={{ color: form.values.designAccentColor || "#1d2b54" }}>
+                      Total Payable:
+                    </Text>
+                    <Text size="sm" fw={800} style={{ color: form.values.designAccentColor || "#1d2b54" }}>
+                      Rs. {showPreviousBalance ? "51,880.00" : "43,380.00"}
+                    </Text>
+                  </Group>
+                </Stack>
+
+                {/* FBR QR Preview */}
+                {form.values.showQr && (
+                  <Box
+                    p={6}
+                    mb={12}
+                    style={{
+                      border: "1px dashed #d97706",
+                      background: "#fef3c7",
+                      borderRadius: 4,
+                      textAlign: "center",
+                    }}
+                  >
+                    <Text size="10px" fw={700} c="#92400e">
+                      [ FBR Digital Invoice QR Code Verified ]
+                    </Text>
+                  </Box>
+                )}
+
+                {/* Signatures */}
+                {showSignatures && (
+                  <Group justify="space-between" mt={24} pt={8}>
+                    <Box style={{ textAlign: "center", width: 120 }}>
+                      <Box style={{ borderTop: "1px dashed #6b7280", paddingTop: 2 }} />
+                      <Text size="9px" c="dimmed">Customer Signature</Text>
+                    </Box>
+                    <Box style={{ textAlign: "center", width: 120 }}>
+                      <Box style={{ borderTop: "1px dashed #6b7280", paddingTop: 2 }} />
+                      <Text size="9px" c="dimmed">Authorized Signature</Text>
+                    </Box>
+                  </Group>
+                )}
+
+                {/* Footer */}
+                <Box mt={16} pt={8} style={{ borderTop: "1px solid #f3f4f6", textAlign: "center" }}>
+                  <Text size="9px" c="dimmed">
+                    {form.values.invoiceFooter || "Goods once sold can be exchanged within 7 days with original invoice."}
+                  </Text>
+                  {form.values.bankDetails && (
+                    <Text size="8px" c="dimmed" mt={2}>
+                      {form.values.bankDetails}
+                    </Text>
+                  )}
+                </Box>
+              </Box>
+            </Box>
+          </Card>
+        </Box>
+      </SimpleGrid>
+    </Box>
   );
 }
 

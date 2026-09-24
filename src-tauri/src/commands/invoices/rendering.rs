@@ -530,6 +530,12 @@ fn build_invoice_html(doc: &InvoiceDoc) -> String {
     vals.insert("amount_paid_display".to_string(), fmt_paisa(doc.invoice.amount_paid));
     vals.insert("balance_due_display".to_string(), fmt_paisa(doc.invoice.balance_due));
 
+    let signature_box_html = r#"<div class="signature-box">
+        <div class="signature-line">Customer Signature</div>
+        <div class="signature-line">Authorized Signature</div>
+    </div>"#.to_string();
+    vals.insert("signature_box_html".to_string(), signature_box_html);
+
     let template = r#"<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -621,11 +627,82 @@ fn build_invoice_html(doc: &InvoiceDoc) -> String {
         body.minimal .info-box { border: none; border-bottom: 1px solid #eee; border-radius: 0; padding: 8px 2px; }
         body.minimal .totals-row.grand { color: #222; border-top: 1px solid #222; }
         body.minimal .status-badge { background: #333 !important; }
+        .signature-box {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 36px;
+            padding-top: 8px;
+            font-size: 11px;
+        }
+        .signature-line {
+            border-top: 1px dashed #777;
+            width: 180px;
+            text-align: center;
+            padding-top: 4px;
+            color: #555;
+        }
+
+        /* design: wholesale_a4 */
+        body.wholesale_a4 { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        body.wholesale_a4 .sheet { max-width: 860px; padding: 24px 32px; border: 1px solid #ddd; }
+        body.wholesale_a4 table.items th { background: var(--accent); color: #fff; font-size: 11px; text-transform: uppercase; }
+
+        /* design: thermal_80mm (POS slip) */
+        body.thermal_80mm, body.thermal {
+            font-family: 'Courier New', Courier, monospace, sans-serif;
+            font-size: 11px;
+            color: #000;
+            background: #e5e7eb;
+        }
+        body.thermal_80mm .sheet, body.thermal .sheet {
+            max-width: 80mm;
+            width: 80mm;
+            padding: 6mm 4mm;
+            margin: 10px auto;
+            border-radius: 0;
+            border: 1px dashed #999;
+            box-shadow: none;
+            background: #fff;
+        }
+        body.thermal_80mm .inv-header, body.thermal .inv-header {
+            flex-direction: column;
+            align-items: center;
+            text-align: center;
+            border-bottom: 1px dashed #000;
+            padding-bottom: 8px;
+            gap: 4px;
+        }
+        body.thermal_80mm .brand .company-name, body.thermal .brand .company-name { font-size: 16px; font-weight: 900; }
+        body.thermal_80mm .invoice-title, body.thermal .invoice-title { font-size: 13px; text-align: center; margin-top: 4px; }
+        body.thermal_80mm .invoice-meta, body.thermal .invoice-meta { text-align: center; font-size: 10px; }
+        body.thermal_80mm .parties, body.thermal .parties { grid-template-columns: 1fr; gap: 6px; }
+        body.thermal_80mm .info-box, body.thermal .info-box { border: 1px dashed #aaa; padding: 6px; font-size: 10px; border-radius: 0; }
+        body.thermal_80mm table.items, body.thermal table.items { font-size: 10px; }
+        body.thermal_80mm table.items th, body.thermal table.items th { background: transparent; color: #000; border-bottom: 1px solid #000; padding: 4px 2px; }
+        body.thermal_80mm table.items td, body.thermal table.items td { padding: 4px 2px; border-bottom: 1px dotted #ccc; }
+        body.thermal_80mm .totals-box, body.thermal .totals-box { width: 100%; font-size: 11px; }
+        body.thermal_80mm .signature-box, body.thermal .signature-box { display: flex; justify-content: space-between; margin-top: 24px; font-size: 9px; }
+        body.thermal_80mm .signature-line, body.thermal .signature-line { width: 100px; font-size: 9px; }
+
+        /* design: compact_a5 */
+        body.compact_a5 { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; font-size: 11px; }
+        body.compact_a5 .sheet { max-width: 620px; padding: 16px 22px; }
+        body.compact_a5 .inv-header { padding-bottom: 8px; margin-bottom: 10px; }
+        body.compact_a5 .company-name { font-size: 18px; }
+        body.compact_a5 table.items th { padding: 5px 6px; font-size: 10px; }
+        body.compact_a5 table.items td { padding: 5px 6px; font-size: 10px; }
+        body.compact_a5 .totals-box { width: 220px; font-size: 11px; }
 
         @media print {
             body { background: #fff; padding: 0; }
-            .sheet { margin: 0; border-radius: 0; box-shadow: none; }
+            .sheet { margin: 0; border: none; border-radius: 0; box-shadow: none; }
             .no-print, .print-bar { display: none !important; }
+            body.thermal_80mm .sheet, body.thermal .sheet {
+                width: 100% !important;
+                max-width: 100% !important;
+                padding: 0 !important;
+                border: none !important;
+            }
         }
     </style>
 </head>
@@ -707,6 +784,8 @@ fn build_invoice_html(doc: &InvoiceDoc) -> String {
 
         <div class="terms-block">{{terms_html}}</div>
 
+        {{signature_box_html}}
+
         <footer class="inv-footer">
             <div>{{invoice_footer}}</div>
             {{bank_html}}
@@ -747,7 +826,7 @@ pub async fn generate_invoice_html(
     let path_str = file_path.to_string_lossy().to_string();
     open_with_default(&app_handle, &path_str, "invoice");
 
-    Ok(path_str)
+    Ok(html)
 }
 
 /// Opens a file in the system default application.

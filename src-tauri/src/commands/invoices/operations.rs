@@ -1183,7 +1183,10 @@ pub async fn update_invoice_settings(
         default_due_days
     };
 
-    let design = if matches!(invoice_design.as_str(), "classic" | "modern" | "minimal" | "excel") {
+    let design = if matches!(
+        invoice_design.as_str(),
+        "classic" | "modern" | "minimal" | "excel" | "wholesale_a4" | "thermal_80mm" | "compact_a5"
+    ) {
         invoice_design
     } else {
         "classic".to_string()

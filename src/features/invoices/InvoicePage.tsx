@@ -73,7 +73,8 @@ import type {
 
 import { INK } from "../../theme";
 import { AppDateInput } from "../../components/AppDateInput";
-import { ReceiptText, Plus } from "lucide-react";
+import { ReceiptText, Plus, Printer } from "lucide-react";
+import { printHtmlContent } from "../../utils/printInvoice";
 import { reportOnboardingEvent } from "../../onboarding/bus";
 import { usePermissions } from "../permissions/PermissionsProvider";
 
@@ -896,7 +897,10 @@ function InvoiceDetailView({
 
   async function handlePrint() {
     try {
-      await generateInvoiceHtml(invoiceId);
+      const html = await generateInvoiceHtml(invoiceId);
+      if (html) {
+        printHtmlContent(html);
+      }
     } catch (err) {
       setError(getErrorMessage(err));
     }
@@ -968,17 +972,21 @@ function InvoiceDetailView({
             </Badge>
           )}
         </Group>
-        <Group>
+        <Group gap="xs">
+          <Button
+            variant="default"
+            leftSection={<Printer size={15} />}
+            onClick={handlePrint}
+          >
+            Print Invoice
+          </Button>
           <Menu position="bottom-end" withinPortal>
             <Menu.Target>
-              <Button variant="outline">🖨️ Export</Button>
+              <Button variant="outline">Export</Button>
             </Menu.Target>
             <Menu.Dropdown>
-              <Menu.Item onClick={handlePrint}>
-                Print / Save as PDF (browser)
-              </Menu.Item>
-              <Menu.Item onClick={handleExportPdf}>Export PDF file</Menu.Item>
-              <Menu.Item onClick={handleExportExcel}>Export Excel file</Menu.Item>
+              <Menu.Item onClick={handleExportPdf}>Export PDF File</Menu.Item>
+              <Menu.Item onClick={handleExportExcel}>Export Excel File</Menu.Item>
             </Menu.Dropdown>
           </Menu>
           {isFinalized && canEdit && (

@@ -42,7 +42,6 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
-  Loader2,
   X,
 } from "lucide-react";
 
@@ -53,7 +52,6 @@ import type { OnboardingStep } from "../onboarding/onboardingSteps";
 
 const OVERLAY_Z = 1200;
 const TARGET_Z = 1240;
-const PORTAL_Z = 1250;
 // The tooltip must be portaled DIRECTLY to <body> (not inside the overlay
 // container) and keep a z-index above TARGET_Z — otherwise the spotlighted
 // element (raised to 1240 at the body level, since #root creates no stacking
@@ -61,7 +59,6 @@ const PORTAL_Z = 1250;
 // (e.g. a table).
 const TOOLTIP_Z = 1500;
 
-const DIM = "rgba(5, 10, 28, 0.7)";
 const GOLD = "#C9952A";
 const SPOTLIGHT_RADIUS = 14;
 const TOOLTIP_MAX_W = 380;
@@ -371,115 +368,9 @@ export default function InteractiveTour({
       }}
     >
       <style>{TOUR_CSS}</style>
-      {/* CSS: raise Mantine portals (modals, dropdowns) above the overlay —
-          only in mandatory mode, where the overlay actually blocks the app */}
-      {!replay && (
-        <style>{`body[data-onboarding="true"] [data-mantine-portal]{z-index:${PORTAL_Z} !important;}`}</style>
-      )}
 
-      {/* Click-catchers: swallow clicks everywhere EXCEPT the target hole.
-          We do NOT rely on raising the target above the overlay — that breaks
-          when an animated ancestor (e.g. a framer-motion transform) creates
-          its own stacking context and traps the raised z-index. Four rects
-          around the target leave the target's own clicks untouched.
-          Replay mode never blocks — no catchers at all.
-
-          IMPORTANT: when the target is not yet measured (hasTarget=false) but
-          still exists in the DOM (e.g. the480ms measurement delay), we do NOT
-          show any blocking catcher — that would freeze the entire app. We only
-          block when we are certain the target genuinely does not exist in the DOM.
-          The deadlock guard in OnboardingProvider handles auto-completion for
-          permanently missing targets. */}
-      {!replay &&
-        (hasTarget && !step.center ? (
-        <>
-          <CatchRect
-            style={{
-              left: 0,
-              top: 0,
-              width: vw,
-              height: Math.max(0, rect.top),
-            }}
-          />
-          <CatchRect
-            style={{
-              left: 0,
-              top: Math.min(vh, rect.top + rect.height),
-              width: vw,
-              height: Math.max(0, vh - rect.top - rect.height),
-            }}
-          />
-          <CatchRect
-            style={{
-              left: 0,
-              top: rect.top,
-              width: Math.max(0, rect.left),
-              height: rect.height,
-            }}
-          />
-          <CatchRect
-            style={{
-              left: Math.min(vw, rect.left + rect.width),
-              top: rect.top,
-              width: Math.max(0, vw - rect.left - rect.width),
-              height: rect.height,
-            }}
-          />
-        </>
-      ) : null)}
-
-      {/* Visual dim: spotlight hole + gold ring around the target */}
-      {!replay && !modalOpen && hasTarget && !step.center && (
-        <>
-          <div
-            style={{
-              position: "absolute",
-              left: rect.left,
-              top: rect.top,
-              width: rect.width,
-              height: rect.height,
-              borderRadius: SPOTLIGHT_RADIUS,
-              boxShadow: `0 0 0 9999px ${DIM}`,
-              pointerEvents: "none",
-              transition: "all 0.35s cubic-bezier(0.22, 1, 0.36, 1)",
-            }}
-          />
-          <div
-            style={{
-              position: "absolute",
-              left: rect.left,
-              top: rect.top,
-              width: rect.width,
-              height: rect.height,
-              borderRadius: SPOTLIGHT_RADIUS,
-              border: `2px solid ${GOLD}`,
-              boxShadow: `0 0 0 4px rgba(201,149,42,0.28), 0 0 28px rgba(201,149,42,0.55)`,
-              pointerEvents: "none",
-              transition: "all 0.35s cubic-bezier(0.22, 1, 0.36, 1)",
-            }}
-          />
-        </>
-      )}
-
-      {/* Full dim when there is no target */}
-      {!replay && !modalOpen && !step.center && !hasTarget && (
-        <div
-          style={{
-            position: "absolute",
-            inset: 0,
-            background: DIM,
-            pointerEvents: "none",
-          }}
-        />
-      )}
-
-      {/* Full dim for centered steps */}
-      {!replay && !modalOpen && step.center && (
-        <div style={{ position: "absolute", inset: 0, background: DIM }} />
-      )}
-
-      {/* Replay mode: soft gold ring only — no dim, app stays fully usable */}
-      {replay && hasTarget && !step.center && (
+      {/* Gentle, non-blocking subtle highlight ring around the target element */}
+      {!modalOpen && hasTarget && !step.center && (
         <div
           style={{
             position: "absolute",
@@ -489,7 +380,7 @@ export default function InteractiveTour({
             height: rect.height,
             borderRadius: SPOTLIGHT_RADIUS,
             border: `2px solid ${GOLD}`,
-            boxShadow: `0 0 0 4px rgba(201,149,42,0.22), 0 0 22px rgba(201,149,42,0.45)`,
+            boxShadow: `0 0 0 4px rgba(201,149,42,0.24), 0 0 24px rgba(201,149,42,0.45)`,
             pointerEvents: "none",
             transition: "all 0.35s cubic-bezier(0.22, 1, 0.36, 1)",
           }}
@@ -504,23 +395,6 @@ export default function InteractiveTour({
       {overlay}
       {tooltipCard && createPortal(tooltipCard, document.body)}
     </>
-  );
-}
-
-// ==========================================
-// CLICK CATCHER RECT
-// ==========================================
-
-function CatchRect({ style }: { style: React.CSSProperties }) {
-  return (
-    <div
-      style={{
-        position: "absolute",
-        background: "transparent",
-        pointerEvents: "auto",
-        ...style,
-      }}
-    />
   );
 }
 
@@ -561,7 +435,7 @@ function TourCard({
   index,
   total,
   isLast,
-  force,
+  force: _force,
   taskComplete,
   onNext,
   onClose,
@@ -618,17 +492,15 @@ function TourCard({
               </Text>
             </Stack>
           </Group>
-          {!force && (
-            <ActionIcon
-              size="sm"
-              variant="subtle"
-              color="gray"
-              onClick={onClose}
-              aria-label={t("tour.skip")}
-            >
-              <X size={14} />
-            </ActionIcon>
-          )}
+          <ActionIcon
+            size="sm"
+            variant="subtle"
+            color="gray"
+            onClick={onClose}
+            aria-label={t("tour.skip")}
+          >
+            <X size={14} />
+          </ActionIcon>
         </Group>
 
         <Text size="sm" mt={10} style={{ color: "var(--app-text-soft)", lineHeight: 1.65 }}>
@@ -696,24 +568,17 @@ function TourCard({
           <ProgressDots index={index} total={total} />
           <Button
             size="sm"
-            rightSection={!waiting && <Chevron size={15} />}
-            loading={waiting ? false : undefined}
-            disabled={waiting}
+            rightSection={<Chevron size={15} />}
             onClick={onNext}
             styles={GOLD_BTN}
           >
-            {waiting ? (
-              <>
-                <Loader2 size={14} style={{ marginRight: 6 }} />
-                {t("tour.waiting")}
-              </>
-            ) : isLast ? (
-              t("tour.finish")
-            ) : isTask ? (
-              t("tour.continue")
-            ) : (
-              t("tour.next")
-            )}
+            {isLast
+              ? t("tour.finish")
+              : isTask && !waiting
+                ? t("tour.continue")
+                : waiting
+                  ? t("tour.skip")
+                  : t("tour.next")}
           </Button>
         </Group>
       </div>

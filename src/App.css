@@ -24,43 +24,43 @@
    ========================================== */
 
 :root[data-mantine-color-scheme="light"] {
-  --app-bg: #f3f5f9;
+  --app-bg: #f8fafc;
   --app-surface: #ffffff;
-  --app-border: #e6ebf4;
-  --app-text: #1c2237;
-  --app-text-soft: #5b6987;
-  --app-muted: #8492a6;
-  --app-soft: #f8fafc;
-  --app-accent: #4f61ed;
-  --app-accent-soft: #eef1fe;
-  --app-gold-soft: #fdf6e6;
-  --app-gold-deep: #b58022;
+  --app-border: #e2e8f0;
+  --app-text: #0f172a;
+  --app-text-soft: #475569;
+  --app-muted: #64748b;
+  --app-soft: #f1f5f9;
+  --app-accent: #2563eb;
+  --app-accent-soft: #eff6ff;
+  --app-gold-soft: #fef3c7;
+  --app-gold-deep: #d97706;
   --app-on-primary: #ffffff;
-  --app-hover: rgba(79, 97, 237, 0.06);
-  --app-scroll: #d5dce8;
-  --app-scroll-hover: #b8c4d6;
-  --app-shadow: 0 6px 24px -4px rgba(18, 28, 56, 0.05), 0 2px 6px -1px rgba(18, 28, 56, 0.03);
-  --app-card-border: 1px solid rgba(230, 235, 244, 0.85);
+  --app-hover: rgba(37, 99, 235, 0.05);
+  --app-scroll: #cbd5e1;
+  --app-scroll-hover: #94a3b8;
+  --app-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.08), 0 1px 2px -1px rgba(0, 0, 0, 0.04);
+  --app-card-border: 1px solid #e2e8f0;
 }
 
 :root[data-mantine-color-scheme="dark"] {
-  --app-bg: #0c101d;
-  --app-surface: #141a2e;
-  --app-border: #232c49;
-  --app-text: #f0f3fa;
-  --app-text-soft: #b2bed7;
-  --app-muted: #8391b0;
-  --app-soft: #19213a;
-  --app-accent: #6375f7;
-  --app-accent-soft: #1c2345;
-  --app-gold-soft: #2b2410;
-  --app-gold-deep: #e6c965;
+  --app-bg: #0b111e;
+  --app-surface: #141c2e;
+  --app-border: #243048;
+  --app-text: #f8fafc;
+  --app-text-soft: #cbd5e1;
+  --app-muted: #94a3b8;
+  --app-soft: #1c273e;
+  --app-accent: #3b82f6;
+  --app-accent-soft: rgba(59, 130, 246, 0.16);
+  --app-gold-soft: rgba(245, 158, 11, 0.14);
+  --app-gold-deep: #f59e0b;
   --app-on-primary: #ffffff;
-  --app-hover: rgba(99, 117, 247, 0.1);
-  --app-scroll: #26304d;
-  --app-scroll-hover: #37466e;
-  --app-shadow: 0 10px 30px -8px rgba(0, 0, 0, 0.6);
-  --app-card-border: 1px solid rgba(40, 52, 85, 0.8);
+  --app-hover: rgba(255, 255, 255, 0.05);
+  --app-scroll: #243048;
+  --app-scroll-hover: #38496b;
+  --app-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.6);
+  --app-card-border: 1px solid #243048;
 }
 
 html,
