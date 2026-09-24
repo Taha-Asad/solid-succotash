@@ -175,7 +175,7 @@ export default function SetupPage({ onSetupComplete }: SetupPageProps) {
             boxShadow: "0 12px 32px -8px rgba(201,149,42,0.6)",
           }}
         >
-          I&
+          C
         </motion.div>
 
         <motion.h1

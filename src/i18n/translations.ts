@@ -9,7 +9,7 @@
 
 export type Lang = "en" | "ur";
 
-export const LANG_STORAGE_KEY = "ijaz_lang";
+export const LANG_STORAGE_KEY = "corbel_lang";
 
 export interface LangMeta {
   code: Lang;
@@ -207,7 +207,7 @@ export const en: Dict = {
   // ---------- Login ----------
   "login.heroTitle": "Your business, in perfect order.",
   "login.heroSubtitle":
-    "Ijaz & Company ERP brings inventory, invoicing and analytics into one clean workspace — designed for precision, built for growth.",
+    "Corbel ERP brings inventory, invoicing and analytics into one clean workspace — designed for precision, built for growth.",
   "login.feat1.title": "Inventory Control",
   "login.feat1.text": "Track products, batches, stock levels and suppliers.",
   "login.feat2.title": "Smart Invoicing",
@@ -242,7 +242,7 @@ export const en: Dict = {
   "setup.ownerNote": "You'll become the owner of this company.",
   "setup.companyInfo": "Company Information",
   "setup.companyName": "Company Name",
-  "setup.companyNamePlaceholder": "Ijaz & Company",
+  "setup.companyNamePlaceholder": "Corbel Trading Co.",
   "setup.phone": "Phone",
   "setup.phonePlaceholder": "+92 300 1234567",
   "setup.taxNumber": "Tax Number",
@@ -252,9 +252,9 @@ export const en: Dict = {
   "setup.currency": "Currency",
   "setup.ownerAccount": "Owner Account",
   "setup.fullName": "Your Full Name",
-  "setup.fullNamePlaceholder": "Ijaz Ahmad",
+  "setup.fullNamePlaceholder": "Taha Asadullah",
   "setup.email": "Email",
-  "setup.emailPlaceholder": "owner@ijaz.com",
+  "setup.emailPlaceholder": "owner@corbel.com",
   "setup.password": "Password",
   "setup.passwordPlaceholder": "Choose a strong password",
   "setup.createCompany": "Create Company & Continue",
@@ -566,7 +566,7 @@ export const ur: Dict = {
 
   "login.heroTitle": "آپ کا کاروبار، مکمل ترتیب میں۔",
   "login.heroSubtitle":
-    "آئی جاز اینڈ کمپنی ای آر پی انوینٹری، انوائسنگ اور تجزیات کو ایک صاف ستھری ورک اسپیس میں لاتا ہے — درستگی کے لیے بنایا گیا، ترقی کے لیے تیار۔",
+    "کوریبل ای آر پی انوینٹری، انوائسنگ اور تجزیات کو ایک صاف ستھری ورک اسپیس میں لاتا ہے — درستگی کے لیے بنایا گیا، ترقی کے لیے تیار۔",
   "login.feat1.title": "انوینٹری کنٹرول",
   "login.feat1.text": "مصنوعات، بیچز، اسٹاک لیولز اور سپلائرز کا سراغ رکھیں۔",
   "login.feat2.title": "سمارٹ انوائسنگ",
@@ -598,7 +598,7 @@ export const ur: Dict = {
   "setup.ownerNote": "آپ اس کمپنی کے مالک بن جائیں گے۔",
   "setup.companyInfo": "کمپنی کی معلومات",
   "setup.companyName": "کمپنی کا نام",
-  "setup.companyNamePlaceholder": "آئی جاز اینڈ کمپنی",
+  "setup.companyNamePlaceholder": "کوریبل ٹریڈنگ کمپنی",
   "setup.phone": "فون",
   "setup.phonePlaceholder": "+92 300 1234567",
   "setup.taxNumber": "ٹیکس نمبر",
@@ -608,9 +608,9 @@ export const ur: Dict = {
   "setup.currency": "کرنسی",
   "setup.ownerAccount": "مالک اکاؤنٹ",
   "setup.fullName": "آپ کا مکمل نام",
-  "setup.fullNamePlaceholder": "آئی جاز احمد",
+  "setup.fullNamePlaceholder": "طحہ اسد اللہ",
   "setup.email": "ای میل",
-  "setup.emailPlaceholder": "owner@ijaz.com",
+  "setup.emailPlaceholder": "owner@corbel.com",
   "setup.password": "پاس ورڈ",
   "setup.passwordPlaceholder": "مضبوط پاس ورڈ منتخب کریں",
   "setup.createCompany": "کمپنی بنائیں اور جاری رکھیں",

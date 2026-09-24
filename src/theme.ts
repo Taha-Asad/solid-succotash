@@ -2,7 +2,7 @@
 // DESIGN TOKENS + MANTINE THEME
 // ==========================================
 //
-// Single source of truth for the "Ijaz & Company" look:
+// Single source of truth for the "Corbel ERP" look:
 // a refined deep-navy brand with an antique-gold accent
 // on a clean cool canvas. Modern, premium, data-first.
 

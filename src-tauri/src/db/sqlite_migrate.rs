@@ -4,18 +4,43 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::str::FromStr;
 
-/// Gets the correct database path.
+/// Gets the correct database path, with automatic backward-compatible migration
+/// from legacy `ijazandcompany-erp/ijazandcompany.db` to `corbel-erp/corbel.db`.
 pub fn get_database_path() -> String {
     let app_data = dirs::data_dir()
         .or_else(|| dirs::home_dir().map(|h| h.join(".local/share")))
         .unwrap_or_else(|| PathBuf::from("."));
 
-    let db_dir = app_data.join("ijazandcompany-erp");
+    let legacy_db_dir = app_data.join("ijazandcompany-erp");
+    let legacy_db_path = legacy_db_dir.join("ijazandcompany.db");
 
+    let db_dir = app_data.join("corbel-erp");
     if let Err(e) = std::fs::create_dir_all(&db_dir) {
         panic!("Failed to create database directory: {e}");
     }
-    let db_path = db_dir.join("ijazandcompany.db");
+    let db_path = db_dir.join("corbel.db");
+
+    // Zero-data-loss backward compatibility:
+    // If the legacy database exists and the new Corbel database does not exist yet,
+    // seamlessly copy the existing database into the new location.
+    if legacy_db_path.exists() && !db_path.exists() {
+        println!(
+            "Migrating legacy database from {} to {}",
+            legacy_db_path.display(),
+            db_path.display()
+        );
+        if let Err(e) = std::fs::copy(&legacy_db_path, &db_path) {
+            eprintln!("Warning: failed to copy legacy database: {e}");
+        } else {
+            println!("Successfully migrated legacy database to Corbel ERP.");
+            // Also copy WAL files if present during active process migration
+            let legacy_wal = legacy_db_dir.join("ijazandcompany.db-wal");
+            let target_wal = db_dir.join("corbel.db-wal");
+            if legacy_wal.exists() && !target_wal.exists() {
+                let _ = std::fs::copy(&legacy_wal, &target_wal);
+            }
+        }
+    }
 
     println!("Database directory: {}", db_dir.display());
     println!("Database file: {}", db_path.display());

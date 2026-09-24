@@ -554,8 +554,8 @@ function InvoiceSettingsTab() {
       designAccentColor: "#1d2b54",
       showQr: true,
       disclaimer: "Goods once sold are not returnable.",
-      copyright: "© 2026 Ijaz & Company",
-      bankDetails: "Meezan Bank · A/C: 0101-0102938471 · Title: Ijaz & Company",
+      copyright: "© 2026 Corbel ERP",
+      bankDetails: "Meezan Bank · A/C: 0101-0102938471 · Title: Corbel Trading Co.",
     },
   });
 
@@ -661,7 +661,7 @@ function InvoiceSettingsTab() {
     const isThermal = form.values.invoiceDesign === "thermal_80mm";
     const isCompact = form.values.invoiceDesign === "compact_a5";
     const accent = form.values.designAccentColor || "#1d2b54";
-    const compName = company?.name || "Ijaz & Company Traders";
+    const compName = company?.name || "Corbel Trading Co.";
     const prefix = form.values.invoicePrefix || "INV";
 
     const printHtml = `<!DOCTYPE html>

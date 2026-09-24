@@ -159,7 +159,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
             boxShadow: "0 12px 32px -8px rgba(201,149,42,0.6)",
           }}
         >
-          I&
+          C
         </motion.div>
 
         <motion.h1
@@ -334,7 +334,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
               marginTop: 20,
             }}
           >
-            Ijaz & Company ERP — v0.1
+            Corbel ERP — Merchant Operating System
           </motion.p>
         </motion.div>
       </Stack>

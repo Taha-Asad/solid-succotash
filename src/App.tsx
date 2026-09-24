@@ -170,7 +170,7 @@ function App() {
       <Center h="100vh">
         <Stack align="center" gap="md">
           <Loader size="lg" />
-          <Text c="dimmed">Starting Ijaz & Company...</Text>
+          <Text c="dimmed">Starting Corbel ERP...</Text>
         </Stack>
       </Center>
     );

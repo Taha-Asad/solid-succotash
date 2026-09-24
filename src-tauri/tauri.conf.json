@@ -1,8 +1,8 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicehash/tauri/dev/crates/tauri-cli/schema.json",
-  "productName": "Ijaz & Company ERP",
+  "productName": "Corbel ERP",
   "version": "1.0.9",
-  "identifier": "com.ijazandcompany.erp",
+  "identifier": "com.thefoolishcrow.corbel",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
@@ -13,7 +13,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "Ijaz & Company ERP",
+        "title": "Corbel ERP",
         "width": 1200,
         "height": 800,
         "minWidth": 900,

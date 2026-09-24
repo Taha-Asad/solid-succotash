@@ -262,7 +262,7 @@ function PlatformShell({
             <LogoMark />
             <Stack gap={0}>
               <Text fw={800} size="md" style={{ letterSpacing: -0.3 }}>
-                Ijaz Platform
+                Corbel Platform
               </Text>
               <Text
                 size="xs"

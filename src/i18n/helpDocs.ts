@@ -33,7 +33,7 @@ const EN: HelpSection[] = [
     blocks: [
       {
         type: "p",
-        text: "Ijaz & Company ERP keeps your whole business — inventory, invoicing, customers, purchasing and accounts — in one place. All data is stored locally on your computer, so it works offline and stays private.",
+        text: "Corbel ERP keeps your whole business — inventory, invoicing, customers, purchasing and accounts — in one place. All data is stored locally on your computer, so it works offline and stays private.",
       },
       {
         type: "howto",
@@ -426,7 +426,7 @@ const UR: HelpSection[] = [
     blocks: [
       {
         type: "p",
-        text: "آئی جاز اینڈ کمپنی ای آر پی ایک ڈیسک ٹاپ ایپلیکیشن ہے جو آپ کے پورے کاروبار — انوینٹری، انوائسنگ، گاہک، خریداری اور اکاؤنٹس — کو ایک جگہ رکھتی ہے۔ تمام ڈیٹا آپ کے کمپیوٹر پر مقامی طور پر محفوظ ہوتا ہے، اس لیے یہ آف لائن چلتا ہے اور نجی رہتا ہے۔",
+        text: "کوریبل ای آر پی ایک ڈیسک ٹاپ ایپلیکیشن ہے جو آپ کے پورے کاروبار — انوینٹری، انوائسنگ، گاہک، خریداری اور اکاؤنٹس — کو ایک جگہ رکھتی ہے۔ تمام ڈیٹا آپ کے کمپیوٹر پر مقامی طور پر محفوظ ہوتا ہے، اس لیے یہ آف لائن چلتا ہے اور نجی رہتا ہے۔",
       },
       {
         type: "steps",

@@ -256,7 +256,7 @@ export default function PlatformSettingsPage() {
               </div>
               <Stack gap={0}>
                 <Text fw={800} size="sm" style={{ color: SA.text }}>
-                  Ijaz {t("sa.subtitle")}
+                  Corbel {t("sa.subtitle")}
                 </Text>
                 <Text size="xs" style={{ color: SA.muted }}>
                   Super Admin Console · v1.0

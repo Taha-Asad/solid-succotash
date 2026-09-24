@@ -271,7 +271,7 @@ export default function AppShell({
   const [installing, setInstalling] = useState(false);
   const [updateMsg, setUpdateMsg] = useState<string | null>(null);
   const [branding, setBranding] = useState<Branding>({
-    companyName: "Ijaz & Company",
+    companyName: "Corbel",
     theme: null,
   });
   const { isDark, toggleColorScheme } = useAppTheme();
@@ -281,7 +281,7 @@ export default function AppShell({
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
     try {
-      return localStorage.getItem("ijaz_sidebar_collapsed") === "true";
+      return localStorage.getItem("corbel_sidebar_collapsed") === "true";
     } catch {
       return false;
     }
@@ -291,7 +291,7 @@ export default function AppShell({
     setSidebarCollapsed((prev) => {
       const next = !prev;
       try {
-        localStorage.setItem("ijaz_sidebar_collapsed", String(next));
+        localStorage.setItem("corbel_sidebar_collapsed", String(next));
       } catch {
         // ignore
       }

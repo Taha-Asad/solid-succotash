@@ -14,7 +14,7 @@ fn greet(name: &str) -> String {
 fn write_error_log(message: &str) {
     let log_path = dirs::data_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join("ijazandcompany-erp")
+        .join("corbel-erp")
         .join("error.log");
     let _ = std::fs::write(&log_path, message);
     eprintln!("Error log written to: {}", log_path.display());
@@ -74,7 +74,7 @@ pub async fn run() {
     harden_webkit();
 
     // ── Structured logging (§18.10) ──────────────────────────────
-    // RUST_LOG controls verbosity: e.g. "info,ijazandcompany=debug"
+    // RUST_LOG controls verbosity: e.g. "info,corbel=debug"
     use tracing_subscriber::EnvFilter;
     let _ = tracing_subscriber::fmt()
         .with_env_filter(
@@ -86,7 +86,7 @@ pub async fn run() {
         .init();
     tracing::info!("Application starting");
 
-    println!("=== Ijaz & Company ERP Starting ===");
+    println!("=== Corbel ERP Starting ===");
 
     // Get the correct database path
     let sqlite_url = db::sqlite_migrate::get_database_path();
