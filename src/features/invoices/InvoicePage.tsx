@@ -15,6 +15,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
   ActionIcon,
   Badge,
+  Box,
   Button,
   Card,
   Divider,
@@ -73,7 +74,7 @@ import type {
 
 import { INK } from "../../theme";
 import { AppDateInput } from "../../components/AppDateInput";
-import { ReceiptText, Plus, Printer } from "lucide-react";
+import { ReceiptText, Plus, Printer, MessageSquare, Coins, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { printHtmlContent } from "../../utils/printInvoice";
 import { reportOnboardingEvent } from "../../onboarding/bus";
 import { usePermissions } from "../permissions/PermissionsProvider";
@@ -426,6 +427,7 @@ function InvoiceListView({ onOpenInvoice }: { onOpenInvoice: (id: string) => voi
         onClose={() => setCreateModalOpen(false)}
         onCreate={handleCreateInvoice}
         customers={customers}
+        invoices={invoices}
         onCustomerCreated={load}
         currencyConfig={currencyConfig}
       />
@@ -457,6 +459,7 @@ function CreateInvoiceModal({
   onClose,
   onCreate,
   customers,
+  invoices,
   onCustomerCreated,
   currencyConfig,
 }: {
@@ -472,6 +475,7 @@ function CreateInvoiceModal({
     exchangeRate?: number;
   }) => Promise<void>;
   customers: PublicCustomer[];
+  invoices: PublicInvoice[];
   onCustomerCreated: () => Promise<void>;
   currencyConfig?: CurrencyConfig | null;
 }) {
@@ -546,6 +550,18 @@ function CreateInvoiceModal({
     .filter((c) => c.isActive)
     .map((c) => ({ value: c.id, label: c.name ?? "" }));
 
+  const selectedCustomerId = form.values.customerId;
+  const customerPendingDue = selectedCustomerId
+    ? invoices
+        .filter(
+          (inv) =>
+            inv.customerId === selectedCustomerId &&
+            inv.status !== "cancelled" &&
+            inv.status !== "draft"
+        )
+        .reduce((sum, inv) => sum + (inv.balanceDue || 0), 0)
+    : 0;
+
   return (
     <Modal
       opened={opened}
@@ -557,25 +573,53 @@ function CreateInvoiceModal({
       {!showNewCustomer ? (
         <form onSubmit={form.onSubmit(handleSubmit)}>
           <Stack gap="md">
-            <Group justify="space-between">
-              <Select
-                label="Customer"
-                placeholder="Select customer"
-                data={customerOptions}
-                required
-                searchable
-                style={{ flex: 1 }}
-                {...form.getInputProps("customerId")}
-              />
-              <Button
-                variant="subtle"
-                size="sm"
-                mt={24}
-                onClick={() => setShowNewCustomer(true)}
-              >
-                + New Customer
-              </Button>
-            </Group>
+            <Box>
+              <Group justify="space-between">
+                <Select
+                  label="Customer"
+                  placeholder="Select customer"
+                  data={customerOptions}
+                  required
+                  searchable
+                  style={{ flex: 1 }}
+                  {...form.getInputProps("customerId")}
+                />
+                <Button
+                  variant="subtle"
+                  size="sm"
+                  mt={24}
+                  onClick={() => setShowNewCustomer(true)}
+                >
+                  + New Customer
+                </Button>
+              </Group>
+              {selectedCustomerId && (
+                <Box mt={6}>
+                  {customerPendingDue > 0 ? (
+                    <Alert
+                      color="orange"
+                      variant="light"
+                      radius="md"
+                      p="xs"
+                      icon={<AlertTriangle size={15} />}
+                    >
+                      <Group justify="space-between" align="center">
+                        <Text size="xs" fw={700}>
+                          Previous Khata Balance: {paisaToDisplay(customerPendingDue)} PKR
+                        </Text>
+                        <Badge color="orange" size="xs" variant="filled">
+                          Pending Udhaar Due
+                        </Badge>
+                      </Group>
+                    </Alert>
+                  ) : (
+                    <Text size="xs" c="teal" fw={600} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                      <CheckCircle2 size={14} /> Clean Khata (All previous bills are settled)
+                    </Text>
+                  )}
+                </Box>
+              )}
+            </Box>
 
             <SimpleGrid cols={2}>
               <AppDateInput
@@ -760,16 +804,30 @@ function InvoiceDetailView({
   const [creditNoteAmount, setCreditNoteAmount] = useState(0);
   const [debitNoteReason, setDebitNoteReason] = useState("");
   const [debitNoteAmount, setDebitNoteAmount] = useState(0);
+  const [customerTotalDue, setCustomerTotalDue] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [det, prods] = await Promise.all([
+      const [det, prods, allInvoices] = await Promise.all([
         getInvoice(invoiceId),
         listProducts(),
+        listInvoices().catch(() => [] as PublicInvoice[]),
       ]);
       setDetails(det);
       setProducts(prods);
+      if (det?.customer?.id) {
+        const otherDue = allInvoices
+          .filter(
+            (inv) =>
+              inv.customerId === det.customer.id &&
+              inv.id !== det.invoice.id &&
+              inv.status !== "cancelled" &&
+              inv.status !== "draft"
+          )
+          .reduce((sum, inv) => sum + (inv.balanceDue || 0), 0);
+        setCustomerTotalDue(otherDue);
+      }
       setError(null);
       try {
         const fbr = await getInvoiceFbrStatus(invoiceId);
@@ -787,6 +845,48 @@ function InvoiceDetailView({
   useEffect(() => {
     load();
   }, [load]);
+
+  function handleShareWhatsApp() {
+    if (!details) return;
+    const { invoice, customer, items } = details;
+
+    let rawPhone = (customer.phone || "").replace(/[^0-9]/g, "");
+    if (rawPhone.startsWith("0")) {
+      rawPhone = "92" + rawPhone.slice(1);
+    } else if (rawPhone.length === 10) {
+      rawPhone = "92" + rawPhone;
+    }
+
+    const itemsSummary = items
+      .slice(0, 8)
+      .map(
+        (it) =>
+          `• ${it.productName} (x${it.quantity}): Rs. ${(it.lineTotal / 100).toFixed(2)}`
+      )
+      .join("\n");
+    const moreItems =
+      items.length > 8 ? `\n...and ${items.length - 8} more items` : "";
+
+    const message = [
+      `*INVOICE: ${invoice.invoiceNumber}*`,
+      `*Date:* ${invoice.invoiceDate}`,
+      `*Customer:* ${customer.name}`,
+      `────────────────────────`,
+      itemsSummary + moreItems,
+      `────────────────────────`,
+      `*Total Bill:* Rs. ${(invoice.grandTotal / 100).toFixed(2)}`,
+      `*Amount Paid:* Rs. ${(invoice.amountPaid / 100).toFixed(2)}`,
+      `*Balance Due:* Rs. ${(invoice.balanceDue / 100).toFixed(2)}`,
+      ``,
+      `Thank you for your business!`,
+    ].join("\n");
+
+    const url = rawPhone
+      ? `https://wa.me/${rawPhone}?text=${encodeURIComponent(message)}`
+      : `https://wa.me/?text=${encodeURIComponent(message)}`;
+
+    window.open(url, "_blank");
+  }
 
   async function handleAddItem(values: {
     productId: string;
@@ -980,6 +1080,14 @@ function InvoiceDetailView({
           >
             Print Invoice
           </Button>
+          <Button
+            color="green"
+            variant="light"
+            leftSection={<MessageSquare size={15} />}
+            onClick={handleShareWhatsApp}
+          >
+            WhatsApp Bill
+          </Button>
           <Menu position="bottom-end" withinPortal>
             <Menu.Target>
               <Button variant="outline">Export</Button>
@@ -1030,9 +1138,22 @@ function InvoiceDetailView({
       <Grid>
         <Grid.Col span={6}>
           <Card withBorder padding="md">
-            <Title order={5} mb="xs">
-              Bill To
-            </Title>
+            <Group justify="space-between" align="center" mb="xs">
+              <Title order={5} m={0}>
+                Bill To
+              </Title>
+              {customerTotalDue !== null && (
+                customerTotalDue > 0 ? (
+                  <Badge color="orange" variant="light" size="sm">
+                    ⚠️ Other Pending Khata: {paisaToDisplay(customerTotalDue)} PKR
+                  </Badge>
+                ) : (
+                  <Badge color="teal" variant="light" size="sm">
+                    ✓ Other Bills Clear
+                  </Badge>
+                )
+              )}
+            </Group>
             <Text fw={500}>{customer.name}</Text>
             {customer.phone && <Text size="sm">Phone: {customer.phone}</Text>}
             {customer.email && <Text size="sm">Email: {customer.email}</Text>}
@@ -1695,6 +1816,7 @@ function PaymentModal({
 }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [cashTendered, setCashTendered] = useState<number | string>("");
 
   const form = useForm({
     initialValues: {
@@ -1708,7 +1830,33 @@ function PaymentModal({
 
   useEffect(() => {
     form.setFieldValue("amount", parseFloat(paisaToDisplay(balanceDue)));
-  }, [balanceDue]);
+    setCashTendered("");
+  }, [balanceDue, opened]);
+
+  const billAmount = Number(form.values.amount) || 0;
+  const tenderedNum =
+    typeof cashTendered === "number"
+      ? cashTendered
+      : parseFloat(String(cashTendered)) || 0;
+  const changeToReturn =
+    tenderedNum > billAmount ? tenderedNum - billAmount : 0;
+  const isShort = tenderedNum > 0 && tenderedNum < billAmount;
+
+  // Quick cash chips based on billAmount
+  const quickCashOptions = [
+    { label: "Exact", val: billAmount },
+    ...(billAmount < 500 ? [{ label: "Rs. 500", val: 500 }] : []),
+    ...(billAmount < 1000 ? [{ label: "Rs. 1,000", val: 1000 }] : []),
+    ...(billAmount < 5000 ? [{ label: "Rs. 5,000", val: 5000 }] : []),
+    ...(billAmount >= 5000
+      ? [
+          {
+            label: `Rs. ${(Math.ceil(billAmount / 1000) * 1000).toLocaleString()}`,
+            val: Math.ceil(billAmount / 1000) * 1000,
+          },
+        ]
+      : []),
+  ];
 
   async function handleSubmit(values: typeof form.values) {
     setError(null);
@@ -1768,6 +1916,101 @@ function PaymentModal({
               onChange={(v) => form.setFieldValue("paymentDate", v)}
             />
           </SimpleGrid>
+
+          {form.values.paymentMethod === "cash" && (
+            <Card
+              p="sm"
+              radius="md"
+              withBorder
+              style={{
+                background: "var(--app-soft, rgba(0,0,0,0.02))",
+                borderColor: INK.border,
+              }}
+            >
+              <Text
+                size="xs"
+                fw={700}
+                c="dimmed"
+                mb={6}
+                style={{ textTransform: "uppercase", letterSpacing: 0.5 }}
+              >
+                Cashier Change Calculator
+              </Text>
+
+              <Group gap={6} mb="xs" wrap="wrap">
+                <Text size="xs" c="dimmed">
+                  Customer Gave:
+                </Text>
+                {quickCashOptions.map(({ label, val }) => (
+                  <Button
+                    key={label}
+                    size="compact-xs"
+                    variant={tenderedNum === val ? "filled" : "light"}
+                    color={tenderedNum === val ? "teal" : "gray"}
+                    onClick={() => setCashTendered(val)}
+                  >
+                    {label}
+                  </Button>
+                ))}
+              </Group>
+
+              <NumberInput
+                placeholder="Enter cash handed over by customer"
+                decimalScale={2}
+                min={0}
+                value={cashTendered === "" ? undefined : Number(cashTendered)}
+                onChange={(v) =>
+                  setCashTendered(typeof v === "number" ? v : "")
+                }
+                leftSection={<Coins size={15} />}
+                radius="md"
+              />
+
+              {tenderedNum >= billAmount && tenderedNum > 0 && (
+                <Box
+                  mt="xs"
+                  p="xs"
+                  style={{
+                    borderRadius: 8,
+                    background: "rgba(16, 185, 129, 0.12)",
+                    border: "1px solid rgba(16, 185, 129, 0.4)",
+                  }}
+                >
+                  <Group justify="space-between" align="center">
+                    <Text size="xs" fw={700} style={{ color: "#059669" }}>
+                      CHANGE TO RETURN:
+                    </Text>
+                    <Text
+                      size="md"
+                      fw={800}
+                      style={{
+                        color: "#059669",
+                        fontFamily: "var(--mantine-font-family-monospace)",
+                      }}
+                    >
+                      Rs. {changeToReturn.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </Text>
+                  </Group>
+                </Box>
+              )}
+
+              {isShort && (
+                <Box
+                  mt="xs"
+                  p="xs"
+                  style={{
+                    borderRadius: 8,
+                    background: "rgba(239, 68, 68, 0.1)",
+                    border: "1px solid rgba(239, 68, 68, 0.3)",
+                  }}
+                >
+                  <Text size="xs" fw={600} c="red">
+                    Short by Rs. {(billAmount - tenderedNum).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (Customer gave less than bill)
+                  </Text>
+                </Box>
+              )}
+            </Card>
+          )}
 
           <TextInput
             label="Reference"
