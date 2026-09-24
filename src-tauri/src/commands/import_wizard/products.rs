@@ -530,6 +530,7 @@ pub async fn import_one_opening_stock_row(
 }
 
 /// Trims and nullifies empty optional strings (email, phone, …).
+#[allow(dead_code)]
 fn clean_optional_import(value: &str) -> Option<String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {

@@ -23,8 +23,6 @@ pub mod batches;
 #[cfg(test)]
 mod tests;
 
-pub use self::types::*;
-pub use self::helpers::*;
 pub use self::categories::*;
 pub use self::suppliers::*;
 pub use self::products::*;

@@ -454,6 +454,7 @@ pub fn emit_import_complete(
 }
 
 
+#[allow(dead_code)]
 pub fn job_progress(status: &str, total_rows: i64, attempted_rows: i64) -> i64 {
     if matches!(status, "completed" | "failed" | "rolled_back") {
         return 100;

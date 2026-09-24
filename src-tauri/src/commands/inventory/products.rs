@@ -1,6 +1,5 @@
 use sqlx::SqlitePool;
 use tauri::State;
-use uuid::Uuid;
 
 use crate::commands::audit::log_audit;
 use crate::error::AppError;

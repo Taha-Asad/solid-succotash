@@ -5,7 +5,7 @@ use super::helpers::{
     validate_currency_code,
 };
 use crate::commands::auth::{
-    hash_password, normalize_email, require_current_user, validate_password, validate_person_name,
+    hash_password, normalize_email, validate_password, validate_person_name,
     PublicUser, SessionState,
 };
 use crate::commands::company::PublicCompany;

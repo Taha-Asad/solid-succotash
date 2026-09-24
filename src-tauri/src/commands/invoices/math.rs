@@ -44,6 +44,7 @@ pub fn compute_line_amounts(
 }
 
 /// Formats a Unix timestamp into a readable date string
+#[allow(dead_code)]
 pub fn format_timestamp(secs: u64) -> String {
     let days = secs / 86400;
     let time_of_day = secs % 86400;
@@ -88,6 +89,7 @@ pub fn format_timestamp(secs: u64) -> String {
     format!("{:04}-{:02}-{:02} {:02}:{:02} UTC", y, m, d, hours, minutes)
 }
 
+#[allow(dead_code)]
 pub fn is_leap(year: u64) -> bool {
     (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
 }

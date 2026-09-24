@@ -34,9 +34,10 @@ import {
   TrendingUp,
   TrendingDown,
   Percent,
+  Plus,
 } from "lucide-react";
 
-import { listUnits, getErrorMessage } from "../../api/backend";
+import { listUnits, createUnit, getErrorMessage } from "../../api/backend";
 import type {
   PublicCategory,
   PublicProduct,
@@ -83,11 +84,44 @@ export default function ProductFormPage({
   const [lossModalOpen, setLossModalOpen] = useState(false);
   const [units, setUnits] = useState<PublicUnit[]>([]);
 
+  // Inline custom unit creation state
+  const [newUnitModalOpen, setNewUnitModalOpen] = useState(false);
+  const [newUnitName, setNewUnitName] = useState("");
+  const [newUnitSymbol, setNewUnitSymbol] = useState("");
+  const [creatingUnit, setCreatingUnit] = useState(false);
+  const [newUnitError, setNewUnitError] = useState<string | null>(null);
+
   useEffect(() => {
     listUnits()
       .then(setUnits)
       .catch(() => setUnits([]));
   }, []);
+
+  async function handleCreateUnit() {
+    const trimmed = newUnitName.trim();
+    if (!trimmed) {
+      setNewUnitError("Unit name is required (e.g. 'Strip', 'Bundle')");
+      return;
+    }
+    setCreatingUnit(true);
+    setNewUnitError(null);
+    try {
+      const created = await createUnit({
+        name: trimmed,
+        symbol: newUnitSymbol.trim() || null,
+        isDefault: false,
+      });
+      setUnits((prev) => [...prev, created]);
+      form.setFieldValue("unit", created.name);
+      setNewUnitModalOpen(false);
+      setNewUnitName("");
+      setNewUnitSymbol("");
+    } catch (err) {
+      setNewUnitError(getErrorMessage(err));
+    } finally {
+      setCreatingUnit(false);
+    }
+  }
 
   const form = useForm({
     initialValues: {
@@ -565,16 +599,32 @@ export default function ProductFormPage({
                     label: { fontWeight: 600, fontSize: 13, marginBottom: 2 },
                   }}
                 />
-                <Select
-                  label="Measurement Unit"
-                  description="Packaging unit for billing and stock adjustment"
-                  data={unitOptions}
-                  radius="md"
-                  {...form.getInputProps("unit")}
-                  styles={{
-                    label: { fontWeight: 600, fontSize: 13, marginBottom: 2 },
-                  }}
-                />
+                <Box>
+                  <Group justify="space-between" align="center" mb={2}>
+                    <Text size="sm" fw={600} style={{ fontSize: 13, color: INK.text }}>
+                      Measurement Unit
+                    </Text>
+                    <Button
+                      variant="subtle"
+                      size="compact-xs"
+                      leftSection={<Plus size={12} />}
+                      onClick={() => {
+                        setNewUnitError(null);
+                        setNewUnitModalOpen(true);
+                      }}
+                      style={{ color: "var(--app-accent)", fontWeight: 600 }}
+                    >
+                      + New Unit
+                    </Button>
+                  </Group>
+                  <Select
+                    description="Packaging unit for billing and stock adjustment"
+                    data={unitOptions}
+                    searchable
+                    radius="md"
+                    {...form.getInputProps("unit")}
+                  />
+                </Box>
               </SimpleGrid>
             </Card>
           </Stack>
@@ -746,6 +796,79 @@ export default function ProductFormPage({
               size="sm"
             >
               Yes, Save Below Cost
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+
+      {/* ==================== CREATE CUSTOM UNIT MODAL ==================== */}
+      <Modal
+        opened={newUnitModalOpen}
+        onClose={() => setNewUnitModalOpen(false)}
+        title={
+          <Group gap="xs">
+            <Plus size={18} color="var(--app-accent)" />
+            <Text fw={700} size="md" style={{ color: INK.text }}>
+              Add Custom Measurement Unit
+            </Text>
+          </Group>
+        }
+        radius="md"
+        centered
+        styles={{
+          header: { background: "var(--app-surface)", borderBottom: `1px solid ${INK.border}` },
+          content: { background: "var(--app-surface)" },
+        }}
+      >
+        <Stack gap="md" pt="xs">
+          <Text size="sm" c="dimmed">
+            Define a standard measurement unit (e.g. <em>Strip, Bundle, Dozen, Roll, Carton</em>) to keep packaging and billing consistent.
+          </Text>
+
+          {newUnitError && (
+            <Alert color="red" variant="light" radius="md" icon={<AlertCircle size={16} />}>
+              {newUnitError}
+            </Alert>
+          )}
+
+          <TextInput
+            label="Unit Name"
+            placeholder="e.g. Strip, Bundle, Dozen, Drum"
+            required
+            radius="md"
+            value={newUnitName}
+            onChange={(e) => setNewUnitName(e.currentTarget.value)}
+          />
+
+          <TextInput
+            label="Short Symbol / Abbreviation (Optional)"
+            placeholder="e.g. strp, bdl, doz, drm"
+            radius="md"
+            value={newUnitSymbol}
+            onChange={(e) => setNewUnitSymbol(e.currentTarget.value)}
+          />
+
+          <Group justify="flex-end" gap="sm" mt="md">
+            <Button
+              variant="default"
+              size="sm"
+              radius="md"
+              onClick={() => setNewUnitModalOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              radius="md"
+              loading={creatingUnit}
+              onClick={handleCreateUnit}
+              style={{
+                background: "var(--app-accent, #1d2b54)",
+                color: "#ffffff",
+                fontWeight: 600,
+              }}
+            >
+              Save & Use Unit
             </Button>
           </Group>
         </Stack>

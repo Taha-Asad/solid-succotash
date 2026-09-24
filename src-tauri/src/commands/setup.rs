@@ -13,6 +13,8 @@
 //     app data directory and printed to the console.
 //   - Idempotent: if any super admin exists, nothing happens.
 
+#![allow(dead_code)]
+
 use sqlx::SqlitePool;
 use uuid::Uuid;
 

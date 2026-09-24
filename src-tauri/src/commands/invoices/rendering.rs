@@ -1,15 +1,11 @@
-use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use qrcode::render::svg;
 use qrcode::QrCode;
 use sqlx::SqlitePool;
 use std::collections::HashMap;
-use std::io::{Cursor, Read, Write};
 use tauri::State;
 
-use crate::commands::audit::log_audit;
 use crate::error::AppError;
 use crate::commands::auth::{require_current_user, SessionState};
-use crate::commands::permissions::check_permission;
 
 use super::operations::get_or_create_settings;
 use super::types::{
@@ -320,10 +316,9 @@ fn build_invoice_html(doc: &InvoiceDoc) -> String {
         .unwrap_or_default();
     vals.insert("logo_html".to_string(), logo_html);
 
-    // FBR verification section (QR shown only when enabled AND tax info set).
+    // FBR verification section (QR shown whenever show_qr is enabled in settings).
     let mut fbr_section = String::new();
-    let show_fbr = doc.settings.show_qr
-        && (doc.settings.company_ntn.is_some() || doc.settings.company_strn.is_some());
+    let show_fbr = doc.settings.show_qr;
     if show_fbr {
         // FBR-compliant QR: {IRN}|{InvoiceDate}|{STRN}|{TotalBillAmount} (spec section 17.5)
         // Falls back to local JSON payload when no IRN is available yet.
@@ -348,30 +343,40 @@ fn build_invoice_html(doc: &InvoiceDoc) -> String {
         let qr_svg = qr_svg(&qr_content, 100);
         if !qr_svg.is_empty() {
             fbr_section.push_str(
-                r#"<div class="fbr-box"><div class="fbr-info"><strong>FBR Tax Information</strong><br>"#,
+                r#"<div class="fbr-box"><div class="fbr-info"><strong>Digital Verification Box</strong><br>"#,
             );
             if let Some(ref irn) = doc.invoice.irn {
                 fbr_section.push_str(&format!("IRN: {}<br>", html_escape(irn)));
             }
             if let Some(ref ntn) = doc.settings.company_ntn {
-                fbr_section.push_str(&format!("Company NTN: {}<br>", html_escape(ntn)));
+                if !ntn.trim().is_empty() {
+                    fbr_section.push_str(&format!("Company NTN: {}<br>", html_escape(ntn)));
+                }
             }
             if let Some(ref strn) = doc.settings.company_strn {
-                fbr_section.push_str(&format!("STRN: {}<br>", html_escape(strn)));
+                if !strn.trim().is_empty() {
+                    fbr_section.push_str(&format!("STRN: {}<br>", html_escape(strn)));
+                }
             }
-            fbr_section.push_str(&format!(
-                "Buyer Type: {}<br>",
-                html_escape(&doc.customer.buyer_type)
-            ));
+            if !doc.customer.buyer_type.trim().is_empty() {
+                fbr_section.push_str(&format!(
+                    "Buyer Type: {}<br>",
+                    html_escape(&doc.customer.buyer_type)
+                ));
+            }
             if let Some(ref c) = doc.customer.ntn {
-                fbr_section.push_str(&format!("Buyer NTN: {}<br>", html_escape(c)));
+                if !c.trim().is_empty() {
+                    fbr_section.push_str(&format!("Buyer NTN: {}<br>", html_escape(c)));
+                }
             }
             if let Some(ref c) = doc.customer.cnic {
-                fbr_section.push_str(&format!("Buyer CNIC: {}<br>", html_escape(c)));
+                if !c.trim().is_empty() {
+                    fbr_section.push_str(&format!("Buyer CNIC: {}<br>", html_escape(c)));
+                }
             }
             fbr_section.push_str("</div>");
             fbr_section.push_str(&format!(
-                r#"<div class="fbr-qr">{qr_svg}<div>Verify with FBR</div></div>"#
+                r#"<div class="fbr-qr">{qr_svg}<div>Verify Invoice</div></div>"#
             ));
             fbr_section.push_str("</div>");
         }
