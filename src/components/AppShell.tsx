@@ -74,6 +74,7 @@ import SearchBar from "./SearchBar";
 import NotificationBell from "./NotificationBell";
 import HelpMenu from "./HelpMenu";
 import LanguageMenu from "./LanguageMenu";
+import { CorbelMark } from "./CorbelLogo";
 import HelpPage from "../features/help/HelpPage";
 import { INK } from "../theme";
 import { useAppTheme } from "../theme/AppThemeProvider";
@@ -453,7 +454,7 @@ export default function AppShell({
                     style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: 10 }}
                   />
                 ) : (
-                  <span>{branding.companyName.charAt(0).toUpperCase()}</span>
+                  <CorbelMark size={22} variant="dark" />
                 )}
               </motion.div>
               <Stack gap={0} style={{ overflow: "hidden" }}>
@@ -496,7 +497,7 @@ export default function AppShell({
                   style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: 10 }}
                 />
               ) : (
-                <span>{branding.companyName.charAt(0).toUpperCase()}</span>
+                <CorbelMark size={22} variant="dark" />
               )}
             </motion.div>
             <Tooltip label="Expand sidebar" position="right">

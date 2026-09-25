@@ -42,6 +42,7 @@ import SetupPage from "./features/auth/SetupPage";
 import ChangePasswordPage from "./features/auth/ChangePasswordPage";
 import AppShell from "./components/AppShell";
 import SuperAdminShell from "./features/superadmin/SuperAdminShell";
+import { CorbelSquircle } from "./components/CorbelLogo";
 
 import { OnboardingProvider } from "./onboarding/OnboardingProvider";
 import { PermissionsProvider } from "./features/permissions/PermissionsProvider";
@@ -167,10 +168,13 @@ function App() {
 
   if (screen === "loading") {
     return (
-      <Center h="100vh">
-        <Stack align="center" gap="md">
-          <Loader size="lg" />
-          <Text c="dimmed">Starting Corbel ERP...</Text>
+      <Center h="100vh" style={{ background: "#0E1530" }}>
+        <Stack align="center" gap="lg">
+          <CorbelSquircle size={68} variant="gold" />
+          <Loader size="sm" color="#C9952A" />
+          <Text size="sm" style={{ color: "#94A3B8", letterSpacing: 0.5 }}>
+            Starting Corbel ERP...
+          </Text>
         </Stack>
       </Center>
     );

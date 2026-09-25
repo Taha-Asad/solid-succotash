@@ -36,6 +36,7 @@ import type { PublicUser, RegisterCompanyResult } from "../../types/backend";
 import { INK } from "../../theme";
 import { useI18n } from "../../i18n/I18nProvider";
 import LanguageMenu from "../../components/LanguageMenu";
+import { CorbelSquircle } from "../../components/CorbelLogo";
 
 // ---- Props ----
 
@@ -157,25 +158,16 @@ export default function SetupPage({ onSetupComplete }: SetupPageProps) {
         />
 
         <motion.div
-          initial={{ scale: 0, rotate: -30 }}
+          initial={{ scale: 0, rotate: -20 }}
           animate={{ scale: 1, rotate: 0 }}
           transition={{ type: "spring", stiffness: 200, damping: 14, delay: 0.1 }}
           style={{
-            width: 58,
-            height: 58,
-            borderRadius: 16,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            background: "linear-gradient(135deg, #C9952A 0%, #E6C965 100%)",
-            color: "#131C39",
-            fontWeight: 800,
-            fontSize: 22,
-            marginBottom: 28,
-            boxShadow: "0 12px 32px -8px rgba(201,149,42,0.6)",
+            marginBottom: 24,
+            display: "inline-block",
+            filter: "drop-shadow(0 14px 28px rgba(0,0,0,0.5)) drop-shadow(0 4px 10px rgba(201,149,42,0.35))",
           }}
         >
-          C
+          <CorbelSquircle size={64} variant="gold" />
         </motion.div>
 
         <motion.h1
