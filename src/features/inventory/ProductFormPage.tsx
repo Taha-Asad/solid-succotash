@@ -37,7 +37,13 @@ import {
   Plus,
 } from "lucide-react";
 
-import { listUnits, createUnit, getErrorMessage } from "../../api/backend";
+import {
+  listUnits,
+  createUnit,
+  createCategory,
+  createSupplier,
+  getErrorMessage,
+} from "../../api/backend";
 import type {
   PublicCategory,
   PublicProduct,
@@ -69,6 +75,8 @@ interface ProductFormPageProps {
     unit: string;
   }) => Promise<void>;
   onCancel: () => void;
+  onCategoryCreated?: (category: PublicCategory) => void;
+  onSupplierCreated?: (supplier: PublicSupplier) => void;
 }
 
 export default function ProductFormPage({
@@ -77,12 +85,24 @@ export default function ProductFormPage({
   suppliers,
   onSave,
   onCancel,
+  onCategoryCreated,
+  onSupplierCreated,
 }: ProductFormPageProps) {
   const isEdit = initial !== null;
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lossModalOpen, setLossModalOpen] = useState(false);
   const [units, setUnits] = useState<PublicUnit[]>([]);
+  const [localCategories, setLocalCategories] = useState<PublicCategory[]>(categories);
+  const [localSuppliers, setLocalSuppliers] = useState<PublicSupplier[]>(suppliers);
+
+  useEffect(() => {
+    setLocalCategories(categories);
+  }, [categories]);
+
+  useEffect(() => {
+    setLocalSuppliers(suppliers);
+  }, [suppliers]);
 
   // Inline custom unit creation state
   const [newUnitModalOpen, setNewUnitModalOpen] = useState(false);
@@ -90,6 +110,23 @@ export default function ProductFormPage({
   const [newUnitSymbol, setNewUnitSymbol] = useState("");
   const [creatingUnit, setCreatingUnit] = useState(false);
   const [newUnitError, setNewUnitError] = useState<string | null>(null);
+
+  // Inline category creation state
+  const [newCategoryModalOpen, setNewCategoryModalOpen] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState("");
+  const [newCategoryDesc, setNewCategoryDesc] = useState("");
+  const [creatingCategory, setCreatingCategory] = useState(false);
+  const [newCategoryError, setNewCategoryError] = useState<string | null>(null);
+
+  // Inline supplier creation state
+  const [newSupplierModalOpen, setNewSupplierModalOpen] = useState(false);
+  const [newSupplierName, setNewSupplierName] = useState("");
+  const [newSupplierContact, setNewSupplierContact] = useState("");
+  const [newSupplierPhone, setNewSupplierPhone] = useState("");
+  const [newSupplierEmail, setNewSupplierEmail] = useState("");
+  const [newSupplierAddress, setNewSupplierAddress] = useState("");
+  const [creatingSupplier, setCreatingSupplier] = useState(false);
+  const [newSupplierError, setNewSupplierError] = useState<string | null>(null);
 
   useEffect(() => {
     listUnits()
@@ -120,6 +157,65 @@ export default function ProductFormPage({
       setNewUnitError(getErrorMessage(err));
     } finally {
       setCreatingUnit(false);
+    }
+  }
+
+  async function handleCreateCategory() {
+    const trimmed = newCategoryName.trim();
+    if (!trimmed) {
+      setNewCategoryError("Category name is required");
+      return;
+    }
+    setCreatingCategory(true);
+    setNewCategoryError(null);
+    try {
+      const created = await createCategory({
+        name: trimmed,
+        description: newCategoryDesc.trim(),
+      });
+      setLocalCategories((prev) => [...prev, created]);
+      onCategoryCreated?.(created);
+      form.setFieldValue("categoryId", created.id);
+      setNewCategoryModalOpen(false);
+      setNewCategoryName("");
+      setNewCategoryDesc("");
+    } catch (err) {
+      setNewCategoryError(getErrorMessage(err));
+    } finally {
+      setCreatingCategory(false);
+    }
+  }
+
+  async function handleCreateSupplier() {
+    const trimmed = newSupplierName.trim();
+    if (!trimmed) {
+      setNewSupplierError("Supplier name is required");
+      return;
+    }
+    setCreatingSupplier(true);
+    setNewSupplierError(null);
+    try {
+      const created = await createSupplier({
+        name: trimmed,
+        contactPerson: newSupplierContact.trim(),
+        phone: newSupplierPhone.trim(),
+        email: newSupplierEmail.trim(),
+        address: newSupplierAddress.trim(),
+        taxNumber: "",
+      });
+      setLocalSuppliers((prev) => [...prev, created]);
+      onSupplierCreated?.(created);
+      form.setFieldValue("supplierId", created.id);
+      setNewSupplierModalOpen(false);
+      setNewSupplierName("");
+      setNewSupplierContact("");
+      setNewSupplierPhone("");
+      setNewSupplierEmail("");
+      setNewSupplierAddress("");
+    } catch (err) {
+      setNewSupplierError(getErrorMessage(err));
+    } finally {
+      setCreatingSupplier(false);
     }
   }
 
@@ -214,14 +310,14 @@ export default function ProductFormPage({
 
   const categoryOptions = [
     { value: "", label: "No Category" },
-    ...categories
+    ...localCategories
       .filter((c) => c.isActive)
       .map((c) => ({ value: c.id, label: c.name ?? "Unnamed" })),
   ];
 
   const supplierOptions = [
     { value: "", label: "No Supplier" },
-    ...suppliers
+    ...localSuppliers
       .filter((s) => s.isActive)
       .map((s) => ({ value: s.id, label: s.name ?? "Unnamed" })),
   ];
@@ -645,31 +741,61 @@ export default function ProductFormPage({
                 Category & Supplier
               </Title>
               <Stack gap="md">
-                <Select
-                  label="Product Category"
-                  placeholder="Select a category"
-                  data={categoryOptions}
-                  searchable
-                  clearable
-                  radius="md"
-                  {...form.getInputProps("categoryId")}
-                  styles={{
-                    label: { fontWeight: 600, fontSize: 13, marginBottom: 2 },
-                  }}
-                />
+                <Box>
+                  <Group justify="space-between" mb={4}>
+                    <Text size="xs" fw={600} style={{ color: "var(--app-text)" }}>
+                      Product Category
+                    </Text>
+                    <Button
+                      variant="subtle"
+                      size="compact-xs"
+                      leftSection={<Plus size={13} />}
+                      onClick={() => {
+                        setNewCategoryError(null);
+                        setNewCategoryModalOpen(true);
+                      }}
+                      style={{ fontSize: 11 }}
+                    >
+                      + New Category
+                    </Button>
+                  </Group>
+                  <Select
+                    placeholder="Select a category"
+                    data={categoryOptions}
+                    searchable
+                    clearable
+                    radius="md"
+                    {...form.getInputProps("categoryId")}
+                  />
+                </Box>
 
-                <Select
-                  label="Supplier / Vendor"
-                  placeholder="Select supplier"
-                  data={supplierOptions}
-                  searchable
-                  clearable
-                  radius="md"
-                  {...form.getInputProps("supplierId")}
-                  styles={{
-                    label: { fontWeight: 600, fontSize: 13, marginBottom: 2 },
-                  }}
-                />
+                <Box>
+                  <Group justify="space-between" mb={4}>
+                    <Text size="xs" fw={600} style={{ color: "var(--app-text)" }}>
+                      Supplier / Vendor
+                    </Text>
+                    <Button
+                      variant="subtle"
+                      size="compact-xs"
+                      leftSection={<Plus size={13} />}
+                      onClick={() => {
+                        setNewSupplierError(null);
+                        setNewSupplierModalOpen(true);
+                      }}
+                      style={{ fontSize: 11 }}
+                    >
+                      + New Supplier
+                    </Button>
+                  </Group>
+                  <Select
+                    placeholder="Select supplier"
+                    data={supplierOptions}
+                    searchable
+                    clearable
+                    radius="md"
+                    {...form.getInputProps("supplierId")}
+                  />
+                </Box>
               </Stack>
             </Card>
 
@@ -869,6 +995,180 @@ export default function ProductFormPage({
               }}
             >
               Save & Use Unit
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+
+      {/* ==================== CREATE CATEGORY MODAL ==================== */}
+      <Modal
+        opened={newCategoryModalOpen}
+        onClose={() => setNewCategoryModalOpen(false)}
+        title={
+          <Group gap="xs">
+            <Plus size={18} color="var(--app-accent)" />
+            <Text fw={700} size="md" style={{ color: INK.text }}>
+              Add Product Category
+            </Text>
+          </Group>
+        }
+        radius="md"
+        centered
+        styles={{
+          header: { background: "var(--app-surface)", borderBottom: `1px solid ${INK.border}` },
+          content: { background: "var(--app-surface)" },
+        }}
+      >
+        <Stack gap="md" pt="xs">
+          <Text size="sm" c="dimmed">
+            Create a category to group products together (e.g. <em>Beverages, Dairy, Spices, Electronics, Hardware</em>).
+          </Text>
+
+          {newCategoryError && (
+            <Alert color="red" variant="light" radius="md" icon={<AlertCircle size={16} />}>
+              {newCategoryError}
+            </Alert>
+          )}
+
+          <TextInput
+            label="Category Name"
+            placeholder="e.g. Beverages, Spices, Tools"
+            required
+            radius="md"
+            value={newCategoryName}
+            onChange={(e) => setNewCategoryName(e.currentTarget.value)}
+          />
+
+          <Textarea
+            label="Description (Optional)"
+            placeholder="Brief notes about this category"
+            radius="md"
+            rows={2}
+            value={newCategoryDesc}
+            onChange={(e) => setNewCategoryDesc(e.currentTarget.value)}
+          />
+
+          <Group justify="flex-end" gap="sm" mt="md">
+            <Button
+              variant="default"
+              size="sm"
+              radius="md"
+              onClick={() => setNewCategoryModalOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              radius="md"
+              loading={creatingCategory}
+              onClick={handleCreateCategory}
+              style={{
+                background: "var(--app-accent, #1d2b54)",
+                color: "#ffffff",
+                fontWeight: 600,
+              }}
+            >
+              Save & Select Category
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+
+      {/* ==================== CREATE SUPPLIER MODAL ==================== */}
+      <Modal
+        opened={newSupplierModalOpen}
+        onClose={() => setNewSupplierModalOpen(false)}
+        title={
+          <Group gap="xs">
+            <Plus size={18} color="var(--app-accent)" />
+            <Text fw={700} size="md" style={{ color: INK.text }}>
+              Add Supplier / Vendor
+            </Text>
+          </Group>
+        }
+        radius="md"
+        centered
+        size="md"
+        styles={{
+          header: { background: "var(--app-surface)", borderBottom: `1px solid ${INK.border}` },
+          content: { background: "var(--app-surface)" },
+        }}
+      >
+        <Stack gap="md" pt="xs">
+          <Text size="sm" c="dimmed">
+            Register a distributor, wholesaler, or manufacturer to track where your inventory is sourced from.
+          </Text>
+
+          {newSupplierError && (
+            <Alert color="red" variant="light" radius="md" icon={<AlertCircle size={16} />}>
+              {newSupplierError}
+            </Alert>
+          )}
+
+          <TextInput
+            label="Supplier / Company Name"
+            placeholder="e.g. Metro Wholesale, Al-Rehman Trading"
+            required
+            radius="md"
+            value={newSupplierName}
+            onChange={(e) => setNewSupplierName(e.currentTarget.value)}
+          />
+
+          <SimpleGrid cols={2}>
+            <TextInput
+              label="Contact Person (Optional)"
+              placeholder="e.g. Tariq Mehmood"
+              radius="md"
+              value={newSupplierContact}
+              onChange={(e) => setNewSupplierContact(e.currentTarget.value)}
+            />
+            <TextInput
+              label="Phone / Mobile (Optional)"
+              placeholder="e.g. 0300-1234567"
+              radius="md"
+              value={newSupplierPhone}
+              onChange={(e) => setNewSupplierPhone(e.currentTarget.value)}
+            />
+          </SimpleGrid>
+
+          <SimpleGrid cols={2}>
+            <TextInput
+              label="Email (Optional)"
+              placeholder="supplier@domain.com"
+              radius="md"
+              value={newSupplierEmail}
+              onChange={(e) => setNewSupplierEmail(e.currentTarget.value)}
+            />
+            <TextInput
+              label="City / Address (Optional)"
+              placeholder="e.g. Lahore Wholesale Market"
+              radius="md"
+              value={newSupplierAddress}
+              onChange={(e) => setNewSupplierAddress(e.currentTarget.value)}
+            />
+          </SimpleGrid>
+
+          <Group justify="flex-end" gap="sm" mt="md">
+            <Button
+              variant="default"
+              size="sm"
+              radius="md"
+              onClick={() => setNewSupplierModalOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              radius="md"
+              loading={creatingSupplier}
+              onClick={handleCreateSupplier}
+              style={{
+                background: "var(--app-accent, #1d2b54)",
+                color: "#ffffff",
+                fontWeight: 600,
+              }}
+            >
+              Save & Select Supplier
             </Button>
           </Group>
         </Stack>

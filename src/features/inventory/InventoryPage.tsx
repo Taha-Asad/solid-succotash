@@ -1626,6 +1626,8 @@ function ProductsTab({ onFormModeChange, onOpenImport }: ProductsTabProps) {
         suppliers={suppliers}
         onSave={handleSaveProduct}
         onCancel={closeForm}
+        onCategoryCreated={(cat) => setCategories((prev) => [...prev, cat])}
+        onSupplierCreated={(sup) => setSuppliers((prev) => [...prev, sup])}
       />
     );
   }

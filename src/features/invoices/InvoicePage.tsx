@@ -74,7 +74,7 @@ import type {
 
 import { INK } from "../../theme";
 import { AppDateInput } from "../../components/AppDateInput";
-import { ReceiptText, Plus, Printer, MessageSquare, Coins, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { ReceiptText, Plus, Printer, MessageSquare, Coins, AlertTriangle, CheckCircle2, Zap } from "lucide-react";
 import { printHtmlContent } from "../../utils/printInvoice";
 import { reportOnboardingEvent } from "../../onboarding/bus";
 import { usePermissions } from "../permissions/PermissionsProvider";
@@ -546,6 +546,35 @@ function CreateInvoiceModal({
     }
   }
 
+  async function handleSelectWalkinCustomer() {
+    const existing = customers.find(
+      (c) =>
+        c.name.toLowerCase().includes("walk-in") ||
+        c.name.toLowerCase().includes("walk in") ||
+        c.name.toLowerCase().includes("cash customer")
+    );
+    if (existing) {
+      form.setFieldValue("customerId", existing.id);
+      return;
+    }
+    try {
+      const created = await createCustomer({
+        name: "Walk-in Customer",
+        phone: "",
+        email: "",
+        address: "Cash Counter",
+        buyerType: "unregistered",
+        cnic: "",
+        ntn: "",
+        strn: "",
+      });
+      await onCustomerCreated();
+      form.setFieldValue("customerId", created.id);
+    } catch (err) {
+      setError(getErrorMessage(err));
+    }
+  }
+
   const customerOptions = customers
     .filter((c) => c.isActive)
     .map((c) => ({ value: c.id, label: c.name ?? "" }));
@@ -574,7 +603,7 @@ function CreateInvoiceModal({
         <form onSubmit={form.onSubmit(handleSubmit)}>
           <Stack gap="md">
             <Box>
-              <Group justify="space-between">
+              <Group justify="space-between" align="flex-end">
                 <Select
                   label="Customer"
                   placeholder="Select customer"
@@ -585,9 +614,17 @@ function CreateInvoiceModal({
                   {...form.getInputProps("customerId")}
                 />
                 <Button
+                  variant="light"
+                  color="teal"
+                  size="sm"
+                  leftSection={<Zap size={14} />}
+                  onClick={() => void handleSelectWalkinCustomer()}
+                >
+                  ⚡ Cash / Walk-in
+                </Button>
+                <Button
                   variant="subtle"
                   size="sm"
-                  mt={24}
                   onClick={() => setShowNewCustomer(true)}
                 >
                   + New Customer
@@ -805,6 +842,51 @@ function InvoiceDetailView({
   const [debitNoteReason, setDebitNoteReason] = useState("");
   const [debitNoteAmount, setDebitNoteAmount] = useState(0);
   const [customerTotalDue, setCustomerTotalDue] = useState<number | null>(null);
+
+  // Fast Line Item Entry state (Cashier & Quick Invoicing)
+  const [quickProductId, setQuickProductId] = useState<string | null>(null);
+  const [quickQuantity, setQuickQuantity] = useState<number>(1);
+  const [quickPrice, setQuickPrice] = useState<number>(0);
+  const [fastAdding, setFastAdding] = useState(false);
+
+  function handleQuickProductSelect(id: string | null) {
+    setQuickProductId(id);
+    if (!id) {
+      setQuickPrice(0);
+      return;
+    }
+    const found = products.find((p) => p.id === id);
+    if (found) {
+      setQuickPrice(parseFloat(paisaToDisplay(found.sellPrice)));
+    }
+  }
+
+  async function handleFastAddLine() {
+    if (!quickProductId || quickQuantity <= 0) return;
+    const selectedProd = products.find((p) => p.id === quickProductId);
+    if (!selectedProd) return;
+
+    setFastAdding(true);
+    try {
+      await addInvoiceItem({
+        invoiceId,
+        productId: quickProductId,
+        quantity: quickQuantity,
+        unitPrice: displayToPaisa(quickPrice),
+        taxRate: selectedProd.taxRate,
+        discountType: "percent",
+        discountValue: 0,
+      });
+      await load();
+      setQuickProductId(null);
+      setQuickQuantity(1);
+      setQuickPrice(0);
+    } catch (err) {
+      setError(getErrorMessage(err));
+    } finally {
+      setFastAdding(false);
+    }
+  }
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1255,6 +1337,89 @@ function InvoiceDetailView({
           </Button>
         )}
       </Group>
+
+      {/* Fast Line Item Entry Card for Cashier & Quick Invoicing */}
+      {isDraft && canEdit && (
+        <Card
+          withBorder
+          padding="sm"
+          radius="md"
+          style={{
+            background: "var(--app-surface)",
+            borderColor: "var(--mantine-color-blue-outline, #3b82f6)",
+            borderWidth: 1.5,
+          }}
+        >
+          <Stack gap="xs">
+            <Group justify="space-between">
+              <Group gap="xs">
+                <Zap size={15} color="var(--mantine-color-blue-6)" />
+                <Text size="xs" fw={700} style={{ textTransform: "uppercase", letterSpacing: 0.5 }}>
+                  Fast Counter Line Entry
+                </Text>
+              </Group>
+              <Text size="xs" c="dimmed">
+                Select product, verify price, and hit Enter
+              </Text>
+            </Group>
+
+            <Group align="flex-end" gap="sm" wrap="wrap">
+              <Box style={{ flex: 1, minWidth: 260 }}>
+                <Select
+                  placeholder="Type product name or scan barcode..."
+                  data={products.map((p) => ({
+                    value: p.id,
+                    label: `${p.name} — ${paisaToDisplay(p.sellPrice)} PKR (${p.quantityInStock} ${p.unit} in stock)`,
+                  }))}
+                  searchable
+                  clearable
+                  value={quickProductId}
+                  onChange={handleQuickProductSelect}
+                  styles={{
+                    input: { fontWeight: 500 },
+                  }}
+                />
+              </Box>
+
+              <NumberInput
+                label="Qty"
+                min={1}
+                value={quickQuantity}
+                onChange={(val) => setQuickQuantity(typeof val === "number" ? val : 1)}
+                style={{ width: 85 }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void handleFastAddLine();
+                }}
+              />
+
+              <NumberInput
+                label="Price (PKR)"
+                min={0}
+                value={quickPrice}
+                onChange={(val) => setQuickPrice(typeof val === "number" ? val : 0)}
+                style={{ width: 120 }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void handleFastAddLine();
+                }}
+              />
+
+              <Button
+                leftSection={<Plus size={15} />}
+                loading={fastAdding}
+                disabled={!quickProductId || quickQuantity <= 0}
+                onClick={() => void handleFastAddLine()}
+                style={{
+                  background: "var(--app-accent, #1d2b54)",
+                  color: "#ffffff",
+                  fontWeight: 600,
+                }}
+              >
+                + Add Line
+              </Button>
+            </Group>
+          </Stack>
+        </Card>
+      )}
 
       {items.length === 0 ? (
         <Text c="dimmed" ta="center" py="md">
