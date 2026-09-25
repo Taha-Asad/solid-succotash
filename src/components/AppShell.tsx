@@ -76,6 +76,7 @@ import HelpMenu from "./HelpMenu";
 import LanguageMenu from "./LanguageMenu";
 import { CorbelMark } from "./CorbelLogo";
 import HelpPage from "../features/help/HelpPage";
+import ProfilePage from "../features/profile/ProfilePage";
 import { INK } from "../theme";
 import { useAppTheme } from "../theme/AppThemeProvider";
 import { useI18n } from "../i18n/I18nProvider";
@@ -98,7 +99,8 @@ export type DashboardView =
   | "accounts"
   | "users"
   | "settings"
-  | "help";
+  | "help"
+  | "profile";
 
 const NAV_ITEMS: {
   key: DashboardView;
@@ -275,10 +277,16 @@ export default function AppShell({
     companyName: "Corbel",
     theme: null,
   });
-  const { isDark, toggleColorScheme } = useAppTheme();
+  const { isDark, toggleColorScheme, setActiveUserId } = useAppTheme();
   const { t, lang } = useI18n();
   const { startReplay } = useOnboarding();
   const perms = usePermissions();
+
+  useEffect(() => {
+    if (user?.id) {
+      setActiveUserId(user.id);
+    }
+  }, [user?.id, setActiveUserId]);
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
     try {
@@ -604,54 +612,72 @@ export default function AppShell({
                 border: "1px solid var(--app-border)",
               }}
             >
-              <Group justify="space-between" mb="xs" wrap="nowrap">
-                <Group gap="xs" wrap="nowrap" style={{ overflow: "hidden" }}>
-                  <Avatar
-                    color={ROLE_COLORS[user.role]}
-                    radius="xl"
-                    size="sm"
-                    style={{ fontWeight: 700 }}
-                  >
-                    {user.fullName.charAt(0).toUpperCase()}
-                  </Avatar>
-                  <Stack gap={0} style={{ overflow: "hidden" }}>
-                    <Text size="xs" fw={700} truncate style={{ lineHeight: 1.2 }}>
-                      {user.fullName}
-                    </Text>
-                    <Text size="11px" c="dimmed" truncate style={{ lineHeight: 1.2 }}>
-                      {user.email}
-                    </Text>
-                  </Stack>
-                </Group>
-                <Badge
-                  color={ROLE_COLORS[user.role]}
+              <Tooltip label="View My Profile & Account" position="top">
+                <Box
+                  onClick={() => goTo("profile")}
+                  style={{ cursor: "pointer" }}
+                >
+                  <Group justify="space-between" mb="xs" wrap="nowrap">
+                    <Group gap="xs" wrap="nowrap" style={{ overflow: "hidden" }}>
+                      <Avatar
+                        color={ROLE_COLORS[user.role]}
+                        radius="xl"
+                        size="sm"
+                        style={{ fontWeight: 700 }}
+                      >
+                        {user.fullName.charAt(0).toUpperCase()}
+                      </Avatar>
+                      <Stack gap={0} style={{ overflow: "hidden" }}>
+                        <Text size="xs" fw={700} truncate style={{ lineHeight: 1.2 }}>
+                          {user.fullName}
+                        </Text>
+                        <Text size="11px" c="dimmed" truncate style={{ lineHeight: 1.2 }}>
+                          {user.email}
+                        </Text>
+                      </Stack>
+                    </Group>
+                    <Badge
+                      color={ROLE_COLORS[user.role]}
+                      variant="light"
+                      size="xs"
+                      styles={{ label: { textTransform: "uppercase", fontSize: 10 } }}
+                    >
+                      {user.role}
+                    </Badge>
+                  </Group>
+                </Box>
+              </Tooltip>
+              <Group gap={6} grow>
+                <Button
                   variant="light"
                   size="xs"
-                  styles={{ label: { textTransform: "uppercase", fontSize: 10 } }}
+                  radius="md"
+                  leftSection={<Settings2 size={13} />}
+                  onClick={() => goTo("profile")}
                 >
-                  {user.role}
-                </Badge>
+                  My Profile
+                </Button>
+                <Button
+                  variant="subtle"
+                  color="red"
+                  size="xs"
+                  radius="md"
+                  leftSection={<LogOut size={13} />}
+                  onClick={onLogout}
+                >
+                  {t("sidebar.signOut")}
+                </Button>
               </Group>
-              <Button
-                variant="subtle"
-                color="red"
-                fullWidth
-                size="xs"
-                radius="md"
-                leftSection={<LogOut size={13} />}
-                onClick={onLogout}
-              >
-                {t("sidebar.signOut")}
-              </Button>
             </Box>
           ) : (
             <Stack align="center" gap="xs">
-              <Tooltip label={`${user.fullName} (${user.role})`} position="right">
+              <Tooltip label={`${user.fullName} (${user.role}) — View Profile`} position="right">
                 <Avatar
                   color={ROLE_COLORS[user.role]}
                   radius="xl"
                   size="sm"
                   style={{ fontWeight: 700, cursor: "pointer" }}
+                  onClick={() => goTo("profile")}
                 >
                   {user.fullName.charAt(0).toUpperCase()}
                 </Avatar>
@@ -820,6 +846,13 @@ export default function AppShell({
               {view === "users" && <UserManagementView currentUser={user} />}
               {view === "settings" && (
                 <SettingsPage user={user} onLogout={onLogout} />
+              )}
+              {view === "profile" && (
+                <ProfilePage
+                  user={user}
+                  onBack={() => goTo("home")}
+                  onLogout={onLogout}
+                />
               )}
               {view === "help" && (
                 <HelpPage companyName={branding.companyName} />

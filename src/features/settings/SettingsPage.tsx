@@ -110,6 +110,7 @@ import {
   type Lang,
 } from "../../i18n/translations";
 import SettingsHub, { type SettingsSection } from "./SettingsHub";
+import ProfilePage from "../profile/ProfilePage";
 import { printHtmlContent } from "../../utils/printInvoice";
 
 // ==========================================
@@ -134,6 +135,17 @@ export default function SettingsPage({ user, onLogout }: SettingsPageProps) {
     return <SettingsHub user={user} onSelectSection={setActiveSection} />;
   }
 
+  // Handle direct full-page User Profile & Personal Appearance
+  if (activeSection === "profile" || activeSection === "personal-theme") {
+    return (
+      <ProfilePage
+        user={user}
+        onBack={() => setActiveSection(null)}
+        onLogout={onLogout}
+      />
+    );
+  }
+
   return (
     <Stack gap="lg">
       <Group justify="space-between" align="center">
@@ -149,24 +161,39 @@ export default function SettingsPage({ user, onLogout }: SettingsPageProps) {
         </Button>
       </Group>
 
+      {/* POS & Thermal Printer Setup */}
+      {activeSection === "pos" && (
+        <Stack gap="md">
+          <Box>
+            <Title order={4}>Thermal Receipt & Printer Setup</Title>
+            <Text size="sm" c="dimmed">
+              Configure receipt paper format (80mm / 58mm / A4), header notes, and bottom greetings.
+            </Text>
+          </Box>
+          <InvoiceSettingsTab />
+        </Stack>
+      )}
+
+      {/* Legal Business Profile */}
       {activeSection === "company" && (
         <Stack gap="md">
           <Box>
-            <Title order={4}>My Business Profile</Title>
+            <Title order={4}>Legal Business Profile</Title>
             <Text size="sm" c="dimmed">
-              Update your shop name, official contacts, and tax registrations.
+              Update your registered shop name, official contacts, and FBR tax registrations.
             </Text>
           </Box>
           <CompanyProfileTab />
         </Stack>
       )}
 
+      {/* Invoicing & FBR */}
       {activeSection === "invoicing" && (
         <Stack gap="md">
           <Box>
-            <Title order={4}>Sales, Receipts & FBR</Title>
+            <Title order={4}>Invoice Format & FBR Tax Integration</Title>
             <Text size="sm" c="dimmed">
-              Configure receipt numbering, designs, and FBR POS digital invoicing.
+              Configure invoice numbering sequence, paper styles, and official FBR digital POS machine.
             </Text>
           </Box>
           <Tabs defaultValue="invoice">
@@ -186,6 +213,31 @@ export default function SettingsPage({ user, onLogout }: SettingsPageProps) {
         </Stack>
       )}
 
+      {/* Official Branding & Bill Design */}
+      {activeSection === "branding" && (
+        <Stack gap="md">
+          <Box>
+            <Title order={4}>Official Store Logo & Bill Design</Title>
+            <Text size="sm" c="dimmed">
+              Upload your high-resolution store logo and tagline printed on customer receipts and invoices.
+            </Text>
+          </Box>
+          <Tabs defaultValue="branding">
+            <Tabs.List mb="md">
+              <Tabs.Tab value="branding">Store Logo & Colors</Tabs.Tab>
+              <Tabs.Tab value="language">{t("settings.tab.language")}</Tabs.Tab>
+            </Tabs.List>
+            <Tabs.Panel value="branding">
+              <ThemeBrandingTab />
+            </Tabs.Panel>
+            <Tabs.Panel value="language">
+              <LanguageTab />
+            </Tabs.Panel>
+          </Tabs>
+        </Stack>
+      )}
+
+      {/* Backups & Data Safety */}
       {activeSection === "backup" && (
         <Stack gap="md">
           <Box>
@@ -211,35 +263,11 @@ export default function SettingsPage({ user, onLogout }: SettingsPageProps) {
         </Stack>
       )}
 
-      {activeSection === "appearance" && (
-        <Stack gap="md">
-          <Box>
-            <Title order={4}>Theme & Language</Title>
-            <Text size="sm" c="dimmed">
-              Customize receipt branding colors, store logos, and app language.
-            </Text>
-          </Box>
-          <Tabs defaultValue="theme">
-            <Tabs.List mb="md">
-              {canEdit && <Tabs.Tab value="theme">{t("settings.tab.theme")}</Tabs.Tab>}
-              <Tabs.Tab value="language">{t("settings.tab.language")}</Tabs.Tab>
-            </Tabs.List>
-            {canEdit && (
-              <Tabs.Panel value="theme">
-                <ThemeBrandingTab />
-              </Tabs.Panel>
-            )}
-            <Tabs.Panel value="language">
-              <LanguageTab />
-            </Tabs.Panel>
-          </Tabs>
-        </Stack>
-      )}
-
+      {/* Modules & Audit Log */}
       {activeSection === "advanced" && canEdit && (
         <Stack gap="md">
           <Box>
-            <Title order={4}>Modules & Activity Audit</Title>
+            <Title order={4}>System Audit & Feature Modules</Title>
             <Text size="sm" c="dimmed">
               Toggle optional business capabilities and review staff audit events.
             </Text>

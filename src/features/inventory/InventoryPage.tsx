@@ -57,6 +57,7 @@ import {
   Divider,
   Menu,
   SegmentedControl,
+  ThemeIcon,
 } from "@mantine/core";
 
 import { useForm } from "@mantine/form";
@@ -68,6 +69,7 @@ import {
   PackageMinus,
   ClipboardCheck,
   ArrowRight,
+  ArrowLeft,
   Tags,
   Truck,
   Plus,
@@ -375,7 +377,7 @@ function CategoriesTab() {
   const [categories, setCategories] = useState<PublicCategory[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [modalOpen, setModalOpen] = useState(false);
+  const [formMode, setFormMode] = useState(false);
   const [editingCategory, setEditingCategory] = useState<PublicCategory | null>(
     null,
   );
@@ -409,12 +411,12 @@ function CategoriesTab() {
 
   function openCreate() {
     setEditingCategory(null);
-    setModalOpen(true);
+    setFormMode(true);
   }
 
   function openEdit(cat: PublicCategory) {
     setEditingCategory(cat);
-    setModalOpen(true);
+    setFormMode(true);
   }
 
   async function handleToggle(cat: PublicCategory) {
@@ -456,11 +458,25 @@ function CategoriesTab() {
       } else {
         await createCategory(values);
       }
-      setModalOpen(false);
+      setFormMode(false);
+      setEditingCategory(null);
       await load();
     } catch (err) {
       throw new Error(getErrorMessage(err));
     }
+  }
+
+  if (formMode) {
+    return (
+      <CategoryFormView
+        initial={editingCategory}
+        onBack={() => {
+          setFormMode(false);
+          setEditingCategory(null);
+        }}
+        onSave={handleSave}
+      />
+    );
   }
 
   return (
@@ -671,36 +687,27 @@ function CategoriesTab() {
         </ScrollArea>
       )}
 
-      <CategoryModal
-        opened={modalOpen}
-        onClose={() => setModalOpen(false)}
-        onSave={handleSave}
-        initial={editingCategory}
-      />
     </Box>
   );
 }
 
-// ---- Category Create/Edit Modal ----
+// ---- Category Create/Edit Dedicated View ----
 
-function CategoryModal({
-  opened,
-  onClose,
-  onSave,
+function CategoryFormView({
   initial,
+  onBack,
+  onSave,
 }: {
-  opened: boolean;
-  onClose: () => void;
+  initial: PublicCategory | null;
+  onBack: () => void;
   onSave: (values: {
     name: string;
     description: string;
     skuPrefix: string;
   }) => Promise<void>;
-  initial: PublicCategory | null;
 }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const isMobile = useMediaQuery("(max-width: 48em)");
 
   const form = useForm({
     initialValues: {
@@ -709,13 +716,12 @@ function CategoryModal({
       skuPrefix: initial?.skuPrefix ?? "",
     },
     validate: {
-      name: (v) => (v.trim().length < 1 ? "Name is required" : null),
+      name: (v) => (v.trim().length < 1 ? "Category name is required" : null),
       skuPrefix: (v) =>
-        v.trim().length > 6 ? "Keep it to 6 characters" : null,
+        v.trim().length > 6 ? "Keep SKU prefix to 6 characters" : null,
     },
   });
 
-  // Reset form when initial changes (open new modal)
   useEffect(() => {
     form.setValues({
       name: initial?.name ?? "",
@@ -725,8 +731,6 @@ function CategoryModal({
     setError(null);
   }, [initial]);
 
-  // Suggest a SKU prefix from the category name while typing
-  // (only on new categories, and only if the user hasn't typed one).
   function handleNameChange(value: string) {
     form.setFieldValue("name", value);
     if (!initial && !form.values.skuPrefix.trim()) {
@@ -745,7 +749,6 @@ function CategoryModal({
     setError(null);
     try {
       await onSave(values);
-      form.reset();
     } catch (err) {
       setError(getErrorMessage(err));
     } finally {
@@ -754,69 +757,129 @@ function CategoryModal({
   }
 
   return (
-    <Modal
-      opened={opened}
-      onClose={onClose}
-      title={
-        <Group gap={8}>
-          <Tags size={16} color={INK.gold} />
-          <Text fw={700} style={{ color: INK.text }}>
-            {initial ? "Edit Category" : "New Category"}
-          </Text>
-        </Group>
-      }
-      centered
-      radius="md"
-      fullScreen={isMobile}
-      transitionProps={isMobile ? { transition: "slide-up" } : undefined}
-    >
-      <form onSubmit={form.onSubmit(handleSubmit)}>
-        <Stack gap="md">
-          <TextInput
-            label="Category Name"
-            placeholder="e.g. Electronics, Stationery"
-            required
-            {...form.getInputProps("name")}
-            onChange={(e) => handleNameChange(e.currentTarget.value)}
-          />
-          <TextInput
-            label="SKU Prefix"
-            placeholder="e.g. ELEC"
-            description="Used to auto-generate SKUs: ELEC-001, ELEC-002, ..."
-            maxLength={6}
-            {...form.getInputProps("skuPrefix")}
-          />
-          <Textarea
-            label="Description"
-            placeholder="What kind of products go here?"
-            rows={3}
-            {...form.getInputProps("description")}
-          />
-          {error && (
-            <Alert
-              color="red"
-              variant="light"
-              icon={<AlertTriangle size={16} />}
+    <Stack gap="xl" style={{ maxWidth: 860, margin: "0 auto", paddingBottom: 40 }}>
+      <Box>
+        <Button
+          variant="subtle"
+          color="gray"
+          size="sm"
+          leftSection={<ArrowLeft size={16} />}
+          onClick={onBack}
+          radius="md"
+          mb="sm"
+        >
+          ← Back to Categories
+        </Button>
+
+        <Group justify="space-between" align="flex-end">
+          <Box>
+            <Title order={2} style={{ letterSpacing: -0.3 }}>
+              {initial ? `Edit Category: ${initial.name}` : "Create New Product Category"}
+            </Title>
+            <Text size="sm" c="dimmed" mt={4}>
+              Categories organize your inventory, drive POS filtering, and auto-generate SKU prefixes.
+            </Text>
+          </Box>
+
+          <Group gap="sm">
+            <Button variant="default" onClick={onBack} disabled={loading}>
+              Cancel
+            </Button>
+            <Button
+              loading={loading}
+              onClick={() => void form.onSubmit(handleSubmit)()}
+              style={{
+                background: "var(--app-accent, #1d2b54)",
+                color: "#ffffff",
+                fontWeight: 600,
+              }}
             >
-              {error}
-            </Alert>
-          )}
-          <Divider />
-          <Group justify="flex-end">
-            <Button variant="subtle" color="gray" onClick={onClose}>
+              {initial ? "Save Changes" : "Create Category"}
+            </Button>
+          </Group>
+        </Group>
+      </Box>
+
+      {error && (
+        <Alert icon={<AlertTriangle size={16} />} color="red" radius="md">
+          {error}
+        </Alert>
+      )}
+
+      <form onSubmit={form.onSubmit(handleSubmit)}>
+        <Stack gap="lg">
+          <Card
+            withBorder
+            padding="xl"
+            radius="md"
+            style={{
+              background: "var(--app-surface)",
+              borderColor: "var(--app-border)",
+            }}
+          >
+            <Group gap="xs" mb="lg">
+              <ThemeIcon size={34} radius="md" color="blue" variant="light">
+                <Tags size={18} />
+              </ThemeIcon>
+              <Box>
+                <Text fw={700} size="md">
+                  Category Identity & Classification
+                </Text>
+                <Text size="xs" c="dimmed">
+                  Official name and SKU shorthand prefix.
+                </Text>
+              </Box>
+            </Group>
+
+            <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="lg" mb="lg">
+              <TextInput
+                label="Category Name"
+                placeholder="e.g. Beverages, Electronics, Hardware"
+                required
+                size="md"
+                {...form.getInputProps("name")}
+                onChange={(e) => handleNameChange(e.currentTarget.value)}
+              />
+
+              <TextInput
+                label="SKU Shorthand Prefix"
+                placeholder="e.g. BEV, ELEC"
+                description="Auto-generates item SKUs: BEV-001, BEV-002"
+                maxLength={6}
+                size="md"
+                {...form.getInputProps("skuPrefix")}
+              />
+            </SimpleGrid>
+
+            <Textarea
+              label="Description / Department Note"
+              placeholder="Describe what items belong to this group (e.g. Cold drinks, juices and mineral waters)"
+              minRows={3}
+              {...form.getInputProps("description")}
+            />
+          </Card>
+
+          <Group justify="flex-end" gap="sm">
+            <Button variant="default" size="md" onClick={onBack} disabled={loading}>
               Cancel
             </Button>
             <Button
               type="submit"
+              size="md"
               loading={loading}
-              style={{ backgroundColor: "var(--app-accent)", color: "#ffffff", fontWeight: 600 }}
+              style={{
+                background: "var(--app-accent, #1d2b54)",
+                color: "#ffffff",
+                fontWeight: 600,
+                minWidth: 160,
+              }}
             >
               {initial ? "Save Changes" : "Create Category"}
             </Button>
           </Group>
         </Stack>
       </form>
-    </Modal>
+    </Stack>
   );
 }
 
@@ -832,7 +895,7 @@ function SuppliersTab() {
   const [suppliers, setSuppliers] = useState<PublicSupplier[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [modalOpen, setModalOpen] = useState(false);
+  const [formMode, setFormMode] = useState(false);
   const [editingSupplier, setEditingSupplier] = useState<PublicSupplier | null>(
     null,
   );
@@ -867,12 +930,12 @@ function SuppliersTab() {
 
   function openCreate() {
     setEditingSupplier(null);
-    setModalOpen(true);
+    setFormMode(true);
   }
 
   function openEdit(sup: PublicSupplier) {
     setEditingSupplier(sup);
-    setModalOpen(true);
+    setFormMode(true);
   }
 
   async function handleToggle(sup: PublicSupplier) {
@@ -916,11 +979,25 @@ function SuppliersTab() {
       } else {
         await createSupplier(values);
       }
-      setModalOpen(false);
+      setFormMode(false);
+      setEditingSupplier(null);
       await load();
     } catch (err) {
       throw new Error(getErrorMessage(err));
     }
+  }
+
+  if (formMode) {
+    return (
+      <SupplierFormView
+        initial={editingSupplier}
+        onBack={() => {
+          setFormMode(false);
+          setEditingSupplier(null);
+        }}
+        onSave={handleSave}
+      />
+    );
   }
 
   return (
@@ -1121,26 +1198,19 @@ function SuppliersTab() {
         </ScrollArea>
       )}
 
-      <SupplierModal
-        opened={modalOpen}
-        onClose={() => setModalOpen(false)}
-        onSave={handleSave}
-        initial={editingSupplier}
-      />
     </Box>
   );
 }
 
-// ---- Supplier Create/Edit Modal ----
+// ---- Supplier Create/Edit Dedicated View ----
 
-function SupplierModal({
-  opened,
-  onClose,
-  onSave,
+function SupplierFormView({
   initial,
+  onBack,
+  onSave,
 }: {
-  opened: boolean;
-  onClose: () => void;
+  initial: PublicSupplier | null;
+  onBack: () => void;
   onSave: (values: {
     name: string;
     contactPerson: string;
@@ -1149,11 +1219,9 @@ function SupplierModal({
     address: string;
     taxNumber: string;
   }) => Promise<void>;
-  initial: PublicSupplier | null;
 }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const isMobile = useMediaQuery("(max-width: 48em)");
 
   const form = useForm({
     initialValues: {
@@ -1165,7 +1233,7 @@ function SupplierModal({
       taxNumber: initial?.taxNumber ?? "",
     },
     validate: {
-      name: (v) => (v.trim().length < 1 ? "Name is required" : null),
+      name: (v) => (v.trim().length < 1 ? "Supplier / Vendor name is required" : null),
     },
   });
 
@@ -1186,7 +1254,6 @@ function SupplierModal({
     setError(null);
     try {
       await onSave(values);
-      form.reset();
     } catch (err) {
       setError(getErrorMessage(err));
     } finally {
@@ -1195,86 +1262,150 @@ function SupplierModal({
   }
 
   return (
-    <Modal
-      opened={opened}
-      onClose={onClose}
-      title={
-        <Group gap={8}>
-          <Truck size={16} color={INK.gold} />
-          <Text fw={700} style={{ color: INK.text }}>
-            {initial ? "Edit Supplier" : "New Supplier"}
-          </Text>
-        </Group>
-      }
-      size="lg"
-      centered
-      radius="md"
-      fullScreen={isMobile}
-      transitionProps={isMobile ? { transition: "slide-up" } : undefined}
-    >
-      <form onSubmit={form.onSubmit(handleSubmit)}>
-        <Stack gap="md">
-          <TextInput
-            label="Supplier Name"
-            placeholder="e.g. Ali Traders"
-            required
-            {...form.getInputProps("name")}
-          />
-          <SimpleGrid cols={{ base: 1, sm: 2 }}>
-            <TextInput
-              label="Contact Person"
-              placeholder="Ahmad Khan"
-              {...form.getInputProps("contactPerson")}
-            />
-            <TextInput
-              label="Phone"
-              placeholder="+92 300 1234567"
-              {...form.getInputProps("phone")}
-            />
-          </SimpleGrid>
-          <SimpleGrid cols={{ base: 1, sm: 2 }}>
-            <TextInput
-              label="Email"
-              placeholder="info@supplier.com"
-              {...form.getInputProps("email")}
-            />
-            <TextInput
-              label="Tax Number"
-              placeholder="NTN or STRN"
-              {...form.getInputProps("taxNumber")}
-            />
-          </SimpleGrid>
-          <Textarea
-            label="Address"
-            placeholder="Full address"
-            rows={2}
-            {...form.getInputProps("address")}
-          />
-          {error && (
-            <Alert
-              color="red"
-              variant="light"
-              icon={<AlertTriangle size={16} />}
+    <Stack gap="xl" style={{ maxWidth: 900, margin: "0 auto", paddingBottom: 40 }}>
+      <Box>
+        <Button
+          variant="subtle"
+          color="gray"
+          size="sm"
+          leftSection={<ArrowLeft size={16} />}
+          onClick={onBack}
+          radius="md"
+          mb="sm"
+        >
+          ← Back to Suppliers
+        </Button>
+
+        <Group justify="space-between" align="flex-end">
+          <Box>
+            <Title order={2} style={{ letterSpacing: -0.3 }}>
+              {initial ? `Edit Supplier: ${initial.name}` : "Register New Supplier / Vendor"}
+            </Title>
+            <Text size="sm" c="dimmed" mt={4}>
+              Suppliers supply your purchase orders, stock restocking, and accounts payable.
+            </Text>
+          </Box>
+
+          <Group gap="sm">
+            <Button variant="default" onClick={onBack} disabled={loading}>
+              Cancel
+            </Button>
+            <Button
+              loading={loading}
+              onClick={() => void form.onSubmit(handleSubmit)()}
+              style={{
+                background: "var(--app-accent, #1d2b54)",
+                color: "#ffffff",
+                fontWeight: 600,
+              }}
             >
-              {error}
-            </Alert>
-          )}
-          <Divider />
-          <Group justify="flex-end">
-            <Button variant="subtle" color="gray" onClick={onClose}>
+              {initial ? "Save Changes" : "Register Supplier"}
+            </Button>
+          </Group>
+        </Group>
+      </Box>
+
+      {error && (
+        <Alert icon={<AlertTriangle size={16} />} color="red" radius="md">
+          {error}
+        </Alert>
+      )}
+
+      <form onSubmit={form.onSubmit(handleSubmit)}>
+        <Stack gap="lg">
+          <Card
+            withBorder
+            padding="xl"
+            radius="md"
+            style={{
+              background: "var(--app-surface)",
+              borderColor: "var(--app-border)",
+            }}
+          >
+            <Group gap="xs" mb="lg">
+              <ThemeIcon size={34} radius="md" color="teal" variant="light">
+                <Truck size={18} />
+              </ThemeIcon>
+              <Box>
+                <Text fw={700} size="md">
+                  Vendor Identity & Contact Details
+                </Text>
+                <Text size="xs" c="dimmed">
+                  Official vendor name, representative, and billing credentials.
+                </Text>
+              </Box>
+            </Group>
+
+            <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="lg" mb="lg">
+              <TextInput
+                label="Supplier / Vendor Company Name"
+                placeholder="e.g. Nestlé Pakistan or Unilever Wholesale"
+                required
+                size="md"
+                {...form.getInputProps("name")}
+              />
+
+              <TextInput
+                label="Contact Person / Representative"
+                placeholder="e.g. Ahmad Khan (Account Manager)"
+                size="md"
+                {...form.getInputProps("contactPerson")}
+              />
+            </SimpleGrid>
+
+            <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="lg" mb="lg">
+              <TextInput
+                label="Phone / Mobile (WhatsApp)"
+                placeholder="e.g. 0300-1234567"
+                size="md"
+                {...form.getInputProps("phone")}
+              />
+
+              <TextInput
+                label="Email Address"
+                placeholder="orders@vendor.com"
+                type="email"
+                size="md"
+                {...form.getInputProps("email")}
+              />
+
+              <TextInput
+                label="Tax Number / NTN / STRN"
+                placeholder="e.g. 1234567-8"
+                size="md"
+                {...form.getInputProps("taxNumber")}
+              />
+            </SimpleGrid>
+
+            <Textarea
+              label="Physical Warehouse / Office Address"
+              placeholder="e.g. Plot 14, Sector 1-9, Industrial Area, Islamabad"
+              minRows={3}
+              {...form.getInputProps("address")}
+            />
+          </Card>
+
+          <Group justify="flex-end" gap="sm">
+            <Button variant="default" size="md" onClick={onBack} disabled={loading}>
               Cancel
             </Button>
             <Button
               type="submit"
+              size="md"
               loading={loading}
-              style={{ backgroundColor: "var(--app-accent)", color: "#ffffff", fontWeight: 600 }}
+              style={{
+                background: "var(--app-accent, #1d2b54)",
+                color: "#ffffff",
+                fontWeight: 600,
+                minWidth: 160,
+              }}
             >
-              {initial ? "Save Changes" : "Create Supplier"}
+              {initial ? "Save Changes" : "Register Supplier"}
             </Button>
           </Group>
         </Stack>
       </form>
-    </Modal>
+    </Stack>
   );
 }
 

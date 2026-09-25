@@ -12,28 +12,23 @@ import {
   Button,
   Card,
   Group,
-  Modal,
   ScrollArea,
-  Select,
-  SimpleGrid,
   Stack,
   Table,
   Text,
   TextInput,
-  Textarea,
   Title,
   Tooltip,
 } from "@mantine/core";
-import { useForm } from "@mantine/form";
 
 import {
   deleteCustomer,
-  createCustomer,
   getErrorMessage,
   listCustomers,
 } from "../../api/backend";
 
 import type { PublicCustomer, PublicUser } from "../../types/backend";
+import CustomerFormPage from "./CustomerFormPage";
 
 import { INK } from "../../theme";
 import {
@@ -42,7 +37,6 @@ import {
   Plus,
   Users,
   MessageSquare,
-  AlertCircle,
   Building2,
   UserCheck,
 } from "lucide-react";
@@ -54,28 +48,7 @@ export default function CustomersPage({ user }: { user: PublicUser }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
-
-  // Add Customer Modal State
-  const [createModalOpen, setCreateModalOpen] = useState(false);
-  const [creating, setCreating] = useState(false);
-  const [createError, setCreateError] = useState<string | null>(null);
-
-  const form = useForm({
-    initialValues: {
-      name: "",
-      phone: "",
-      email: "",
-      address: "",
-      buyerType: "unregistered",
-      cnic: "",
-      ntn: "",
-      strn: "",
-    },
-    validate: {
-      name: (val) =>
-        val.trim().length === 0 ? "Customer or business name is required" : null,
-    },
-  });
+  const [viewMode, setViewMode] = useState<"list" | "create">("list");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -93,29 +66,18 @@ export default function CustomersPage({ user }: { user: PublicUser }) {
     load();
   }, [load]);
 
-  async function handleCreateCustomer(values: typeof form.values) {
-    setCreating(true);
-    setCreateError(null);
-    try {
-      await createCustomer({
-        name: values.name.trim(),
-        phone: values.phone.trim(),
-        email: values.email.trim(),
-        address: values.address.trim(),
-        buyerType: values.buyerType,
-        cnic: values.cnic.trim(),
-        ntn: values.ntn.trim(),
-        strn: values.strn.trim(),
-      });
-      setCreateModalOpen(false);
-      form.reset();
-      await load();
-    } catch (err) {
-      setCreateError(getErrorMessage(err));
-    } finally {
-      setCreating(false);
-    }
+  if (viewMode === "create") {
+    return (
+      <CustomerFormPage
+        onBack={() => setViewMode("list")}
+        onCustomerCreated={() => {
+          setViewMode("list");
+          void load();
+        }}
+      />
+    );
   }
+
 
   async function handleDelete(customer: PublicCustomer) {
     if (
@@ -193,11 +155,7 @@ export default function CustomersPage({ user }: { user: PublicUser }) {
 
           <Button
             leftSection={<Plus size={16} />}
-            onClick={() => {
-              setCreateError(null);
-              form.reset();
-              setCreateModalOpen(true);
-            }}
+            onClick={() => setViewMode("create")}
             style={{
               background: "var(--app-accent, #1d2b54)",
               color: "#ffffff",
@@ -372,7 +330,7 @@ export default function CustomersPage({ user }: { user: PublicUser }) {
                   variant="light"
                   size="sm"
                   leftSection={<Plus size={15} />}
-                  onClick={() => setCreateModalOpen(true)}
+                  onClick={() => setViewMode("create")}
                 >
                   Add Your First Customer
                 </Button>
@@ -382,136 +340,6 @@ export default function CustomersPage({ user }: { user: PublicUser }) {
         </Stack>
       </Card>
 
-      {/* ==================== CREATE CUSTOMER MODAL ==================== */}
-      <Modal
-        opened={createModalOpen}
-        onClose={() => setCreateModalOpen(false)}
-        title={
-          <Group gap="xs">
-            <Users size={18} color="var(--app-accent)" />
-            <Text fw={700} size="md" style={{ color: INK.text }}>
-              Add New Customer / Account
-            </Text>
-          </Group>
-        }
-        size="lg"
-        centered
-        radius="md"
-        styles={{
-          header: {
-            background: "var(--app-surface)",
-            borderBottom: `1px solid ${INK.border}`,
-          },
-          content: { background: "var(--app-surface)" },
-        }}
-      >
-        <form onSubmit={form.onSubmit(handleCreateCustomer)}>
-          <Stack gap="md" pt="xs">
-            {createError && (
-              <Alert
-                color="red"
-                variant="light"
-                radius="md"
-                icon={<AlertCircle size={16} />}
-              >
-                {createError}
-              </Alert>
-            )}
-
-            <SimpleGrid cols={{ base: 1, sm: 2 }}>
-              <TextInput
-                label="Customer / Business Name"
-                placeholder="e.g. Haji Muhammad Aslam or ABC Corp"
-                required
-                radius="md"
-                {...form.getInputProps("name")}
-              />
-
-              <TextInput
-                label="Phone / Mobile (WhatsApp)"
-                placeholder="e.g. 0300-1234567"
-                radius="md"
-                {...form.getInputProps("phone")}
-              />
-            </SimpleGrid>
-
-            <SimpleGrid cols={{ base: 1, sm: 2 }}>
-              <TextInput
-                label="Email Address"
-                placeholder="client@company.com"
-                type="email"
-                radius="md"
-                {...form.getInputProps("email")}
-              />
-
-              <Select
-                label="Buyer Tax Classification"
-                data={[
-                  { value: "unregistered", label: "End-Consumer / Unregistered" },
-                  { value: "registered", label: "Registered Business (Sales Tax / NTN)" },
-                ]}
-                radius="md"
-                {...form.getInputProps("buyerType")}
-              />
-            </SimpleGrid>
-
-            <Textarea
-              label="Billing / Shipping Address"
-              placeholder="e.g. Shop # 14, Main Market, Gulberg, Lahore"
-              radius="md"
-              rows={2}
-              {...form.getInputProps("address")}
-            />
-
-            <SimpleGrid cols={{ base: 1, sm: 3 }}>
-              <TextInput
-                label="CNIC (National ID)"
-                placeholder="e.g. 35201-1234567-1"
-                radius="md"
-                {...form.getInputProps("cnic")}
-              />
-
-              <TextInput
-                label="NTN (National Tax No)"
-                placeholder="e.g. 1234567-8"
-                radius="md"
-                {...form.getInputProps("ntn")}
-              />
-
-              <TextInput
-                label="STRN (Sales Tax Reg No)"
-                placeholder="e.g. 01-02-1234-567-89"
-                radius="md"
-                {...form.getInputProps("strn")}
-              />
-            </SimpleGrid>
-
-            <Group justify="flex-end" gap="sm" mt="md">
-              <Button
-                variant="default"
-                size="sm"
-                radius="md"
-                onClick={() => setCreateModalOpen(false)}
-              >
-                Cancel
-              </Button>
-              <Button
-                type="submit"
-                size="sm"
-                radius="md"
-                loading={creating}
-                style={{
-                  background: "var(--app-accent, #1d2b54)",
-                  color: "#ffffff",
-                  fontWeight: 600,
-                }}
-              >
-                Save Customer
-              </Button>
-            </Group>
-          </Stack>
-        </form>
-      </Modal>
     </Stack>
   );
 }
