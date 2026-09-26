@@ -38,4 +38,7 @@ pub use adapters::*;
 pub use readers::*;
 pub use templates::*;
 pub use jobs::*;
+pub use products::*;
+pub use parties::*;
+pub use historical::*;
 pub use worker::*;

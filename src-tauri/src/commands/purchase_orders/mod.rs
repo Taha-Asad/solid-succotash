@@ -24,6 +24,8 @@ pub mod payments;
 #[cfg(test)]
 mod tests;
 
+pub use self::types::*;
+pub(crate) use self::helpers::*;
 pub use self::orders::*;
 pub use self::items::*;
 pub use self::payments::*;

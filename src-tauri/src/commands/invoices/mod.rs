@@ -22,6 +22,7 @@ pub mod rendering;
 mod tests;
 
 pub use self::types::*;
+pub use self::math::*;
 pub use self::customers::*;
 pub use self::operations::*;
 pub use self::rendering::*;

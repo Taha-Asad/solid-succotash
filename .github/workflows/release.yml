@@ -52,6 +52,10 @@ jobs:
         run: |
           set -euo pipefail
           tag="${{ github.ref_name }}"
+          if [ "${{ github.ref_type }}" != "tag" ]; then
+            ver=$(node -p "require('./package.json').version")
+            tag="v$ver"
+          fi
           api="https://api.github.com/repos/${{ github.repository }}"
           code=$(curl -s -o /tmp/release.json -w "%{http_code}" \
             -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
@@ -118,7 +122,8 @@ jobs:
             Authorization = "Bearer $env:GH_TOKEN"
             Accept        = "application/vnd.github+json"
           }
-          $tag = "${{ github.ref_name }}"
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          $tag = if ("${{ github.ref_type }}" -eq "tag") { "${{ github.ref_name }}" } else { "v$version" }
           $api = "https://api.github.com/repos/${{ github.repository }}"
           $release = Invoke-RestMethod -Headers $headers -Uri "$api/releases/tags/$tag"
           $exe = $release.assets | Where-Object { $_.name -like "*.exe" -and $_.name -notlike "*.exe.sig" } | Select-Object -First 1
@@ -206,6 +211,10 @@ jobs:
         run: |
           set -euo pipefail
           tag="${{ github.ref_name }}"
+          if [ "${{ github.ref_type }}" != "tag" ]; then
+            ver=$(node -p "require('./package.json').version")
+            tag="v$ver"
+          fi
           api="https://api.github.com/repos/${{ github.repository }}"
           curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
@@ -230,6 +239,10 @@ jobs:
         run: |
           set -euo pipefail
           tag="${{ github.ref_name }}"
+          if [ "${{ github.ref_type }}" != "tag" ]; then
+            ver=$(node -p "require('./package.json').version")
+            tag="v$ver"
+          fi
           api="https://api.github.com/repos/${{ github.repository }}"
           curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
@@ -277,6 +290,10 @@ jobs:
         run: |
           set -euo pipefail
           tag="${{ github.ref_name }}"
+          if [ "${{ github.ref_type }}" != "tag" ]; then
+            ver=$(node -p "require('./package.json').version")
+            tag="v$ver"
+          fi
           api="https://api.github.com/repos/${{ github.repository }}"
           curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
