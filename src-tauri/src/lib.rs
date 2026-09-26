@@ -47,18 +47,16 @@ fn attach_console() {}
 fn harden_webkit() {
     // WebKitGTK's accelerated DMA-BUF compositor is known to crash the web
     // process with `corrupted double-linked list` (heap corruption) on
-    // WSL2/WSLg and certain NVIDIA setups. The journal tab hit this abort
-    // because of how the page composites. The upstream-sanctioned fix is
-    // disabling the DMA-BUF renderer; disabling accelerated compositing too
-    // is the strongest fallback when the crash persists.
-    for (var, val) in [
-        ("WEBKIT_DISABLE_DMABUF_RENDERER", "1"),
-        ("WEBKIT_DISABLE_COMPOSITING_MODE", "1"),
-    ] {
-        if std::env::var_os(var).is_none() {
-            println!("harden_webkit: setting {var}={val}");
-            std::env::set_var(var, val);
-        }
+    // WSL2/WSLg and certain NVIDIA setups. The upstream-sanctioned fix is
+    // disabling the DMA-BUF renderer.
+    //
+    // Note: WEBKIT_DISABLE_COMPOSITING_MODE must NOT be enabled here!
+    // In modern WebKitGTK (2.40+), accelerated compositing is required to
+    // render to Wayland/X11 surfaces. Disabling compositing mode results in a
+    // solid black window.
+    if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+        println!("harden_webkit: setting WEBKIT_DISABLE_DMABUF_RENDERER=1");
+        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
     }
 }
 
