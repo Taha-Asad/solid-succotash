@@ -48,6 +48,7 @@ import {
   UserPlus,
   Zap,
   AlertTriangle,
+  RotateCcw,
 } from "lucide-react";
 
 import {
@@ -137,6 +138,8 @@ export default function InvoiceCreatePage({
   // Form State: Header
   const todayIso = useMemo(() => new Date().toISOString().slice(0, 10), []);
   const [customerId, setCustomerId] = useState<string>("");
+  const [walkinName, setWalkinName] = useState<string>("");
+  const [walkinPhone, setWalkinPhone] = useState<string>("");
   const [invoiceDate, setInvoiceDate] = useState<string>(todayIso);
   const [dueDate, setDueDate] = useState<string>(todayIso);
   const [poNumber, setPoNumber] = useState<string>("");
@@ -146,6 +149,10 @@ export default function InvoiceCreatePage({
   const [items, setItems] = useState<DraftLineItem[]>([]);
   const [scannerQuery, setScannerQuery] = useState("");
   const scannerInputRef = useRef<HTMLInputElement>(null);
+
+  // Auto-save & Power Outage Recovery
+  const STORAGE_KEY = "corbel_active_invoice_draft";
+  const [draftRecoveredTime, setDraftRecoveredTime] = useState<string | null>(null);
 
   // Inline Customer Creation
   const [newCustomerModalOpen, setNewCustomerModalOpen] = useState(false);
@@ -158,6 +165,75 @@ export default function InvoiceCreatePage({
   const [paymentReference, setPaymentReference] = useState<string>("");
   const [submitting, setSubmitting] = useState(false);
   const [generalError, setGeneralError] = useState<string | null>(null);
+
+  // Restore draft from localStorage on mount (Power Outage / Crash Recovery)
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed.items) && parsed.items.length > 0) {
+          setItems(parsed.items);
+          if (parsed.customerId) setCustomerId(parsed.customerId);
+          if (parsed.walkinName) setWalkinName(parsed.walkinName);
+          if (parsed.walkinPhone) setWalkinPhone(parsed.walkinPhone);
+          if (parsed.invoiceDate) setInvoiceDate(parsed.invoiceDate);
+          if (parsed.dueDate) setDueDate(parsed.dueDate);
+          if (parsed.poNumber) setPoNumber(parsed.poNumber);
+          if (parsed.referenceNote) setReferenceNote(parsed.referenceNote);
+          if (parsed.paymentMode) setPaymentMode(parsed.paymentMode);
+          if (parsed.amountTendered !== undefined) setAmountTendered(parsed.amountTendered);
+          if (parsed.paymentReference) setPaymentReference(parsed.paymentReference);
+          setDraftRecoveredTime(parsed.savedAt || new Date().toLocaleTimeString());
+        }
+      }
+    } catch (e) {
+      console.error("Failed to load invoice draft from localStorage", e);
+    }
+  }, []);
+
+  // Auto-save draft to localStorage whenever fields change
+  useEffect(() => {
+    try {
+      if (items.length > 0) {
+        const payload = {
+          items,
+          customerId,
+          walkinName,
+          walkinPhone,
+          invoiceDate,
+          dueDate,
+          poNumber,
+          referenceNote,
+          paymentMode,
+          amountTendered,
+          paymentReference,
+          savedAt: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        };
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+      } else {
+        localStorage.removeItem(STORAGE_KEY);
+      }
+    } catch (e) {
+      console.error("Failed to save invoice draft to localStorage", e);
+    }
+  }, [items, customerId, walkinName, walkinPhone, invoiceDate, dueDate, poNumber, referenceNote, paymentMode, amountTendered, paymentReference]);
+
+  const handleClearDraft = () => {
+    localStorage.removeItem(STORAGE_KEY);
+    setItems([]);
+    setWalkinName("");
+    setWalkinPhone("");
+    setPoNumber("");
+    setReferenceNote("");
+    setAmountTendered("");
+    setDraftRecoveredTime(null);
+    notifications.show({
+      title: "Draft Cleared",
+      message: "Unsaved invoice draft cleared.",
+      color: "gray",
+    });
+  };
 
   // Load initial data
   useEffect(() => {
@@ -174,14 +250,14 @@ export default function InvoiceCreatePage({
         setInvoices(invList);
         setCurrencyConfig(curr);
 
-        // Auto-select Walk-in Customer if available
+        // Auto-select Walk-in Customer if available and not restored from draft
         const walkIn = cList.find(
           (c) =>
             c.name.toLowerCase().includes("walk-in") ||
             c.name.toLowerCase().includes("cash customer") ||
             c.name.toLowerCase().includes("counter")
         );
-        if (walkIn) {
+        if (walkIn && !localStorage.getItem(STORAGE_KEY)) {
           setCustomerId(walkIn.id);
         }
       } catch (err) {
@@ -197,6 +273,23 @@ export default function InvoiceCreatePage({
     [currencyConfig]
   );
 
+  // Selected customer object & Walk-in detection
+  const selectedCustomer = useMemo(
+    () => customers.find((c) => c.id === customerId),
+    [customers, customerId]
+  );
+
+  const isWalkinCustomer = useMemo(() => {
+    if (!customerId || !selectedCustomer) return false;
+    const name = selectedCustomer.name.toLowerCase();
+    return (
+      name.includes("walk-in") ||
+      name.includes("walk in") ||
+      name.includes("cash customer") ||
+      name.includes("counter")
+    );
+  }, [customerId, selectedCustomer]);
+
   // Customer options
   const customerOptions = useMemo(
     () =>
@@ -210,8 +303,9 @@ export default function InvoiceCreatePage({
   );
 
   // Previous Khata / Udhaar balance for selected customer
+  // (NEVER shared across walk-in customers: walk-in customers are independent cash buyers)
   const customerPendingDue = useMemo(() => {
-    if (!customerId) return 0;
+    if (!customerId || isWalkinCustomer) return 0;
     return invoices
       .filter(
         (inv) =>
@@ -220,7 +314,7 @@ export default function InvoiceCreatePage({
           inv.status !== "draft"
       )
       .reduce((sum, inv) => sum + (inv.balanceDue || 0), 0);
-  }, [customerId, invoices]);
+  }, [customerId, invoices, isWalkinCustomer]);
 
   // Product lookup options
   const productOptions = useMemo(
@@ -274,6 +368,13 @@ export default function InvoiceCreatePage({
       });
     }
   }, [totals.grandTotalRupees, paymentMode]);
+
+  // Switch payment mode off credit if walk-in customer is active
+  useEffect(() => {
+    if (isWalkinCustomer && paymentMode === "credit") {
+      setPaymentMode("cash");
+    }
+  }, [isWalkinCustomer, paymentMode]);
 
   // Change Return Calculation
   const tenderedRupees = typeof amountTendered === "number" ? amountTendered : 0;
@@ -429,13 +530,23 @@ export default function InvoiceCreatePage({
 
     setSubmitting(true);
     try {
+      // Build effective reference note (attach walk-in buyer memo if applicable)
+      let effectiveReferenceNote = referenceNote.trim();
+      if (isWalkinCustomer && (walkinName.trim() || walkinPhone.trim())) {
+        const parts: string[] = [];
+        if (walkinName.trim()) parts.push(`Walk-in: ${walkinName.trim()}`);
+        if (walkinPhone.trim()) parts.push(`Tel: ${walkinPhone.trim()}`);
+        const memo = `[${parts.join(" | ")}]`;
+        effectiveReferenceNote = effectiveReferenceNote ? `${memo} ${effectiveReferenceNote}` : memo;
+      }
+
       // Step 1: Create Invoice Header
       const invoice = await createInvoice({
         customerId,
         invoiceDate,
         dueDate,
         poNumber: poNumber.trim(),
-        referenceNote: referenceNote.trim(),
+        referenceNote: effectiveReferenceNote,
       });
 
       // Step 2: Add Line Items sequentially
@@ -458,6 +569,7 @@ export default function InvoiceCreatePage({
 
       // If user chose "Save as Draft", stop here
       if (asDraft) {
+        localStorage.removeItem(STORAGE_KEY);
         notifications.show({
           title: "Invoice Draft Saved",
           message: `Invoice ${invoice.invoiceNumber} saved as draft.`,
@@ -502,6 +614,9 @@ export default function InvoiceCreatePage({
           console.error("Print generation error:", printErr);
         }
       }
+
+      // Clear draft auto-save
+      localStorage.removeItem(STORAGE_KEY);
 
       notifications.show({
         title: "Invoice Completed",
@@ -604,6 +719,33 @@ export default function InvoiceCreatePage({
         </Group>
       </Group>
 
+      {draftRecoveredTime && (
+        <Alert
+          color="cyan"
+          variant="light"
+          radius="md"
+          mb="md"
+          icon={<RotateCcw size={18} />}
+          withCloseButton
+          onClose={() => setDraftRecoveredTime(null)}
+        >
+          <Group justify="space-between" align="center" wrap="wrap">
+            <Text size="sm">
+              <strong>Auto-Saved Draft Restored</strong> (saved at {draftRecoveredTime}). Your unsaved items and entries were recovered after app closure.
+            </Text>
+            <Button
+              size="xs"
+              variant="subtle"
+              color="red"
+              leftSection={<Trash2 size={14} />}
+              onClick={handleClearDraft}
+            >
+              Discard Draft & Reset
+            </Button>
+          </Group>
+        </Alert>
+      )}
+
       {generalError && (
         <Alert
           color="red"
@@ -675,8 +817,45 @@ export default function InvoiceCreatePage({
                 </SimpleGrid>
               </SimpleGrid>
 
+              {/* Optional Walk-in Customer Memo Details */}
+              {isWalkinCustomer && (
+                <Paper
+                  withBorder
+                  p="xs"
+                  radius="md"
+                  mt="xs"
+                  style={{
+                    background: "rgba(16, 185, 129, 0.05)",
+                    borderColor: "rgba(16, 185, 129, 0.25)",
+                  }}
+                >
+                  <Group justify="space-between" mb={4}>
+                    <Text size="xs" fw={700} c="teal">
+                      ⚡ Walk-in Counter Sale (Isolated Cash Transaction)
+                    </Text>
+                    <Text size="xs" c="dimmed">
+                      Optional memo for receipt
+                    </Text>
+                  </Group>
+                  <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs">
+                    <TextInput
+                      placeholder="Buyer Name (optional, e.g. Tariq Khan)"
+                      size="xs"
+                      value={walkinName}
+                      onChange={(e) => setWalkinName(e.currentTarget.value)}
+                    />
+                    <TextInput
+                      placeholder="Phone # (optional, e.g. 0300-1234567)"
+                      size="xs"
+                      value={walkinPhone}
+                      onChange={(e) => setWalkinPhone(e.currentTarget.value)}
+                    />
+                  </SimpleGrid>
+                </Paper>
+              )}
+
               {/* Outstanding Khata / Udhaar Banner */}
-              {customerId && customerPendingDue > 0 && (
+              {customerId && !isWalkinCustomer && customerPendingDue > 0 && (
                 <Alert
                   color="orange"
                   variant="light"
@@ -944,7 +1123,10 @@ export default function InvoiceCreatePage({
                   variant="subtle"
                   color="red"
                   disabled={items.length === 0}
-                  onClick={() => setItems([])}
+                  onClick={() => {
+                    setItems([]);
+                    localStorage.removeItem(STORAGE_KEY);
+                  }}
                 >
                   Clear All Items
                 </Button>
@@ -1044,9 +1226,18 @@ export default function InvoiceCreatePage({
                     { label: "Cash", value: "cash" },
                     { label: "Bank", value: "bank_transfer" },
                     { label: "Card", value: "card" },
-                    { label: "Khata (Credit)", value: "credit" },
+                    {
+                      label: "Khata (Credit)",
+                      value: "credit",
+                      disabled: isWalkinCustomer,
+                    },
                   ]}
                 />
+                {isWalkinCustomer && (
+                  <Text size="xs" c="dimmed" mt={-4}>
+                    ℹ️ Walk-in cash customers cannot purchase on Khata credit. Select or register a named customer to record ledger debt.
+                  </Text>
+                )}
 
                 {/* If Cash / Bank / Card is active */}
                 {paymentMode !== "credit" ? (
@@ -1187,7 +1378,17 @@ export default function InvoiceCreatePage({
                     </Button>
                   </Group>
 
-                  <Button variant="subtle" size="xs" color="gray" onClick={onBack}>
+                  <Button
+                    variant="subtle"
+                    size="xs"
+                    color="gray"
+                    onClick={() => {
+                      if (items.length > 0) {
+                        handleClearDraft();
+                      }
+                      onBack();
+                    }}
+                  >
                     Discard & Return
                   </Button>
                 </Stack>

@@ -313,27 +313,7 @@ export default function InventoryPage({ onOpenImport }: InventoryPageProps) {
         onChange={setActiveTab}
         variant="pills"
         radius="md"
-        styles={{
-          tab: {
-            fontWeight: 600,
-            fontSize: 13,
-            padding: "8px 16px",
-            borderColor: "transparent",
-            color: "var(--app-text-soft)",
-            "&[data-active]": {
-              backgroundColor: "var(--app-accent)",
-              color: "#ffffff",
-            },
-          },
-          list: {
-            gap: 6,
-            background: "var(--app-soft)",
-            padding: 4,
-            borderRadius: 12,
-            border: "1px solid var(--app-border)",
-            width: "fit-content",
-          },
-        }}
+        className="inventory-tabs"
       >
         {!isFormMode && (
           <Tabs.List grow={isMobileHeader}>
