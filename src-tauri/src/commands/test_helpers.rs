@@ -44,7 +44,8 @@ pub async fn setup_pool() -> (SqlitePool, PathBuf) {
         .expect("migrations should apply cleanly");
 
     let pool = SqlitePoolOptions::new()
-        .max_connections(2)
+        .max_connections(1)
+        .idle_timeout(std::time::Duration::from_millis(100))
         .connect(&url)
         .await
         .expect("pool should connect");

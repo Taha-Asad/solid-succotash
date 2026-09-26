@@ -157,6 +157,8 @@ mod tests {
             .await
             .expect("migrations should apply");
         SqlitePoolOptions::new()
+            .max_connections(1)
+            .idle_timeout(std::time::Duration::from_millis(100))
             .connect(&url)
             .await
             .expect("pool should connect")

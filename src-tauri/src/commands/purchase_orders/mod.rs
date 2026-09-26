@@ -24,8 +24,13 @@ pub mod payments;
 #[cfg(test)]
 mod tests;
 
+#[allow(unused_imports)]
 pub use self::types::*;
+#[allow(unused_imports)]
 pub(crate) use self::helpers::*;
+#[allow(unused_imports)]
 pub use self::orders::*;
+#[allow(unused_imports)]
 pub use self::items::*;
+#[allow(unused_imports)]
 pub use self::payments::*;

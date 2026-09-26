@@ -57,15 +57,20 @@ jobs:
             tag="v$ver"
           fi
           api="https://api.github.com/repos/${{ github.repository }}"
-          code=$(curl -s -o /tmp/release.json -w "%{http_code}" \
-            -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
-            "$api/releases/tags/$tag" || true)
-          if [ "$code" = "200" ]; then
-            id=$(python3 -c "import json;print(json.load(open('/tmp/release.json'))['id'])")
-            curl -fsSL -X DELETE -H "Authorization: Bearer $GH_TOKEN" "$api/releases/$id"
+          resp=$(curl -s -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$api/releases/tags/$tag" || true)
+          id=$(printf '%s' "$resp" | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    print(data.get('id', ''))
+except Exception:
+    print('')
+")
+          if [ -n "$id" ] && [ "$id" != "None" ]; then
+            curl -fsSL -X DELETE -H "Authorization: Bearer $GH_TOKEN" "$api/releases/$id" || true
             echo "Deleted existing release $id for tag $tag"
           else
-            echo "No existing release for $tag (HTTP $code) - starting fresh"
+            echo "No existing release for $tag - starting fresh"
           fi
 
       - name: Setup Node.js

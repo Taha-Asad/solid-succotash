@@ -21,8 +21,13 @@ pub mod rendering;
 #[cfg(test)]
 mod tests;
 
+#[allow(unused_imports)]
 pub use self::types::*;
+#[allow(unused_imports)]
 pub use self::math::*;
+#[allow(unused_imports)]
 pub use self::customers::*;
+#[allow(unused_imports)]
 pub use self::operations::*;
+#[allow(unused_imports)]
 pub use self::rendering::*;

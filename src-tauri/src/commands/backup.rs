@@ -43,7 +43,7 @@ pub async fn execute_atomic_backup(pool: &SqlitePool, save_path: &str) -> Result
     if let Some(parent) = target.parent() {
         if !parent.exists() {
             std::fs::create_dir_all(parent)
-                .map_err(|e| AppError::internal(format!("Failed to create backup directory: {e}")))?;
+                .map_err(|e| AppError::internal(format!("Backup failed: failed to create backup directory: {e}")))?;
         }
     }
 
@@ -139,8 +139,8 @@ pub async fn restore_backup(
         let _ = std::fs::copy(&db_file, &safety_backup);
     }
 
-    // In WAL mode, stale -wal and -shm files must be removed before restoring
-    // so the newly replaced DB file is not corrupted by old WAL replay.
+    // In WAL mode, checkpoint and truncate WAL before restoring
+    let _ = sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)").execute(pool.inner()).await;
     let wal_file = format!("{db_file}-wal");
     let shm_file = format!("{db_file}-shm");
     let _ = std::fs::remove_file(wal_file);

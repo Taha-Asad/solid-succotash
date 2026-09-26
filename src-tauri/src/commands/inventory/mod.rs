@@ -23,9 +23,15 @@ pub mod batches;
 #[cfg(test)]
 mod tests;
 
+#[allow(unused_imports)]
 pub use self::types::*;
+#[allow(unused_imports)]
 pub use self::helpers::*;
+#[allow(unused_imports)]
 pub use self::categories::*;
+#[allow(unused_imports)]
 pub use self::suppliers::*;
+#[allow(unused_imports)]
 pub use self::products::*;
+#[allow(unused_imports)]
 pub use self::batches::*;
