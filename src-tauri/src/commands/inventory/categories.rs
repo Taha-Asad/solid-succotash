@@ -43,8 +43,8 @@ pub async fn create_category(
     pool: State<'_, SqlitePool>,
     session: State<'_, SessionState>,
     name: String,
-    description: String,
-    sku_prefix: String,
+    description: Option<String>,
+    sku_prefix: Option<String>,
 ) -> Result<PublicCategory, AppError> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
 
@@ -60,10 +60,11 @@ pub async fn create_category(
         return Err(AppError::internal("Category name cannot be empty".to_string()));
     }
 
-    let prefix = normalize_sku_prefix(&sku_prefix, &trimmed_name);
+    let prefix_raw = sku_prefix.as_deref().unwrap_or("");
+    let prefix = normalize_sku_prefix(prefix_raw, &trimmed_name);
 
     let id = uuid::Uuid::new_v4().to_string();
-    let desc = clean_optional(&description);
+    let desc = description.as_deref().and_then(clean_optional);
 
     sqlx::query(
         r#"
@@ -119,8 +120,8 @@ pub async fn update_category(
     expected_version: i64,
     category_id: String,
     name: String,
-    description: String,
-    sku_prefix: String,
+    description: Option<String>,
+    sku_prefix: Option<String>,
 ) -> Result<PublicCategory, AppError> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
 
@@ -136,7 +137,7 @@ pub async fn update_category(
         return Err(AppError::internal("Category name cannot be empty".to_string()));
     }
 
-    let desc = clean_optional(&description);
+    let desc = description.as_deref().and_then(clean_optional);
 
     // If the user cleared the prefix, keep whatever it was before
     // (falling back to one derived from the new name for old records).
@@ -148,13 +149,14 @@ pub async fn update_category(
             .await
             .map_err(|e| AppError::internal(format!("Database error: {e}")))?;
 
-    let prefix = if sku_prefix.trim().is_empty() {
+    let prefix_raw = sku_prefix.as_deref().unwrap_or("").trim();
+    let prefix = if prefix_raw.is_empty() {
         match existing_prefix {
             Some(p) if !p.is_empty() => p,
             _ => derive_sku_prefix(&trimmed_name),
         }
     } else {
-        normalize_sku_prefix(&sku_prefix, &trimmed_name)
+        normalize_sku_prefix(prefix_raw, &trimmed_name)
     };
 
     check_version(pool.inner(), "categories", &category_id, expected_version).await?;

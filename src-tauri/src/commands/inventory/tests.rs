@@ -19,8 +19,8 @@ use uuid::Uuid;
             app.state(),
             app.state(),
             name.to_string(),
-            "".to_string(),
-            "".to_string(),
+            None,
+            None,
         )
         .await
         .expect("create category")
@@ -361,20 +361,39 @@ use uuid::Uuid;
     #[tokio::test]
     async fn create_category_generates_prefix() {
         // Input: name "Electronics", blank prefix.
-        // Expected: Ok with sku_prefix "ELEC".
+        // Expected: Ok with sku_prefix "ELECTR".
         let app = owner_app().await;
         let cat = create_category(
             app.state(),
             app.state(),
             "Electronics".to_string(),
-            "Gadgets".to_string(),
-            "".to_string(),
+            Some("Gadgets".to_string()),
+            Some("".to_string()),
         )
         .await
         .expect("create");
         assert_eq!(cat.name, "Electronics");
         assert_eq!(cat.sku_prefix.as_deref(), Some("ELECTR"));
         assert_eq!(cat.description.as_deref(), Some("Gadgets"));
+    }
+
+    #[tokio::test]
+    async fn create_category_with_none_prefix_and_description() {
+        // Input: name "Beverages", None prefix and None description.
+        // Expected: Ok with auto-derived sku_prefix "BEVERA".
+        let app = owner_app().await;
+        let cat = create_category(
+            app.state(),
+            app.state(),
+            "Beverages".to_string(),
+            None,
+            None,
+        )
+        .await
+        .expect("create");
+        assert_eq!(cat.name, "Beverages");
+        assert_eq!(cat.sku_prefix.as_deref(), Some("BEVERA"));
+        assert_eq!(cat.description, None);
     }
 
     #[tokio::test]
@@ -386,8 +405,8 @@ use uuid::Uuid;
             app.state(),
             app.state(),
             "   ".to_string(),
-            "".to_string(),
-            "".to_string(),
+            None,
+            None,
         )
         .await
         .unwrap_err();
@@ -404,8 +423,8 @@ use uuid::Uuid;
             app.state(),
             app.state(),
             "Tools".to_string(),
-            "".to_string(),
-            "".to_string(),
+            None,
+            None,
         )
         .await
         .unwrap_err();
@@ -433,8 +452,8 @@ use uuid::Uuid;
             app.state(),
             app.state(),
             "Tools".to_string(),
-            "".to_string(),
-            "".to_string(),
+            None,
+            None,
         )
         .await
         .unwrap_err();
@@ -450,8 +469,8 @@ use uuid::Uuid;
             app.state(),
             app.state(),
             "Tools".to_string(),
-            "".to_string(),
-            "".to_string(),
+            None,
+            None,
         )
         .await
         .unwrap_err();
@@ -475,8 +494,8 @@ use uuid::Uuid;
             cat.version,
             cat.id.clone(),
             "Power Tools".to_string(),
-            "".to_string(),
-            "PWR".to_string(),
+            None,
+            Some("PWR".to_string()),
         )
         .await
         .expect("update");
@@ -498,8 +517,8 @@ use uuid::Uuid;
             cat.version + 5,
             cat.id.clone(),
             "Renamed".to_string(),
-            "".to_string(),
-            "".to_string(),
+            None,
+            None,
         )
         .await
         .unwrap_err();
@@ -517,8 +536,8 @@ use uuid::Uuid;
             0,
             Uuid::new_v4().to_string(),
             "X".to_string(),
-            "".to_string(),
-            "".to_string(),
+            None,
+            None,
         )
         .await
         .unwrap_err();
@@ -537,8 +556,8 @@ use uuid::Uuid;
             cat.version,
             cat.id.clone(),
             "  ".to_string(),
-            "".to_string(),
-            "".to_string(),
+            None,
+            None,
         )
         .await
         .unwrap_err();

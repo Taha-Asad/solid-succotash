@@ -115,6 +115,7 @@ export default function ProductFormPage({
   const [newCategoryModalOpen, setNewCategoryModalOpen] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState("");
   const [newCategoryDesc, setNewCategoryDesc] = useState("");
+  const [newCategorySkuPrefix, setNewCategorySkuPrefix] = useState("");
   const [creatingCategory, setCreatingCategory] = useState(false);
   const [newCategoryError, setNewCategoryError] = useState<string | null>(null);
 
@@ -171,7 +172,8 @@ export default function ProductFormPage({
     try {
       const created = await createCategory({
         name: trimmed,
-        description: newCategoryDesc.trim(),
+        description: newCategoryDesc.trim() || undefined,
+        skuPrefix: newCategorySkuPrefix.trim() || undefined,
       });
       setLocalCategories((prev) => [...prev, created]);
       onCategoryCreated?.(created);
@@ -179,6 +181,7 @@ export default function ProductFormPage({
       setNewCategoryModalOpen(false);
       setNewCategoryName("");
       setNewCategoryDesc("");
+      setNewCategorySkuPrefix("");
     } catch (err) {
       setNewCategoryError(getErrorMessage(err));
     } finally {
@@ -1003,7 +1006,10 @@ export default function ProductFormPage({
       {/* ==================== CREATE CATEGORY MODAL ==================== */}
       <Modal
         opened={newCategoryModalOpen}
-        onClose={() => setNewCategoryModalOpen(false)}
+        onClose={() => {
+          setNewCategoryModalOpen(false);
+          setNewCategorySkuPrefix("");
+        }}
         title={
           <Group gap="xs">
             <Plus size={18} color="var(--app-accent)" />
@@ -1039,6 +1045,14 @@ export default function ProductFormPage({
             onChange={(e) => setNewCategoryName(e.currentTarget.value)}
           />
 
+          <TextInput
+            label="SKU Prefix (Optional)"
+            placeholder="e.g. BEV (Auto-generated from name if left empty)"
+            radius="md"
+            value={newCategorySkuPrefix}
+            onChange={(e) => setNewCategorySkuPrefix(e.currentTarget.value.toUpperCase())}
+          />
+
           <Textarea
             label="Description (Optional)"
             placeholder="Brief notes about this category"
@@ -1053,7 +1067,10 @@ export default function ProductFormPage({
               variant="default"
               size="sm"
               radius="md"
-              onClick={() => setNewCategoryModalOpen(false)}
+              onClick={() => {
+                setNewCategoryModalOpen(false);
+                setNewCategorySkuPrefix("");
+              }}
             >
               Cancel
             </Button>

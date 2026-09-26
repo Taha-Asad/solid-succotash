@@ -185,9 +185,14 @@ export function listCategories(): Promise<PublicCategory[]> {
 
 export function createCategory(input: {
   name: string;
-  description: string;
+  description?: string | null;
+  skuPrefix?: string | null;
 }): Promise<PublicCategory> {
-  return invoke<PublicCategory>("create_category", input);
+  return invoke<PublicCategory>("create_category", {
+    name: input.name,
+    description: input.description ?? "",
+    skuPrefix: input.skuPrefix ?? "",
+  });
 }
 
 // ==========================================
@@ -223,9 +228,16 @@ export function updateCategory(input: {
   categoryId: string;
   expectedVersion: number;
   name: string;
-  description: string;
+  description?: string | null;
+  skuPrefix?: string | null;
 }): Promise<PublicCategory> {
-  return invoke<PublicCategory>("update_category", input);
+  return invoke<PublicCategory>("update_category", {
+    categoryId: input.categoryId,
+    expectedVersion: input.expectedVersion,
+    name: input.name,
+    description: input.description ?? "",
+    skuPrefix: input.skuPrefix ?? "",
+  });
 }
 
 export function setCategoryActive(input: {
