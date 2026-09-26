@@ -58,14 +58,7 @@ jobs:
           fi
           api="https://api.github.com/repos/${{ github.repository }}"
           resp=$(curl -s -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$api/releases/tags/$tag" || true)
-          id=$(printf '%s' "$resp" | python3 -c "
-import sys, json
-try:
-    data = json.load(sys.stdin)
-    print(data.get('id', ''))
-except Exception:
-    print('')
-")
+          id=$(node -e "try { const d = JSON.parse(process.argv[1]); console.log(d.id || ''); } catch (e) {}" "$resp")
           if [ -n "$id" ] && [ "$id" != "None" ]; then
             curl -fsSL -X DELETE -H "Authorization: Bearer $GH_TOKEN" "$api/releases/$id" || true
             echo "Deleted existing release $id for tag $tag"
