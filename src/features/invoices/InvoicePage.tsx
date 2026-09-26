@@ -42,10 +42,8 @@ import { useForm } from "@mantine/form";
 
 import {
   listCustomers,
-  createCustomer,
   listInvoices,
   getInvoice,
-  createInvoice,
   addInvoiceItem,
   removeInvoiceItem,
   updateInvoiceItem,
@@ -58,7 +56,6 @@ import {
   saveFileDialog,
   getErrorMessage,
   getCompanyCurrency,
-  fetchExchangeRates,
   getInvoiceFbrStatus,
   createCreditNote,
   createDebitNote,
@@ -76,11 +73,15 @@ import type {
 
 import { INK } from "../../theme";
 import { AppDateInput } from "../../components/AppDateInput";
-import { ReceiptText, Plus, Printer, MessageSquare, Coins, AlertTriangle, CheckCircle2, Zap, Barcode, ChevronDown } from "lucide-react";
+import { ReceiptText, Plus, Printer, MessageSquare, Coins, CheckCircle2, Zap, Barcode, ChevronDown } from "lucide-react";
 import { printHtmlContent } from "../../utils/printInvoice";
 import { reportOnboardingEvent } from "../../onboarding/bus";
 import { usePermissions } from "../permissions/PermissionsProvider";
 import InvoiceCreatePage from "./InvoiceCreatePage";
+import {
+  formatWhatsAppNumber,
+  launchWhatsAppUrl,
+} from "../../utils/whatsapp";
 
 // ==========================================
 // HELPERS
@@ -216,7 +217,6 @@ function InvoiceListView({
   const [customers, setCustomers] = useState<PublicCustomer[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [createModalOpen, setCreateModalOpen] = useState(false);
   const [currencyConfig, setCurrencyConfig] = useState<CurrencyConfig | null>(null);
 
   const load = useCallback(async () => {
@@ -248,26 +248,6 @@ function InvoiceListView({
   const totalOutstanding = invoices
     .filter((i) => i.status === "finalized")
     .reduce((sum, i) => sum + i.balanceDue, 0);
-
-  async function handleCreateInvoice(values: {
-    customerId: string;
-    invoiceDate: string;
-    dueDate: string;
-    poNumber: string;
-    referenceNote: string;
-    currencyCode?: string;
-    exchangeRate?: number;
-  }) {
-    try {
-      const invoice = await createInvoice(values);
-      reportOnboardingEvent({ type: "invoice-created" });
-      setCreateModalOpen(false);
-      await load();
-      onOpenInvoice(invoice.id);
-    } catch (err) {
-      throw new Error(getErrorMessage(err));
-    }
-  }
 
   return (
     <Stack gap="lg">
@@ -319,7 +299,7 @@ function InvoiceListView({
           <Text size="xs" fw={600} style={{ color: INK.muted, textTransform: "uppercase", letterSpacing: 0.4 }}>
             Total Revenue
           </Text>
-          <Title order={2} className="tabular" style={{ color: INK.text }}>{paisaToDisplay(totalRevenue)}</Title>
+          <Title order={2} className="tabular" style={{ color: INK.text }}>{paisaToDisplay(totalRevenue, currencyConfig)}</Title>
           <Text size="xs" c="dimmed" mt={4}>from finalized invoices</Text>
         </Card>
         <Card withBorder shadow="sm" padding="lg">
@@ -327,7 +307,7 @@ function InvoiceListView({
             Outstanding
           </Text>
           <Title order={2} className="tabular" c={totalOutstanding > 0 ? "orange" : "green"}>
-            {paisaToDisplay(totalOutstanding)}
+            {paisaToDisplay(totalOutstanding, currencyConfig)}
           </Title>
           <Text size="xs" c="dimmed" mt={4}>balance due from customers</Text>
         </Card>
@@ -425,11 +405,11 @@ function InvoiceListView({
                     </Table.Td>
                     <Table.Td ta="right">
                       <Text size="sm" fw={600} className="tabular">
-                        {paisaToDisplay(inv.grandTotal)}
+                        {paisaToDisplay(inv.grandTotal, currencyConfig)}
                       </Text>
                     </Table.Td>
                     <Table.Td ta="right">
-                      <Text size="sm" className="tabular">{paisaToDisplay(inv.amountPaid)}</Text>
+                      <Text size="sm" className="tabular">{paisaToDisplay(inv.amountPaid, currencyConfig)}</Text>
                     </Table.Td>
                     <Table.Td ta="right">
                       <Text
@@ -438,7 +418,7 @@ function InvoiceListView({
                         className="tabular"
                         c={inv.balanceDue > 0 ? "orange" : "green"}
                       >
-                        {paisaToDisplay(inv.balanceDue)}
+                        {paisaToDisplay(inv.balanceDue, currencyConfig)}
                       </Text>
                     </Table.Td>
                   </Table.Tr>
@@ -448,395 +428,7 @@ function InvoiceListView({
           </ScrollArea>
         </Card>
       )}
-
-      <CreateInvoiceModal
-        opened={createModalOpen}
-        onClose={() => setCreateModalOpen(false)}
-        onCreate={handleCreateInvoice}
-        customers={customers}
-        invoices={invoices}
-        onCustomerCreated={load}
-        currencyConfig={currencyConfig}
-      />
     </Stack>
-  );
-}
-
-// ==========================================
-// CREATE INVOICE MODAL
-// ==========================================
-
-const CURRENCY_OPTIONS = [
-  { value: "", label: "Base currency (default)" },
-  { value: "USD", label: "USD - US Dollar" },
-  { value: "EUR", label: "EUR - Euro" },
-  { value: "GBP", label: "GBP - British Pound" },
-  { value: "AED", label: "AED - UAE Dirham" },
-  { value: "SAR", label: "SAR - Saudi Riyal" },
-  { value: "INR", label: "INR - Indian Rupee" },
-  { value: "JPY", label: "JPY - Japanese Yen" },
-  { value: "CNY", label: "CNY - Chinese Yuan" },
-  { value: "CAD", label: "CAD - Canadian Dollar" },
-  { value: "AUD", label: "AUD - Australian Dollar" },
-  { value: "CHF", label: "CHF - Swiss Franc" },
-];
-
-function CreateInvoiceModal({
-  opened,
-  onClose,
-  onCreate,
-  customers,
-  invoices,
-  onCustomerCreated,
-  currencyConfig,
-}: {
-  opened: boolean;
-  onClose: () => void;
-  onCreate: (values: {
-    customerId: string;
-    invoiceDate: string;
-    dueDate: string;
-    poNumber: string;
-    referenceNote: string;
-    currencyCode?: string;
-    exchangeRate?: number;
-  }) => Promise<void>;
-  customers: PublicCustomer[];
-  invoices: PublicInvoice[];
-  onCustomerCreated: () => Promise<void>;
-  currencyConfig?: CurrencyConfig | null;
-}) {
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [showNewCustomer, setShowNewCustomer] = useState(false);
-  const [selectedCurrency, setSelectedCurrency] = useState("");
-  const [exchangeRate, setExchangeRate] = useState<number>(1);
-  const [rateLoading, setRateLoading] = useState(false);
-
-  const form = useForm({
-    initialValues: {
-      customerId: "",
-      invoiceDate: new Date().toISOString().split("T")[0],
-      dueDate: "",
-      poNumber: "",
-      referenceNote: "",
-    },
-    validate: {
-      customerId: (v) => (v ? null : "Select a customer"),
-    },
-  });
-
-  const newCustomerForm = useForm({
-    initialValues: {
-      name: "",
-      email: "",
-      phone: "",
-      address: "",
-      cnic: "",
-      ntn: "",
-      strn: "",
-      buyerType: "unregistered",
-    },
-    validate: {
-      name: (v) => (v.trim().length < 1 ? "Name is required" : null),
-    },
-  });
-
-  async function handleSubmit(values: typeof form.values) {
-    setError(null);
-    setLoading(true);
-    try {
-      await onCreate({
-        ...values,
-        currencyCode: selectedCurrency || undefined,
-        exchangeRate: selectedCurrency ? exchangeRate : undefined,
-      });
-      form.reset();
-      setSelectedCurrency("");
-      setExchangeRate(1);
-    } catch (err) {
-      setError(getErrorMessage(err));
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function handleCreateCustomer(values: typeof newCustomerForm.values) {
-    try {
-      const customer = await createCustomer(values);
-      await onCustomerCreated();
-      form.setFieldValue("customerId", customer.id);
-      setShowNewCustomer(false);
-      newCustomerForm.reset();
-    } catch (err) {
-      setError(getErrorMessage(err));
-    }
-  }
-
-  async function handleSelectWalkinCustomer() {
-    const existing = customers.find(
-      (c) =>
-        c.name.toLowerCase().includes("walk-in") ||
-        c.name.toLowerCase().includes("walk in") ||
-        c.name.toLowerCase().includes("cash customer")
-    );
-    if (existing) {
-      form.setFieldValue("customerId", existing.id);
-      return;
-    }
-    try {
-      const created = await createCustomer({
-        name: "Walk-in Customer",
-        phone: "",
-        email: "",
-        address: "Cash Counter",
-        buyerType: "unregistered",
-        cnic: "",
-        ntn: "",
-        strn: "",
-      });
-      await onCustomerCreated();
-      form.setFieldValue("customerId", created.id);
-    } catch (err) {
-      setError(getErrorMessage(err));
-    }
-  }
-
-  const customerOptions = customers
-    .filter((c) => c.isActive)
-    .map((c) => ({ value: c.id, label: c.name ?? "" }));
-
-  const selectedCustomerId = form.values.customerId;
-  const customerPendingDue = selectedCustomerId
-    ? invoices
-        .filter(
-          (inv) =>
-            inv.customerId === selectedCustomerId &&
-            inv.status !== "cancelled" &&
-            inv.status !== "draft"
-        )
-        .reduce((sum, inv) => sum + (inv.balanceDue || 0), 0)
-    : 0;
-
-  return (
-    <Modal
-      opened={opened}
-      onClose={onClose}
-      title="New Invoice"
-      size="lg"
-      centered
-    >
-      {!showNewCustomer ? (
-        <form onSubmit={form.onSubmit(handleSubmit)}>
-          <Stack gap="md">
-            <Box>
-              <Group justify="space-between" align="flex-end">
-                <Select
-                  label="Customer"
-                  placeholder="Select customer"
-                  data={customerOptions}
-                  required
-                  searchable
-                  style={{ flex: 1 }}
-                  {...form.getInputProps("customerId")}
-                />
-                <Button
-                  variant="light"
-                  color="teal"
-                  size="sm"
-                  leftSection={<Zap size={14} />}
-                  onClick={() => void handleSelectWalkinCustomer()}
-                >
-                  ⚡ Cash / Walk-in
-                </Button>
-                <Button
-                  variant="subtle"
-                  size="sm"
-                  onClick={() => setShowNewCustomer(true)}
-                >
-                  + New Customer
-                </Button>
-              </Group>
-              {selectedCustomerId && (
-                <Box mt={6}>
-                  {customerPendingDue > 0 ? (
-                    <Alert
-                      color="orange"
-                      variant="light"
-                      radius="md"
-                      p="xs"
-                      icon={<AlertTriangle size={15} />}
-                    >
-                      <Group justify="space-between" align="center">
-                        <Text size="xs" fw={700}>
-                          Previous Khata Balance: {paisaToDisplay(customerPendingDue)} PKR
-                        </Text>
-                        <Badge color="orange" size="xs" variant="filled">
-                          Pending Udhaar Due
-                        </Badge>
-                      </Group>
-                    </Alert>
-                  ) : (
-                    <Text size="xs" c="teal" fw={600} style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                      <CheckCircle2 size={14} /> Clean Khata (All previous bills are settled)
-                    </Text>
-                  )}
-                </Box>
-              )}
-            </Box>
-
-            <SimpleGrid cols={2}>
-              <AppDateInput
-                label="Invoice Date"
-                required
-                value={form.values.invoiceDate}
-                onChange={(v) => form.setFieldValue("invoiceDate", v)}
-              />
-              <AppDateInput
-                label="Due Date"
-                value={form.values.dueDate}
-                onChange={(v) => form.setFieldValue("dueDate", v)}
-              />
-            </SimpleGrid>
-
-            <SimpleGrid cols={2}>
-              <TextInput
-                label="PO Number"
-                placeholder="Customer's PO reference"
-                {...form.getInputProps("poNumber")}
-              />
-              <TextInput
-                label="Reference / Note"
-                placeholder="Any notes"
-                {...form.getInputProps("referenceNote")}
-              />
-            </SimpleGrid>
-
-            {currencyConfig && currencyConfig.code !== "PKR" && (
-              <SimpleGrid cols={2}>
-                <Select
-                  label="Invoice Currency"
-                  placeholder="Base currency"
-                  data={CURRENCY_OPTIONS}
-                  value={selectedCurrency}
-                  onChange={async (v) => {
-                    setSelectedCurrency(v || "");
-                    if (v && v !== currencyConfig?.code) {
-                      setRateLoading(true);
-                      try {
-                        const rates = await fetchExchangeRates({
-                          baseCurrency: currencyConfig?.code || "PKR",
-                          targetCurrencies: [v],
-                        });
-                        if (rates.length > 0) setExchangeRate(rates[0].rate);
-                      } catch { /* ignore */ }
-                      setRateLoading(false);
-                    } else {
-                      setExchangeRate(1);
-                    }
-                  }}
-                  searchable
-                  clearable
-                />
-                {selectedCurrency && selectedCurrency !== currencyConfig?.code && (
-                  <NumberInput
-                    label={`Exchange Rate (1 ${currencyConfig?.code || "PKR"} = X ${selectedCurrency})`}
-                    value={exchangeRate}
-                    onChange={(v) => setExchangeRate(typeof v === "number" ? v : 1)}
-                    min={0.0001}
-                    step={0.01}
-                    decimalScale={6}
-                    loading={rateLoading}
-                    disabled={rateLoading}
-                  />
-                )}
-              </SimpleGrid>
-            )}
-
-            {selectedCurrency && selectedCurrency !== currencyConfig?.code && exchangeRate > 0 && (
-              <Text size="sm" c="dimmed">
-                Invoice will be in {selectedCurrency}. Amounts will be converted to {currencyConfig?.code || "PKR"} at rate {exchangeRate}.
-              </Text>
-            )}
-
-            {error && (
-              <Text c="red" size="sm">
-                {error}
-              </Text>
-            )}
-
-            <Group justify="flex-end">
-              <Button variant="subtle" onClick={onClose}>
-                Cancel
-              </Button>
-              <Button type="submit" loading={loading}>
-                Create Invoice
-              </Button>
-            </Group>
-          </Stack>
-        </form>
-      ) : (
-        <Stack gap="md">
-          <Title order={5}>New Customer</Title>
-          <TextInput
-            label="Name"
-            placeholder="Customer name"
-            required
-            {...newCustomerForm.getInputProps("name")}
-          />
-          <SimpleGrid cols={2}>
-            <TextInput
-              label="Phone"
-              {...newCustomerForm.getInputProps("phone")}
-            />
-            <TextInput
-              label="Email"
-              {...newCustomerForm.getInputProps("email")}
-            />
-          </SimpleGrid>
-          <Textarea
-            label="Address"
-            rows={2}
-            {...newCustomerForm.getInputProps("address")}
-          />
-          <SimpleGrid cols={3}>
-            <TextInput
-              label="CNIC"
-              placeholder="12345-1234567-1"
-              {...newCustomerForm.getInputProps("cnic")}
-            />
-            <TextInput label="NTN" {...newCustomerForm.getInputProps("ntn")} />
-            <TextInput
-              label="STRN"
-              {...newCustomerForm.getInputProps("strn")}
-            />
-          </SimpleGrid>
-          <Select
-            label="Buyer Type"
-            data={[
-              { value: "unregistered", label: "Unregistered" },
-              { value: "registered", label: "Registered" },
-            ]}
-            {...newCustomerForm.getInputProps("buyerType")}
-          />
-          {error && (
-            <Text c="red" size="sm">
-              {error}
-            </Text>
-          )}
-          <Group justify="flex-end">
-            <Button variant="subtle" onClick={() => setShowNewCustomer(false)}>
-              Back
-            </Button>
-            <Button
-              onClick={() => newCustomerForm.onSubmit(handleCreateCustomer)()}
-            >
-              Create Customer
-            </Button>
-          </Group>
-        </Stack>
-      )}
-    </Modal>
   );
 }
 
@@ -1112,16 +704,11 @@ function InvoiceDetailView({
     load();
   }, [load]);
 
-  function handleShareWhatsApp() {
+  async function handleShareWhatsApp() {
     if (!details) return;
     const { invoice, customer, items } = details;
 
-    let rawPhone = (customer.phone || "").replace(/[^0-9]/g, "");
-    if (rawPhone.startsWith("0")) {
-      rawPhone = "92" + rawPhone.slice(1);
-    } else if (rawPhone.length === 10) {
-      rawPhone = "92" + rawPhone;
-    }
+    const rawPhone = customer.phone ? formatWhatsAppNumber(customer.phone) : "";
 
     const itemsSummary = items
       .slice(0, 8)
@@ -1151,7 +738,7 @@ function InvoiceDetailView({
       ? `https://wa.me/${rawPhone}?text=${encodeURIComponent(message)}`
       : `https://wa.me/?text=${encodeURIComponent(message)}`;
 
-    window.open(url, "_blank");
+    await launchWhatsAppUrl(url);
   }
 
   async function handleAddItem(values: {

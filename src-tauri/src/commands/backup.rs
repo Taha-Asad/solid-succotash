@@ -84,6 +84,10 @@ pub async fn create_backup(
 ) -> Result<String, AppError> {
     let user = require_current_user(pool.inner(), session.inner()).await?;
 
+    if user.role != "owner" {
+        return Err(AppError::internal("Only the owner can create database backups".to_string()));
+    }
+
     // Perform atomic live backup
     execute_atomic_backup(pool.inner(), &save_path).await?;
 

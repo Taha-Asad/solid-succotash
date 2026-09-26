@@ -49,6 +49,7 @@ import {
   Zap,
   AlertTriangle,
   RotateCcw,
+  MessageSquare,
 } from "lucide-react";
 
 import {
@@ -78,6 +79,10 @@ import {
   roundToCurrency,
 } from "../../utils/currency";
 import { printHtmlContent } from "../../utils/printInvoice";
+import {
+  buildInvoiceShareLink,
+  launchWhatsAppUrl,
+} from "../../utils/whatsapp";
 
 // ==========================================
 // TYPES & MATH HELPERS
@@ -514,8 +519,12 @@ export default function InvoiceCreatePage({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [customers, items, customerId, totals, paymentMode, amountTendered, submitting]);
 
-  // Execute Complete Sale or Save Draft
-  const handleExecuteCheckout = async (andPrint: boolean, asDraft: boolean = false) => {
+  // Execute Complete Sale, Save Draft, or WhatsApp Bill
+  const handleExecuteCheckout = async (
+    andPrint: boolean,
+    asDraft: boolean = false,
+    andWhatsApp: boolean = false,
+  ) => {
     setGeneralError(null);
 
     if (!customerId) {
@@ -613,6 +622,25 @@ export default function InvoiceCreatePage({
         } catch (printErr) {
           console.error("Print generation error:", printErr);
         }
+      }
+
+      // Step 6: Optional WhatsApp Dispatch
+      if (andWhatsApp) {
+        const phone = isWalkinCustomer
+          ? walkinPhone.trim()
+          : (customers.find((c) => c.id === customerId)?.phone || "");
+        const custName = isWalkinCustomer
+          ? (walkinName.trim() || "Walk-in Customer")
+          : (customers.find((c) => c.id === customerId)?.name || "Valued Customer");
+        const link = buildInvoiceShareLink(
+          custName,
+          phone,
+          invoice.invoiceNumber,
+          finalized.grandTotal,
+          finalized.balanceDue,
+          "Corbel ERP"
+        );
+        void launchWhatsAppUrl(link);
       }
 
       // Clear draft auto-save
@@ -1352,6 +1380,18 @@ export default function InvoiceCreatePage({
                     }}
                   >
                     Complete Sale & Print (F10)
+                  </Button>
+
+                  <Button
+                    size="sm"
+                    variant="light"
+                    color="teal"
+                    loading={submitting}
+                    disabled={items.length === 0 || !customerId}
+                    leftSection={<MessageSquare size={15} />}
+                    onClick={() => handleExecuteCheckout(false, false, true)}
+                  >
+                    Complete & WhatsApp Bill
                   </Button>
 
                   <Group grow gap="xs">

@@ -35,6 +35,11 @@ import {
 } from "lucide-react";
 import { createCustomer, getErrorMessage } from "../../api/backend";
 import type { PublicCustomer } from "../../types/backend";
+import {
+  formatWhatsAppNumber,
+  isValidWhatsAppNumber,
+  launchWhatsAppUrl,
+} from "../../utils/whatsapp";
 
 interface CustomerFormPageProps {
   onBack: () => void;
@@ -101,15 +106,14 @@ export default function CustomerFormPage({
   }
 
   // Helper to open WhatsApp for quick verification
-  function handleTestWhatsApp() {
-    const raw = form.values.phone.trim().replace(/[^0-9+]/g, "");
-    if (!raw) return;
-    const clean = raw.startsWith("+")
-      ? raw.slice(1)
-      : raw.startsWith("0")
-      ? "92" + raw.slice(1)
-      : raw;
-    window.open(`https://wa.me/${clean}?text=Assalam-o-Alaikum%20${encodeURIComponent(form.values.name || "Customer")}`, "_blank");
+  async function handleTestWhatsApp() {
+    const raw = form.values.phone.trim();
+    if (!isValidWhatsAppNumber(raw)) return;
+    const clean = formatWhatsAppNumber(raw);
+    const greeting = encodeURIComponent(
+      `Assalam-o-Alaikum ${form.values.name.trim() || "Customer"}, this is a test message from Corbel ERP.`,
+    );
+    await launchWhatsAppUrl(`https://wa.me/${clean}?text=${greeting}`);
   }
 
   return (
@@ -265,7 +269,7 @@ export default function CustomerFormPage({
                 </Box>
               </Group>
 
-              {form.values.phone.trim().length >= 10 && (
+              {isValidWhatsAppNumber(form.values.phone) && (
                 <Button
                   variant="light"
                   color="teal"
@@ -282,6 +286,7 @@ export default function CustomerFormPage({
               <TextInput
                 label="Mobile / WhatsApp Number"
                 placeholder="0300-1234567"
+                description="Pakistani mobile format (e.g. 0300-1234567). Enables 1-click WhatsApp Khata balance reminders."
                 leftSection={<Phone size={16} />}
                 size="md"
                 {...form.getInputProps("phone")}

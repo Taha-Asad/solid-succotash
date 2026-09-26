@@ -139,16 +139,44 @@ pub async fn update_theme(
 }
 
 /// Reads an image file and returns it as a base64 data URI (for logo upload).
+/// Validates authentication, file size cap (5 MB), and image magic bytes.
 #[tauri::command]
-pub fn read_file_base64(path: String) -> Result<String, AppError> {
-    let bytes = std::fs::read(&path).map_err(|e| AppError::internal(format!("Cannot read file: {e}")))?;
-    let mime = match path.to_lowercase().rsplit('.').next() {
-        Some("png") => "image/png",
-        Some("jpg") | Some("jpeg") => "image/jpeg",
-        Some("gif") => "image/gif",
-        Some("svg") => "image/svg+xml",
-        _ => "image/png",
+pub async fn read_file_base64(
+    pool: State<'_, SqlitePool>,
+    session: State<'_, SessionState>,
+    path: String,
+) -> Result<String, AppError> {
+    require_current_user(pool.inner(), session.inner()).await?;
+
+    let path_buf = std::path::PathBuf::from(&path);
+    if !path_buf.exists() || !path_buf.is_file() {
+        return Err(AppError::internal("Cannot read file: File does not exist or is not a regular file".to_string()));
+    }
+
+    let metadata = std::fs::metadata(&path_buf)
+        .map_err(|e| AppError::internal(format!("Cannot read file: {e}")))?;
+
+    const MAX_SIZE: u64 = 5 * 1024 * 1024; // 5 MB
+    if metadata.len() > MAX_SIZE {
+        return Err(AppError::internal("Cannot read file: File exceeds 5 MB limit".to_string()));
+    }
+
+    let bytes = std::fs::read(&path_buf)
+        .map_err(|e| AppError::internal(format!("Cannot read file: {e}")))?;
+
+    // Validate image format by checking magic bytes
+    let mime = if bytes.starts_with(b"\x89PNG") {
+        "image/png"
+    } else if bytes.starts_with(b"\xFF\xD8\xFF") {
+        "image/jpeg"
+    } else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        "image/gif"
+    } else if bytes.starts_with(b"<svg") || bytes.starts_with(b"<?xml") || path.to_lowercase().ends_with(".svg") {
+        "image/svg+xml"
+    } else {
+        return Err(AppError::internal("Cannot read file: Not a recognized image format (PNG, JPEG, GIF, SVG)".to_string()));
     };
+
     Ok(format!("data:{mime};base64,{}", BASE64.encode(bytes)))
 }
 
@@ -246,21 +274,25 @@ mod tests {
         assert!(result.unwrap_err().contains("Only owner/admin"));
     }
 
-    #[test]
-    fn read_file_base64_rejects_nonexistent_file() {
-        let result = read_file_base64("/tmp/this_does_not_exist.png".to_string());
+    #[tokio::test]
+    async fn read_file_base64_rejects_nonexistent_file() {
+        let app = setup_app().await;
+        let _owner = register_owner_full(&app, "owner@test.com").await;
+        let result = read_file_base64(app.state(), app.state(), "/tmp/this_does_not_exist.png".to_string()).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Cannot read file"));
     }
 
-    #[test]
-    fn read_file_base64_reads_png() {
+    #[tokio::test]
+    async fn read_file_base64_reads_png() {
+        let app = setup_app().await;
+        let _owner = register_owner_full(&app, "owner@test.com").await;
         let dir = std::env::temp_dir().join(format!("theme-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("test.png");
-        std::fs::write(&path, [0x89, 0x50, 0x4E, 0x47]).unwrap();
+        std::fs::write(&path, [0x89, 0x50, 0x4E, 0x47, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]).unwrap();
 
-        let result = read_file_base64(path.to_str().unwrap().to_string()).unwrap();
+        let result = read_file_base64(app.state(), app.state(), path.to_str().unwrap().to_string()).await.unwrap();
         assert!(result.starts_with("data:image/png;base64,"));
         assert!(result.len() >= 30);
 

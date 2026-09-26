@@ -283,6 +283,13 @@ pub fn invoice_placeholder_values(doc: &InvoiceDoc) -> HashMap<String, String> {
 fn build_invoice_html(doc: &InvoiceDoc) -> String {
     let mut vals = invoice_placeholder_values(doc);
 
+    // Safely HTML-escape all raw text fields specifically for HTML rendering
+    for (k, v) in vals.iter_mut() {
+        if !k.ends_with("_html") && !k.ends_with("_row") && k != "accent" && k != "design" {
+            *v = html_escape(v);
+        }
+    }
+
     let design = if doc.settings.invoice_design.is_empty() {
         "classic".to_string()
     } else {

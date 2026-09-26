@@ -10,7 +10,7 @@
     "beforeBuildCommand": "npm run build && npm run fetch-tesseract"
   },
   "app": {
-    "withGlobalTauri": true,
+    "withGlobalTauri": false,
     "windows": [
       {
         "title": "Corbel ERP",
@@ -24,7 +24,7 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: asset: blob: https:; font-src 'self' data:; connect-src 'self' ipc: http://localhost:*"
     }
   },
   "bundle": {

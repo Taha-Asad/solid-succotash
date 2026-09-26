@@ -29,6 +29,11 @@ import {
 
 import type { PublicCustomer, PublicUser } from "../../types/backend";
 import CustomerFormPage from "./CustomerFormPage";
+import {
+  formatWhatsAppNumber,
+  isValidWhatsAppNumber,
+  launchWhatsAppUrl,
+} from "../../utils/whatsapp";
 
 import { INK } from "../../theme";
 import {
@@ -94,15 +99,13 @@ export default function CustomersPage({ user }: { user: PublicUser }) {
     }
   }
 
-  function handleOpenWhatsApp(phone: string, name: string) {
-    const cleaned = phone.replace(/[^0-9]/g, "");
-    const formatted = cleaned.startsWith("0")
-      ? `92${cleaned.slice(1)}`
-      : cleaned;
+  async function handleOpenWhatsApp(phone: string, name: string) {
+    if (!isValidWhatsAppNumber(phone)) return;
+    const formatted = formatWhatsAppNumber(phone);
     const msg = encodeURIComponent(
-      `Assalam-o-Alaikum ${name}, this is from our accounts department regarding your invoice and ledger balance.`,
+      `Assalam-o-Alaikum ${name.trim()}, this is from our accounts department regarding your invoice and ledger balance.`,
     );
-    window.open(`https://wa.me/${formatted}?text=${msg}`, "_blank");
+    await launchWhatsAppUrl(`https://wa.me/${formatted}?text=${msg}`);
   }
 
   const query = search.trim().toLowerCase();
