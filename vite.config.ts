@@ -30,4 +30,30 @@ export default defineConfig(async () => ({
       ignored: ["**/src-tauri/**", "**/*.crdownload"],
     },
   },
+  build: {
+    target: "esnext",
+    minify: "esbuild",
+    chunkSizeWarningLimit: 650,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes("node_modules")) {
+            if (id.includes("@mantine")) {
+              return "vendor-mantine";
+            }
+            if (id.includes("recharts") || id.includes("d3-")) {
+              return "vendor-charts";
+            }
+            if (id.includes("lucide-react") || id.includes("framer-motion") || id.includes("lottie")) {
+              return "vendor-motion-icons";
+            }
+            if (id.includes("@tiptap") || id.includes("prosemirror")) {
+              return "vendor-tiptap";
+            }
+            return "vendor-core";
+          }
+        },
+      },
+    },
+  },
 }));

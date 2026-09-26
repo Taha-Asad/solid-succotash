@@ -2915,11 +2915,11 @@ function StockAdjustModal({
   const [mode, setMode] = useState<AdjustMode>("receive");
 
   // Mode 1: Receive Stock
-  const [receiveQty, setReceiveQty] = useState<number | string>(1);
+  const [receiveQty, setReceiveQty] = useState<number | string>(0);
   const [receiveReason, setReceiveReason] = useState<string>("purchase");
 
   // Mode 2: Remove Stock
-  const [removeQty, setRemoveQty] = useState<number | string>(1);
+  const [removeQty, setRemoveQty] = useState<number | string>(0);
   const [removeReason, setRemoveReason] = useState<string>("damage");
 
   // Mode 3: Physical Shelf Count
@@ -2938,9 +2938,9 @@ function StockAdjustModal({
   useEffect(() => {
     if (opened && product) {
       setMode("receive");
-      setReceiveQty(1);
+      setReceiveQty(0);
       setReceiveReason("purchase");
-      setRemoveQty(1);
+      setRemoveQty(0);
       setRemoveReason("damage");
       setCountedUnits(product.quantityInStock);
       setExpiryDate("");
