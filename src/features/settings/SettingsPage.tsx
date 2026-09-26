@@ -527,8 +527,16 @@ const INVOICE_PRESETS = [
     id: "thermal_80mm",
     name: "Thermal POS Slip (80mm)",
     description: "Fast receipt for 80mm roll printers. Paper-efficient, high-contrast monospace formatting for counter sales.",
-    paperSize: "80mm Roll",
+    paperSize: "80mm Roll (3-inch)",
     badge: "Counter POS",
+    icon: Receipt,
+  },
+  {
+    id: "thermal_58mm",
+    name: "Thermal POS Slip (58mm)",
+    description: "Ultra-compact receipt for 58mm roll printers (mini Bluetooth/USB POS). Zero margins, 4-column item breakdown.",
+    paperSize: "58mm Roll (2-inch)",
+    badge: "Mini POS",
     icon: Receipt,
   },
   {

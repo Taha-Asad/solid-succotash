@@ -652,10 +652,11 @@ fn build_invoice_html(doc: &InvoiceDoc) -> String {
         body.wholesale_a4 .sheet { max-width: 860px; padding: 24px 32px; border: 1px solid #ddd; }
         body.wholesale_a4 table.items th { background: var(--accent); color: #fff; font-size: 11px; text-transform: uppercase; }
 
-        /* design: thermal_80mm (POS slip) */
+        /* design: thermal_80mm (Standard POS Slip) */
         body.thermal_80mm, body.thermal {
-            font-family: 'Courier New', Courier, monospace, sans-serif;
+            font-family: 'Courier New', Courier, Consolas, monospace, sans-serif;
             font-size: 11px;
+            line-height: 1.3;
             color: #000;
             background: #e5e7eb;
         }
@@ -675,19 +676,83 @@ fn build_invoice_html(doc: &InvoiceDoc) -> String {
             text-align: center;
             border-bottom: 1px dashed #000;
             padding-bottom: 8px;
-            gap: 4px;
+            gap: 3px;
         }
-        body.thermal_80mm .brand .company-name, body.thermal .brand .company-name { font-size: 16px; font-weight: 900; }
-        body.thermal_80mm .invoice-title, body.thermal .invoice-title { font-size: 13px; text-align: center; margin-top: 4px; }
+        body.thermal_80mm .brand .company-name, body.thermal .brand .company-name { font-size: 17px; font-weight: 900; letter-spacing: -0.5px; }
+        body.thermal_80mm .invoice-title, body.thermal .invoice-title { font-size: 12px; font-weight: 700; text-align: center; margin-top: 4px; }
         body.thermal_80mm .invoice-meta, body.thermal .invoice-meta { text-align: center; font-size: 10px; }
-        body.thermal_80mm .parties, body.thermal .parties { grid-template-columns: 1fr; gap: 6px; }
-        body.thermal_80mm .info-box, body.thermal .info-box { border: 1px dashed #aaa; padding: 6px; font-size: 10px; border-radius: 0; }
-        body.thermal_80mm table.items, body.thermal table.items { font-size: 10px; }
-        body.thermal_80mm table.items th, body.thermal table.items th { background: transparent; color: #000; border-bottom: 1px solid #000; padding: 4px 2px; }
+        body.thermal_80mm .parties, body.thermal .parties { grid-template-columns: 1fr; gap: 4px; margin-bottom: 8px; }
+        body.thermal_80mm .info-box, body.thermal .info-box { border: 1px dashed #888; padding: 6px; font-size: 10px; border-radius: 0; }
+        body.thermal_80mm table.items, body.thermal table.items { font-size: 10px; width: 100%; border-collapse: collapse; }
+        body.thermal_80mm table.items th, body.thermal table.items th { background: transparent; color: #000; border-top: 1px dashed #000; border-bottom: 1px dashed #000; padding: 4px 2px; }
         body.thermal_80mm table.items td, body.thermal table.items td { padding: 4px 2px; border-bottom: 1px dotted #ccc; }
+        body.thermal_80mm table.items tr:nth-child(even), body.thermal table.items tr:nth-child(even) { background: transparent; }
+        body.thermal_80mm .totals, body.thermal .totals { justify-content: stretch; width: 100%; margin-bottom: 12px; }
         body.thermal_80mm .totals-box, body.thermal .totals-box { width: 100%; font-size: 11px; }
-        body.thermal_80mm .signature-box, body.thermal .signature-box { display: flex; justify-content: space-between; margin-top: 24px; font-size: 9px; }
+        body.thermal_80mm .totals-row.grand, body.thermal .totals-row.grand { font-size: 15px; font-weight: 900; border-top: 2px dashed #000; border-bottom: 2px dashed #000; padding: 4px 0; }
+        body.thermal_80mm .signature-box, body.thermal .signature-box { display: flex; justify-content: space-between; margin-top: 20px; font-size: 9px; }
         body.thermal_80mm .signature-line, body.thermal .signature-line { width: 100px; font-size: 9px; }
+        body.thermal_80mm .fbr-box, body.thermal .fbr-box { border: 1px dashed #000; background: #fff; padding: 6px; flex-direction: column; align-items: center; text-align: center; }
+
+        /* In thermal 80mm receipts, hide column 1 (#), 5 (tax %), 6 (tax amt), 7 (discount) for 4-column receipt table */
+        body.thermal_80mm table.items th:nth-child(1), body.thermal_80mm table.items td:nth-child(1),
+        body.thermal_80mm table.items th:nth-child(5), body.thermal_80mm table.items td:nth-child(5),
+        body.thermal_80mm table.items th:nth-child(6), body.thermal_80mm table.items td:nth-child(6),
+        body.thermal_80mm table.items th:nth-child(7), body.thermal_80mm table.items td:nth-child(7),
+        body.thermal table.items th:nth-child(1), body.thermal table.items td:nth-child(1),
+        body.thermal table.items th:nth-child(5), body.thermal table.items td:nth-child(5),
+        body.thermal table.items th:nth-child(6), body.thermal table.items td:nth-child(6),
+        body.thermal table.items th:nth-child(7), body.thermal table.items td:nth-child(7) {
+            display: none;
+        }
+
+        /* design: thermal_58mm (Compact 2-inch POS Slip) */
+        body.thermal_58mm {
+            font-family: 'Courier New', Courier, Consolas, monospace, sans-serif;
+            font-size: 9.5px;
+            line-height: 1.25;
+            color: #000;
+            background: #e5e7eb;
+        }
+        body.thermal_58mm .sheet {
+            max-width: 58mm;
+            width: 58mm;
+            padding: 4mm 2mm;
+            margin: 8px auto;
+            border-radius: 0;
+            border: 1px dashed #999;
+            box-shadow: none;
+            background: #fff;
+        }
+        body.thermal_58mm .inv-header {
+            flex-direction: column;
+            align-items: center;
+            text-align: center;
+            border-bottom: 1px dashed #000;
+            padding-bottom: 6px;
+            gap: 2px;
+        }
+        body.thermal_58mm .brand .company-name { font-size: 14px; font-weight: 900; }
+        body.thermal_58mm .invoice-title { font-size: 11px; font-weight: 700; text-align: center; margin-top: 2px; }
+        body.thermal_58mm .invoice-meta { text-align: center; font-size: 8.5px; }
+        body.thermal_58mm .parties { grid-template-columns: 1fr; gap: 4px; margin-bottom: 6px; }
+        body.thermal_58mm .info-box { border: 1px dashed #888; padding: 4px; font-size: 8.5px; border-radius: 0; }
+        body.thermal_58mm table.items { font-size: 8.5px; width: 100%; border-collapse: collapse; }
+        body.thermal_58mm table.items th { background: transparent; color: #000; border-top: 1px dashed #000; border-bottom: 1px dashed #000; padding: 3px 1px; font-size: 8.5px; }
+        body.thermal_58mm table.items td { padding: 3px 1px; border-bottom: 1px dotted #ccc; font-size: 8.5px; }
+        body.thermal_58mm table.items tr:nth-child(even) { background: transparent; }
+        body.thermal_58mm .totals { justify-content: stretch; width: 100%; margin-bottom: 8px; }
+        body.thermal_58mm .totals-box { width: 100%; font-size: 9.5px; }
+        body.thermal_58mm .totals-row.grand { font-size: 13px; font-weight: 900; border-top: 2px dashed #000; border-bottom: 2px dashed #000; padding: 3px 0; }
+        body.thermal_58mm .signature-box { display: flex; justify-content: space-between; margin-top: 14px; font-size: 8px; }
+        body.thermal_58mm .signature-line { width: 70px; font-size: 8px; }
+        body.thermal_58mm .fbr-box { border: 1px dashed #000; background: #fff; padding: 4px; flex-direction: column; align-items: center; text-align: center; font-size: 8px; }
+        body.thermal_58mm table.items th:nth-child(1), body.thermal_58mm table.items td:nth-child(1),
+        body.thermal_58mm table.items th:nth-child(5), body.thermal_58mm table.items td:nth-child(5),
+        body.thermal_58mm table.items th:nth-child(6), body.thermal_58mm table.items td:nth-child(6),
+        body.thermal_58mm table.items th:nth-child(7), body.thermal_58mm table.items td:nth-child(7) {
+            display: none;
+        }
 
         /* design: compact_a5 */
         body.compact_a5 { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; font-size: 11px; }
@@ -699,13 +764,32 @@ fn build_invoice_html(doc: &InvoiceDoc) -> String {
         body.compact_a5 .totals-box { width: 220px; font-size: 11px; }
 
         @media print {
-            body { background: #fff; padding: 0; }
-            .sheet { margin: 0; border: none; border-radius: 0; box-shadow: none; }
+            @page { margin: 0; size: auto; }
+            body { background: #fff !important; padding: 0 !important; margin: 0 !important; }
+            .sheet { margin: 0 !important; border: none !important; border-radius: 0 !important; box-shadow: none !important; }
             .no-print, .print-bar { display: none !important; }
-            body.thermal_80mm .sheet, body.thermal .sheet {
-                width: 100% !important;
-                max-width: 100% !important;
+            body.thermal_80mm, body.thermal {
+                width: 80mm !important;
+                margin: 0 !important;
                 padding: 0 !important;
+            }
+            body.thermal_80mm .sheet, body.thermal .sheet {
+                width: 80mm !important;
+                max-width: 80mm !important;
+                padding: 3mm 2mm !important;
+                margin: 0 !important;
+                border: none !important;
+            }
+            body.thermal_58mm {
+                width: 58mm !important;
+                margin: 0 !important;
+                padding: 0 !important;
+            }
+            body.thermal_58mm .sheet {
+                width: 58mm !important;
+                max-width: 58mm !important;
+                padding: 2mm 1mm !important;
+                margin: 0 !important;
                 border: none !important;
             }
         }
@@ -813,6 +897,8 @@ pub async fn generate_invoice_html(
     session: State<'_, SessionState>,
     app_handle: tauri::AppHandle,
     invoice_id: String,
+    design_override: Option<String>,
+    open_in_browser: Option<bool>,
 ) -> Result<String, AppError> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
     let company_id = current_user
@@ -820,7 +906,12 @@ pub async fn generate_invoice_html(
         .as_ref()
         .ok_or("You are not assigned to a company")?;
 
-    let doc = load_invoice_doc(pool.inner(), &invoice_id, company_id).await?;
+    let mut doc = load_invoice_doc(pool.inner(), &invoice_id, company_id).await?;
+    if let Some(ref override_design) = design_override {
+        if !override_design.trim().is_empty() {
+            doc.settings.invoice_design = override_design.clone();
+        }
+    }
     let html = build_invoice_html(&doc);
 
     let temp_dir = std::env::temp_dir();
@@ -828,8 +919,10 @@ pub async fn generate_invoice_html(
     let file_path = temp_dir.join(&filename);
     std::fs::write(&file_path, &html).map_err(|e| AppError::internal(format!("Failed to write HTML: {e}")))?;
 
-    let path_str = file_path.to_string_lossy().to_string();
-    open_with_default(&app_handle, &path_str, "invoice");
+    if open_in_browser.unwrap_or(false) {
+        let path_str = file_path.to_string_lossy().to_string();
+        open_with_default(&app_handle, &path_str, "invoice");
+    }
 
     Ok(html)
 }

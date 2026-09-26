@@ -10,7 +10,7 @@
 //   - Record payments
 //   - View invoice details
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   ActionIcon,
@@ -21,6 +21,7 @@ import {
   Divider,
   Grid,
   Group,
+  Kbd,
   Modal,
   NumberInput,
   Select,
@@ -35,6 +36,7 @@ import {
   Alert,
   Menu,
 } from "@mantine/core";
+import { notifications } from "@mantine/notifications";
 
 import { useForm } from "@mantine/form";
 
@@ -74,7 +76,7 @@ import type {
 
 import { INK } from "../../theme";
 import { AppDateInput } from "../../components/AppDateInput";
-import { ReceiptText, Plus, Printer, MessageSquare, Coins, AlertTriangle, CheckCircle2, Zap } from "lucide-react";
+import { ReceiptText, Plus, Printer, MessageSquare, Coins, AlertTriangle, CheckCircle2, Zap, Barcode, ChevronDown } from "lucide-react";
 import { printHtmlContent } from "../../utils/printInvoice";
 import { reportOnboardingEvent } from "../../onboarding/bus";
 import { usePermissions } from "../permissions/PermissionsProvider";
@@ -814,6 +816,56 @@ function CreateInvoiceModal({
 }
 
 // ==========================================
+// POS AUDIO FEEDBACK (SYNTHESIZED WEB AUDIO)
+// ==========================================
+
+function playPosBeepTone() {
+  try {
+    const AudioCtx =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext: typeof AudioContext })
+        .webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(880, ctx.currentTime); // 880Hz (A5)
+    gain.gain.setValueAtTime(0.18, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.08);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.08);
+  } catch {
+    // Non-fatal if audio context is blocked
+  }
+}
+
+function playPosErrorTone() {
+  try {
+    const AudioCtx =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext: typeof AudioContext })
+        .webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "sawtooth";
+    osc.frequency.setValueAtTime(220, ctx.currentTime); // 220Hz buzz
+    gain.gain.setValueAtTime(0.2, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.18);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.18);
+  } catch {
+    // Non-fatal if audio context is blocked
+  }
+}
+
+// ==========================================
 // INVOICE DETAIL VIEW
 // ==========================================
 
@@ -848,6 +900,113 @@ function InvoiceDetailView({
   const [quickQuantity, setQuickQuantity] = useState<number>(1);
   const [quickPrice, setQuickPrice] = useState<number>(0);
   const [fastAdding, setFastAdding] = useState(false);
+
+  // Hardware Barcode Scanner & POS Fast-Path state
+  const [barcodeInput, setBarcodeInput] = useState("");
+  const barcodeInputRef = useRef<HTMLInputElement>(null);
+  const [isScanning, setIsScanning] = useState(false);
+
+  async function handleBarcodeScan(scannedCode: string) {
+    const raw = scannedCode.trim();
+    if (!raw) return;
+
+    // Match by SKU or customFields.barcode
+    const matched = products.find((p) => {
+      if (p.sku.toLowerCase() === raw.toLowerCase()) return true;
+      if (p.customFields) {
+        try {
+          const parsed = JSON.parse(p.customFields);
+          if (parsed.barcode && String(parsed.barcode).toLowerCase() === raw.toLowerCase()) {
+            return true;
+          }
+        } catch {
+          // ignore json parse error
+        }
+      }
+      return false;
+    });
+
+    if (!matched) {
+      playPosErrorTone();
+      notifications.show({
+        title: "Barcode Not Found",
+        message: `No product matches barcode or SKU "${raw}"`,
+        color: "red",
+        autoClose: 3500,
+      });
+      setBarcodeInput("");
+      return;
+    }
+
+    playPosBeepTone();
+    const currentItems = details?.items ?? [];
+    const existing = currentItems.find((it) => it.productId === matched.id);
+
+    setIsScanning(true);
+    try {
+      if (existing) {
+        await updateInvoiceItem({
+          invoiceId,
+          itemId: existing.id,
+          productId: matched.id,
+          quantity: existing.quantity + 1,
+          unitPrice: existing.unitPrice,
+          taxRate: existing.taxRate,
+          discountType: existing.discountType,
+          discountValue:
+            existing.discountType === "fixed"
+              ? existing.discountAmount
+              : existing.discountRate / 100,
+        });
+        notifications.show({
+          title: "Quantity Incremented",
+          message: `${matched.name} (Qty: ${existing.quantity + 1})`,
+          color: "teal",
+          autoClose: 2000,
+        });
+      } else {
+        await addInvoiceItem({
+          invoiceId,
+          productId: matched.id,
+          quantity: 1,
+          unitPrice: matched.sellPrice,
+          taxRate: matched.taxRate,
+          discountType: "percent",
+          discountValue: 0,
+        });
+        notifications.show({
+          title: "Item Scanned",
+          message: `${matched.name} added (+1)`,
+          color: "teal",
+          autoClose: 2000,
+        });
+      }
+      await load();
+    } catch (err) {
+      setError(getErrorMessage(err));
+    } finally {
+      setIsScanning(false);
+      setBarcodeInput("");
+      setTimeout(() => barcodeInputRef.current?.focus(), 50);
+    }
+  }
+
+  // POS Hotkeys: F2 to focus barcode, F8 for 80mm thermal receipt
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "F2") {
+        e.preventDefault();
+        barcodeInputRef.current?.focus();
+        barcodeInputRef.current?.select();
+      }
+      if (e.key === "F8") {
+        e.preventDefault();
+        void handlePrint("thermal_80mm");
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [invoiceId, details]);
 
   function handleQuickProductSelect(id: string | null) {
     setQuickProductId(id);
@@ -1077,9 +1236,9 @@ function InvoiceDetailView({
     }
   }
 
-  async function handlePrint() {
+  async function handlePrint(designOverride?: string) {
     try {
-      const html = await generateInvoiceHtml(invoiceId);
+      const html = await generateInvoiceHtml(invoiceId, designOverride);
       if (html) {
         printHtmlContent(html);
       }
@@ -1155,13 +1314,52 @@ function InvoiceDetailView({
           )}
         </Group>
         <Group gap="xs">
-          <Button
-            variant="default"
-            leftSection={<Printer size={15} />}
-            onClick={handlePrint}
-          >
-            Print Invoice
-          </Button>
+          <Menu position="bottom-end" withinPortal shadow="md">
+            <Menu.Target>
+              <Button
+                variant="filled"
+                color="indigo"
+                leftSection={<Printer size={15} />}
+                rightSection={<ChevronDown size={14} />}
+              >
+                Print Slip / Invoice
+              </Button>
+            </Menu.Target>
+            <Menu.Dropdown>
+              <Menu.Label>Thermal POS Rolls</Menu.Label>
+              <Menu.Item
+                leftSection={<ReceiptText size={15} />}
+                rightSection={<Kbd size="xs">F8</Kbd>}
+                onClick={() => void handlePrint("thermal_80mm")}
+              >
+                Print 80mm POS Slip
+              </Menu.Item>
+              <Menu.Item
+                leftSection={<ReceiptText size={15} />}
+                onClick={() => void handlePrint("thermal_58mm")}
+              >
+                Print 58mm Mini POS Slip
+              </Menu.Item>
+              <Menu.Divider />
+              <Menu.Label>Full Sheet Formats</Menu.Label>
+              <Menu.Item
+                leftSection={<Printer size={15} />}
+                onClick={() => void handlePrint("wholesale_a4")}
+              >
+                Print Wholesale (A4 Sheet)
+              </Menu.Item>
+              <Menu.Item
+                leftSection={<Printer size={15} />}
+                onClick={() => void handlePrint("compact_a5")}
+              >
+                Print Compact (A5 Sheet)
+              </Menu.Item>
+              <Menu.Divider />
+              <Menu.Item onClick={() => void handlePrint()}>
+                Print Default Saved Design
+              </Menu.Item>
+            </Menu.Dropdown>
+          </Menu>
           <Button
             color="green"
             variant="light"
@@ -1209,6 +1407,69 @@ function InvoiceDetailView({
           )}
         </Group>
       </Group>
+
+      {/* POS Handover Banner when Finalized or Paid */}
+      {(isFinalized || invoice.status === "paid") && (
+        <Card
+          withBorder
+          padding="xs"
+          radius="md"
+          style={{
+            background: "rgba(16, 185, 129, 0.08)",
+            borderColor: "rgba(16, 185, 129, 0.4)",
+          }}
+        >
+          <Group justify="space-between" wrap="wrap" gap="xs">
+            <Group gap="xs">
+              <CheckCircle2 size={18} color="#10b981" />
+              <div>
+                <Text size="xs" fw={700} c="teal">
+                  Sale Finalized & Locked
+                </Text>
+                <Text size="xs" c="dimmed">
+                  Fast counter print and customer WhatsApp dispatch
+                </Text>
+              </div>
+            </Group>
+            <Group gap="xs">
+              <Button
+                size="xs"
+                color="indigo"
+                leftSection={<ReceiptText size={13} />}
+                rightSection={<Kbd size="xs">F8</Kbd>}
+                onClick={() => void handlePrint("thermal_80mm")}
+              >
+                Print 80mm Slip
+              </Button>
+              <Button
+                size="xs"
+                variant="default"
+                leftSection={<ReceiptText size={13} />}
+                onClick={() => void handlePrint("thermal_58mm")}
+              >
+                Print 58mm Slip
+              </Button>
+              <Button
+                size="xs"
+                variant="default"
+                leftSection={<Printer size={13} />}
+                onClick={() => void handlePrint("wholesale_a4")}
+              >
+                Print A4
+              </Button>
+              <Button
+                size="xs"
+                color="green"
+                variant="light"
+                leftSection={<MessageSquare size={13} />}
+                onClick={handleShareWhatsApp}
+              >
+                Send WhatsApp Bill
+              </Button>
+            </Group>
+          </Group>
+        </Card>
+      )}
 
       {error && (
         <Text c="red" size="sm">
@@ -1350,26 +1611,69 @@ function InvoiceDetailView({
             borderWidth: 1.5,
           }}
         >
-          <Stack gap="xs">
-            <Group justify="space-between">
+          <Stack gap="sm">
+            <Group justify="space-between" wrap="wrap">
               <Group gap="xs">
                 <Zap size={15} color="var(--mantine-color-blue-6)" />
                 <Text size="xs" fw={700} style={{ textTransform: "uppercase", letterSpacing: 0.5 }}>
-                  Fast Counter Line Entry
+                  Fast Counter Line Entry & Barcode Scanner
                 </Text>
               </Group>
-              <Text size="xs" c="dimmed">
-                Select product, verify price, and hit Enter
-              </Text>
+              <Group gap="xs">
+                <Text size="xs" c="dimmed">
+                  Press <Kbd size="xs">F2</Kbd> to Scan Barcode • <Kbd size="xs">F8</Kbd> to Print Receipt
+                </Text>
+              </Group>
             </Group>
+
+            {/* Hardware Barcode Scan Fast-Path */}
+            <Group align="flex-end" gap="sm">
+              <Box style={{ flex: 1, minWidth: 260 }}>
+                <TextInput
+                  ref={barcodeInputRef}
+                  label="Scan Barcode (Auto-Add)"
+                  placeholder="Scan or type barcode / SKU and press Enter..."
+                  leftSection={<Barcode size={18} color="var(--mantine-color-blue-6)" />}
+                  rightSection={<Kbd size="xs">F2</Kbd>}
+                  value={barcodeInput}
+                  disabled={isScanning}
+                  onChange={(e) => setBarcodeInput(e.currentTarget.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      void handleBarcodeScan(barcodeInput);
+                    }
+                  }}
+                  styles={{
+                    input: {
+                      fontWeight: 600,
+                      fontFamily: "monospace",
+                      letterSpacing: 0.5,
+                    },
+                  }}
+                />
+              </Box>
+              <Button
+                variant="light"
+                color="blue"
+                loading={isScanning}
+                disabled={!barcodeInput.trim()}
+                onClick={() => void handleBarcodeScan(barcodeInput)}
+              >
+                Scan & Add
+              </Button>
+            </Group>
+
+            <Divider label="or Manual Product Selection" labelPosition="center" />
 
             <Group align="flex-end" gap="sm" wrap="wrap">
               <Box style={{ flex: 1, minWidth: 260 }}>
                 <Select
-                  placeholder="Type product name or scan barcode..."
+                  label="Product"
+                  placeholder="Type product name, SKU, or choose..."
                   data={products.map((p) => ({
                     value: p.id,
-                    label: `${p.name} — ${paisaToDisplay(p.sellPrice)} PKR (${p.quantityInStock} ${p.unit} in stock)`,
+                    label: `${p.name} [${p.sku}] — ${paisaToDisplay(p.sellPrice)} PKR (${p.quantityInStock} ${p.unit})`,
                   }))}
                   searchable
                   clearable

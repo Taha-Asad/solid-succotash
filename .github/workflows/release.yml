@@ -32,6 +32,7 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -94,7 +95,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: v__VERSION__
-          releaseName: "Ijaz & Company ERP v__VERSION__"
+          releaseName: "Corbel ERP v__VERSION__"
           releaseBody: |
             ## What's New
             - See the changelog for details
@@ -255,7 +256,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: v__VERSION__
-          releaseName: "Ijaz & Company ERP v__VERSION__"
+          releaseName: "Corbel ERP v__VERSION__"
           releaseBody: |
             ## What's New
             - See the changelog for details

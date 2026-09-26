@@ -576,8 +576,16 @@ export function clearSavedSession(): Promise<void> {
 // PDF GENERATION
 // ==========================================
 
-export function generateInvoiceHtml(invoiceId: string): Promise<string> {
-  return invoke<string>("generate_invoice_html", { invoiceId });
+export function generateInvoiceHtml(
+  invoiceId: string,
+  designOverride?: string | null,
+  openInBrowser?: boolean | null,
+): Promise<string> {
+  return invoke<string>("generate_invoice_html", {
+    invoiceId,
+    designOverride: designOverride ?? null,
+    openInBrowser: openInBrowser ?? false,
+  });
 }
 
 export function generateInvoicePdf(invoiceId: string, savePath?: string): Promise<string> {
