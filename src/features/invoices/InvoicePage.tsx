@@ -80,6 +80,7 @@ import { ReceiptText, Plus, Printer, MessageSquare, Coins, AlertTriangle, CheckC
 import { printHtmlContent } from "../../utils/printInvoice";
 import { reportOnboardingEvent } from "../../onboarding/bus";
 import { usePermissions } from "../permissions/PermissionsProvider";
+import InvoiceCreatePage from "./InvoiceCreatePage";
 
 // ==========================================
 // HELPERS
@@ -153,7 +154,7 @@ const FBR_STATUS_COLORS: Record<string, string> = {
 // ==========================================
 
 export default function InvoicePage() {
-  const [view, setView] = useState<"list" | "detail">("list");
+  const [view, setView] = useState<"list" | "detail" | "create">("list");
   const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(
     null,
   );
@@ -168,6 +169,19 @@ export default function InvoicePage() {
     setView("list");
   }
 
+  function openCreate() {
+    setView("create");
+  }
+
+  if (view === "create") {
+    return (
+      <InvoiceCreatePage
+        onBack={backToList}
+        onInvoiceCreated={(id) => openInvoice(id)}
+      />
+    );
+  }
+
   if (view === "detail" && selectedInvoiceId) {
     return (
       <InvoiceDetailView
@@ -177,14 +191,25 @@ export default function InvoicePage() {
     );
   }
 
-  return <InvoiceListView onOpenInvoice={openInvoice} />;
+  return (
+    <InvoiceListView
+      onOpenInvoice={openInvoice}
+      onOpenCreate={openCreate}
+    />
+  );
 }
 
 // ==========================================
 // INVOICE LIST VIEW
 // ==========================================
 
-function InvoiceListView({ onOpenInvoice }: { onOpenInvoice: (id: string) => void }) {
+function InvoiceListView({
+  onOpenInvoice,
+  onOpenCreate,
+}: {
+  onOpenInvoice: (id: string) => void;
+  onOpenCreate: () => void;
+}) {
   const perms = usePermissions();
   const canCreate = perms.can("invoices", "create");
   const [invoices, setInvoices] = useState<PublicInvoice[]>([]);
@@ -265,7 +290,7 @@ function InvoiceListView({ onOpenInvoice }: { onOpenInvoice: (id: string) => voi
         {canCreate && (
           <Button
             leftSection={<Plus size={16} />}
-            onClick={() => setCreateModalOpen(true)}
+            onClick={onOpenCreate}
             styles={{
               root: {
                 background: "linear-gradient(135deg, #C9952A 0%, #E6C965 100%)",
