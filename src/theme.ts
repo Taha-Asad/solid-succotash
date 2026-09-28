@@ -114,6 +114,7 @@ export const theme = createTheme({
     Card: {
       defaultProps: {
         radius: "lg",
+        padding: "md",
       },
     },
     Paper: {

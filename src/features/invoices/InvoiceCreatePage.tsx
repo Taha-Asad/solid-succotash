@@ -794,7 +794,7 @@ export default function InvoiceCreatePage({
         <Grid.Col span={{ base: 12, lg: 8 }}>
           <Stack gap="md">
             {/* 1. CUSTOMER & TERMS CARD */}
-            <Card withBorder radius="md" p="md" shadow="xs" style={{ background: "var(--app-surface)" }}>
+            <Card withBorder radius="md" padding="md" shadow="xs" style={{ background: "var(--app-surface)" }}>
               <Group justify="space-between" align="center" mb="xs">
                 <Text size="xs" fw={700} c="dimmed" style={{ textTransform: "uppercase", letterSpacing: 0.8 }}>
                   1. Customer & Billing Terms
@@ -922,7 +922,7 @@ export default function InvoiceCreatePage({
             </Card>
 
             {/* 2. PRODUCT LINE ITEMS (FAST SPREADSHEET) */}
-            <Card withBorder radius="md" p="md" shadow="xs" style={{ background: "var(--app-surface)" }}>
+            <Card withBorder radius="md" padding="md" shadow="xs" style={{ background: "var(--app-surface)" }}>
               <Group justify="space-between" align="center" mb="sm" wrap="wrap">
                 <Group gap="xs">
                   <Text size="xs" fw={700} c="dimmed" style={{ textTransform: "uppercase", letterSpacing: 0.8 }}>
@@ -1167,7 +1167,7 @@ export default function InvoiceCreatePage({
         <Grid.Col span={{ base: 12, lg: 4 }}>
           <Stack gap="md" style={{ position: "sticky", top: 16 }}>
             {/* FINANCIAL SUMMARY CARD */}
-            <Card withBorder radius="md" p="md" shadow="sm" style={{ background: "var(--app-surface)" }}>
+            <Card withBorder radius="md" padding="md" shadow="sm" style={{ background: "var(--app-surface)" }}>
               <Text size="xs" fw={700} c="dimmed" mb="sm" style={{ textTransform: "uppercase", letterSpacing: 0.8 }}>
                 3. Order & Financial Summary
               </Text>
@@ -1238,7 +1238,7 @@ export default function InvoiceCreatePage({
             </Card>
 
             {/* INTEGRATED PAYMENT STUDIO */}
-            <Card withBorder radius="md" p="md" shadow="sm" style={{ background: "var(--app-surface)" }}>
+            <Card withBorder radius="md" padding="md" shadow="sm" style={{ background: "var(--app-surface)" }}>
               <Text size="xs" fw={700} c="dimmed" mb="xs" style={{ textTransform: "uppercase", letterSpacing: 0.8 }}>
                 4. Payment & Settlement
               </Text>

@@ -31,16 +31,14 @@ export default defineConfig(async () => ({
     },
   },
   build: {
-    target: "esnext",
+    target: "es2020",
     minify: "esbuild",
-    chunkSizeWarningLimit: 650,
+    cssCodeSplit: false,
+    chunkSizeWarningLimit: 1200,
     rollupOptions: {
       output: {
         manualChunks(id) {
           if (id.includes("node_modules")) {
-            if (id.includes("@mantine")) {
-              return "vendor-mantine";
-            }
             if (id.includes("recharts") || id.includes("d3-")) {
               return "vendor-charts";
             }
@@ -50,7 +48,6 @@ export default defineConfig(async () => ({
             if (id.includes("@tiptap") || id.includes("prosemirror")) {
               return "vendor-tiptap";
             }
-            return "vendor-core";
           }
         },
       },
