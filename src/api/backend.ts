@@ -16,7 +16,6 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   AccountStatementRow,
   CompanySetupInput,
-  CreatePackageInput,
   CreateUserInput,
   CurrencyConfig,
   CustomerLedgerEntry,
@@ -44,24 +43,18 @@ import type {
   PublicCompany,
   PublicCompanyModule,
   PublicCustomer,
-  PublicFeatureFlag,
   PublicInvoice,
   PublicInvoiceItem,
-  PublicPackage,
   PublicPOItem,
   PublicProduct,
   PublicPurchaseOrder,
   PublicStockBatch,
   PublicStockMovement,
-  PublicSubscription,
   PublicSupplier,
   PublicUnit,
   PublicUser,
-  PlatformAnalytics,
   PurchaseOrderWithItems,
   RegisterCompanyResult,
-  RegisterTenantInput,
-  RegisterTenantResult,
   RoleInfo,
   RollbackResult,
   SalesByPeriod,
@@ -69,15 +62,11 @@ import type {
   SetActiveInput,
   StockAdjustmentInput,
   StockSummary,
-  TenantCompanyDetail,
-  TenantCompanySummary,
   TopCustomer,
   TopProduct,
-  UpdatePackageInput,
   UpdatePermissionInput,
   UpdateProductInput,
   UpdateRoleInput,
-  UpdateTenantCompanyInput,
   FbrConfig,
   FbrConnectionTestResult,
   FbrQueueStatus,
@@ -1024,47 +1013,8 @@ export function installUpdate(): Promise<void> {
 }
 
 // ==========================================
-// SAAS / SUPER ADMIN COMMANDS (migration 017)
+// COMPANY MODULES
 // ==========================================
-
-export function listPackages(
-  includeInactive = true,
-): Promise<PublicPackage[]> {
-  return invoke<PublicPackage[]>("list_packages", { includeInactive });
-}
-
-export function createPackage(input: CreatePackageInput): Promise<PublicPackage> {
-  return invoke<PublicPackage>("create_package", input);
-}
-
-export function updatePackage(input: UpdatePackageInput): Promise<PublicPackage> {
-  return invoke<PublicPackage>("update_package", input);
-}
-
-export function deletePackage(packageId: string): Promise<void> {
-  return invoke<void>("delete_package", { packageId });
-}
-
-export function getCurrentSubscription(): Promise<PublicSubscription | null> {
-  return invoke<PublicSubscription | null>("get_current_subscription");
-}
-
-export function getCompanySubscription(
-  companyId: string,
-): Promise<PublicSubscription | null> {
-  return invoke<PublicSubscription | null>("get_company_subscription", {
-    companyId,
-  });
-}
-
-export function assignCompanySubscription(input: {
-  companyId: string;
-  packageId: string;
-  status?: string;
-  trialDays?: number;
-}): Promise<PublicSubscription> {
-  return invoke<PublicSubscription>("assign_company_subscription", input);
-}
 
 export function listCompanyModules(
   companyId?: string,
@@ -1080,54 +1030,7 @@ export function setCompanyModule(input: {
   return invoke<PublicCompanyModule>("set_company_module", input);
 }
 
-export function listFeatureFlags(
-  companyId?: string,
-): Promise<PublicFeatureFlag[]> {
-  return invoke<PublicFeatureFlag[]>("list_feature_flags", { companyId });
-}
 
-export function setFeatureFlag(input: {
-  companyId: string;
-  featureKey: string;
-  isEnabled: boolean;
-  reason?: string;
-}): Promise<PublicFeatureFlag> {
-  return invoke<PublicFeatureFlag>("set_feature_flag", input);
-}
-
-export function listTenantCompanies(): Promise<TenantCompanySummary[]> {
-  return invoke<TenantCompanySummary[]>("list_tenant_companies");
-}
-
-export function getTenantCompanyDetail(
-  companyId: string,
-): Promise<TenantCompanyDetail> {
-  return invoke<TenantCompanyDetail>("get_tenant_company_detail", { companyId });
-}
-
-export function getPlatformAnalytics(): Promise<PlatformAnalytics> {
-  return invoke<PlatformAnalytics>("get_platform_analytics");
-}
-
-export function registerTenant(
-  input: RegisterTenantInput,
-): Promise<RegisterTenantResult> {
-  return invoke<RegisterTenantResult>("register_tenant", input);
-}
-
-export function updateTenantCompany(
-  input: UpdateTenantCompanyInput,
-): Promise<PublicCompany> {
-  return invoke<PublicCompany>("update_tenant_company", input);
-}
-
-export function archiveCompany(companyId: string): Promise<void> {
-  return invoke<void>("archive_company", { companyId });
-}
-
-export function activateCompany(companyId: string): Promise<void> {
-  return invoke<void>("activate_company", { companyId });
-}
 
 // ==========================================
 // ERROR HELPER

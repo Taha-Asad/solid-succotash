@@ -287,25 +287,9 @@ pub async fn run() {
             // ---- Retention ----
             commands::retention::get_retention_summary,
             commands::retention::archive_old_records,
-            // ---- SaaS Layer ----
-            commands::saas::list_packages,
-            commands::saas::create_package,
-            commands::saas::update_package,
-            commands::saas::delete_package,
-            commands::saas::get_current_subscription,
-            commands::saas::get_company_subscription,
-            commands::saas::assign_company_subscription,
-            commands::saas::list_company_modules,
-            commands::saas::set_company_module,
-            commands::saas::list_feature_flags,
-            commands::saas::set_feature_flag,
-            commands::saas::list_tenant_companies,
-            commands::saas::get_tenant_company_detail,
-            commands::saas::get_platform_analytics,
-            commands::saas::register_tenant,
-            commands::saas::update_tenant_company,
-            commands::saas::archive_company,
-            commands::saas::activate_company,
+            // ---- Company Modules ----
+            commands::company::list_company_modules,
+            commands::company::set_company_module,
             // ---- Multi-Currency ----
             commands::currency::get_all_currencies,
             commands::currency::get_company_currency,

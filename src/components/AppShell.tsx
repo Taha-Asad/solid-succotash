@@ -116,14 +116,14 @@ const NAV_ITEMS: {
     label: "Dashboard",
     description: "Overview & analytics",
     icon: <LayoutDashboard size={18} />,
-    roles: ["owner", "admin", "employee", "super_admin"],
+    roles: ["owner", "admin", "employee"],
   },
   {
     key: "inventory",
     label: "Inventory",
     description: "Products, stock & suppliers",
     icon: <Package size={18} />,
-    roles: ["owner", "admin", "employee", "super_admin"],
+    roles: ["owner", "admin", "employee"],
     module: "inventory",
   },
   {
@@ -131,7 +131,7 @@ const NAV_ITEMS: {
     label: "Invoices",
     description: "Bills, payments & customers",
     icon: <ReceiptText size={18} />,
-    roles: ["owner", "admin", "employee", "super_admin"],
+    roles: ["owner", "admin", "employee"],
     module: "invoices",
   },
   {
@@ -139,14 +139,14 @@ const NAV_ITEMS: {
     label: "Customers",
     description: "Customer directory & accounts",
     icon: <ContactRound size={18} />,
-    roles: ["owner", "admin", "employee", "super_admin"],
+    roles: ["owner", "admin", "employee"],
   },
   {
     key: "purchasing",
     label: "Purchasing",
     description: "Purchase orders from suppliers",
     icon: <ShoppingCart size={18} />,
-    roles: ["owner", "admin", "employee", "super_admin"],
+    roles: ["owner", "admin", "employee"],
     module: "purchase_orders",
   },
   {
@@ -161,7 +161,7 @@ const NAV_ITEMS: {
     label: "Reports",
     description: "Sales, stock & profit analytics",
     icon: <ChartPie size={18} />,
-    roles: ["owner", "admin", "employee", "super_admin"],
+    roles: ["owner", "admin", "employee"],
     module: "reports",
   },
   {
@@ -169,7 +169,7 @@ const NAV_ITEMS: {
     label: "Accounts",
     description: "Chart of accounts & journal",
     icon: <BookOpen size={18} />,
-    roles: ["owner", "admin", "employee", "super_admin"],
+    roles: ["owner", "admin", "employee"],
     module: "ledger",
   },
   {
@@ -177,7 +177,7 @@ const NAV_ITEMS: {
     label: "Team",
     description: "Manage company users",
     icon: <Users size={18} />,
-    roles: ["owner", "admin", "super_admin"],
+    roles: ["owner", "admin"],
     module: "users",
   },
   {
@@ -185,7 +185,7 @@ const NAV_ITEMS: {
     label: "Settings",
     description: "Profile, invoices, backups & audit",
     icon: <Settings2 size={18} />,
-    roles: ["owner", "admin", "employee", "super_admin"],
+    roles: ["owner", "admin", "employee"],
     module: "settings",
   },
   {
@@ -193,7 +193,7 @@ const NAV_ITEMS: {
     label: "Help",
     description: "How to use this software",
     icon: <CircleHelp size={18} />,
-    roles: ["owner", "admin", "employee", "super_admin"],
+    roles: ["owner", "admin", "employee"],
   },
 ];
 

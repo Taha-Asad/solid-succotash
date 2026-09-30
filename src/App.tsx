@@ -16,7 +16,7 @@
 // It only decides WHICH screen to show, then renders it.
 // The actual screens live in src/features/...
 
-import { lazy, Suspense, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 
 import {
   Center,
@@ -41,7 +41,6 @@ import LoginPage from "./features/auth/LoginPage";
 import SetupPage from "./features/auth/SetupPage";
 import ChangePasswordPage from "./features/auth/ChangePasswordPage";
 import AppShell from "./components/AppShell";
-const SuperAdminShell = lazy(() => import("./features/superadmin/SuperAdminShell"));
 import { CorbelSquircle } from "./components/CorbelLogo";
 
 import { OnboardingProvider } from "./onboarding/OnboardingProvider";
@@ -222,24 +221,9 @@ function App() {
   if (user) {
     return (
       <OnboardingProvider screen={screen} user={user}>
-        {/* Super admins (cross-tenant, companyId = null) get their own
-            dedicated Platform Command Center — a separate product surface
-            from the tenant workspace shell. */}
-        {user.isSuperAdmin ? (
-          <Suspense
-            fallback={
-              <Center h="100vh">
-                <Loader size="lg" color="indigo" />
-              </Center>
-            }
-          >
-            <SuperAdminShell user={user} onLogout={handleLogout} />
-          </Suspense>
-        ) : (
-          <PermissionsProvider>
-            <AppShell user={user} onLogout={handleLogout} />
-          </PermissionsProvider>
-        )}
+        <PermissionsProvider>
+          <AppShell user={user} onLogout={handleLogout} />
+        </PermissionsProvider>
       </OnboardingProvider>
     );
   }
