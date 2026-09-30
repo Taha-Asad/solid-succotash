@@ -79,6 +79,7 @@ import { reportOnboardingEvent } from "../../onboarding/bus";
 import { usePermissions } from "../permissions/PermissionsProvider";
 import InvoiceCreatePage from "./InvoiceCreatePage";
 import { InvoicePaymentModal } from "../payments/InvoicePaymentModal";
+import { ConfirmDialog } from "../../shared/ui/ConfirmDialog";
 import {
   formatWhatsAppNumber,
   launchWhatsAppUrl,
@@ -1722,34 +1723,22 @@ function InvoiceDetailView({
       </Modal>
 
       {/* Delete Draft Modal */}
-      <Modal
+      <ConfirmDialog
         opened={deleteModalOpen}
         onClose={() => setDeleteModalOpen(false)}
+        onConfirm={handleDeleteInvoice}
         title="Delete Draft Invoice"
-        centered
-      >
-        <Stack gap="md">
-          <Text size="sm">
+        message={
+          <>
             Are you sure you want to permanently delete draft invoice{" "}
             <strong>{invoice.invoiceNumber}</strong>?
-          </Text>
-          <Text size="xs" c="dimmed">
-            Line items will be removed. Because this invoice is still a draft, inventory stock and financial accounts will not be affected.
-          </Text>
-          <Group justify="flex-end" gap="xs">
-            <Button variant="default" onClick={() => setDeleteModalOpen(false)}>
-              Cancel
-            </Button>
-            <Button
-              color="red"
-              loading={deleting}
-              onClick={handleDeleteInvoice}
-            >
-              Delete Draft
-            </Button>
-          </Group>
-        </Stack>
-      </Modal>
+          </>
+        }
+        subtitle="Line items will be removed. Because this invoice is still a draft, inventory stock and financial accounts will not be affected."
+        confirmLabel="Delete Draft"
+        danger
+        loading={deleting}
+      />
 
       {/* Cancel / Void Invoice Modal */}
       <Modal

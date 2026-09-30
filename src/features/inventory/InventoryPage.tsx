@@ -91,6 +91,7 @@ import {
 } from "lucide-react";
 
 import { useI18n } from "../../i18n/I18nProvider";
+import { ConfirmDialog } from "../../shared/ui/ConfirmDialog";
 
 import {
   listCategories,
@@ -1492,6 +1493,8 @@ function ProductsTab({ onFormModeChange, onOpenImport }: ProductsTabProps) {
   const [batchesModalOpen, setBatchesModalOpen] = useState(false);
   const [batchesProduct, setBatchesProduct] = useState<PublicProduct | null>(null);
   const [writeOffTarget, setWriteOffTarget] = useState<PublicStockBatch | null>(null);
+  const [productToDelete, setProductToDelete] = useState<PublicProduct | null>(null);
+  const [deletingProduct, setDeletingProduct] = useState(false);
 
   // Custom field definitions (created during import)
   const [customFieldDefs, setCustomFieldDefs] = useState<
@@ -1691,18 +1694,21 @@ function ProductsTab({ onFormModeChange, onOpenImport }: ProductsTabProps) {
     }
   }
 
-  async function handleDeleteProduct(prod: PublicProduct) {
-    if (
-      !confirm(
-        `Delete product "${prod.name}" (${prod.sku})? Stock movements and history are kept.`,
-      )
-    )
-      return;
+  function handleDeleteProduct(prod: PublicProduct) {
+    setProductToDelete(prod);
+  }
+
+  async function confirmDeleteProduct() {
+    if (!productToDelete) return;
+    setDeletingProduct(true);
     try {
-      await deleteProduct(prod.id);
+      await deleteProduct(productToDelete.id);
+      setProductToDelete(null);
       await load();
     } catch (err) {
       setError(getErrorMessage(err));
+    } finally {
+      setDeletingProduct(false);
     }
   }
 
@@ -2881,6 +2887,23 @@ function ProductsTab({ onFormModeChange, onOpenImport }: ProductsTabProps) {
           setWriteOffTarget(null);
           await load();
         }}
+      />
+
+      {/* ---- Product Delete Confirm Modal ---- */}
+      <ConfirmDialog
+        opened={Boolean(productToDelete)}
+        onClose={() => setProductToDelete(null)}
+        onConfirm={confirmDeleteProduct}
+        title="Delete Product"
+        message={
+          productToDelete ? (
+            <>Are you sure you want to delete product <strong>{productToDelete.name}</strong> ({productToDelete.sku})?</>
+          ) : null
+        }
+        subtitle="Stock movements and history will be kept, but the product will be archived from active catalog."
+        confirmLabel="Delete Product"
+        danger
+        loading={deletingProduct}
       />
     </Stack>
   );
