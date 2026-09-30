@@ -324,8 +324,21 @@ pub async fn record_payment(
     notes: String,
     payment_currency_code: Option<String>,
     payment_exchange_rate: Option<f64>,
+    idempotency_key: Option<String>,
 ) -> Result<PublicInvoice, AppError> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
+
+    let resolved_key = idempotency_key
+        .map(|k| k.trim().to_string())
+        .filter(|k| !k.is_empty())
+        .or_else(|| {
+            let trimmed_ref = reference.trim();
+            if !trimmed_ref.is_empty() {
+                Some(trimmed_ref.to_string())
+            } else {
+                None
+            }
+        });
 
     let req = crate::application::payments::RecordPaymentRequest {
         invoice_id: invoice_id.clone(),
@@ -336,11 +349,7 @@ pub async fn record_payment(
         notes,
         payment_currency_code,
         payment_exchange_rate,
-        idempotency_key: if !reference.trim().is_empty() {
-            Some(reference)
-        } else {
-            None
-        },
+        idempotency_key: resolved_key,
     };
 
     let updated = crate::application::payments::record_invoice_payment(

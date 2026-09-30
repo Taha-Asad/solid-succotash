@@ -20,11 +20,14 @@ const MODULE_DESCRIPTIONS: Record<string, { label: string; description: string }
   inventory: { label: "Inventory", description: "Products, stock management & suppliers" },
   invoices: { label: "Invoices", description: "Create, finalize & manage customer invoices" },
   purchase_orders: { label: "Purchasing", description: "Purchase orders from suppliers" },
+  pos: { label: "Point of Sale", description: "Fast barcode cashier counter" },
+  fbr: { label: "FBR Fiscal Invoicing", description: "Real-time FBR digital invoicing integration" },
   reports: { label: "Reports", description: "Sales, stock & profit analytics" },
   ledger: { label: "Accounts", description: "Chart of accounts & journal entries" },
   users: { label: "Team", description: "Manage company users & roles" },
   settings: { label: "Settings", description: "Company profile, invoice design & backup" },
   import: { label: "Import", description: "Import products, customers & invoices from files" },
+  data_import: { label: "Import", description: "Import products, customers & invoices from files" },
 };
 
 interface ModulesTabProps {

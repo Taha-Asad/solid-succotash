@@ -2,10 +2,12 @@ import { useEffect, useState } from "react";
 import {
   Button,
   Card,
+  Divider,
   Group,
   Select,
   SimpleGrid,
   Stack,
+  Switch,
   Text,
   TextInput,
   Title,
@@ -19,6 +21,16 @@ import {
 } from "../../../api/backend";
 import { reportOnboardingEvent } from "../../../onboarding/bus";
 import type { CurrencyConfig } from "../../../types/backend";
+
+const PROVINCE_OPTIONS = [
+  { value: "Punjab", label: "Punjab (PRA)" },
+  { value: "Sindh", label: "Sindh (SRB)" },
+  { value: "Khyber Pakhtunkhwa", label: "Khyber Pakhtunkhwa (KPRA)" },
+  { value: "Balochistan", label: "Balochistan (BRA)" },
+  { value: "Islamabad", label: "Islamabad Capital Territory (ICT)" },
+  { value: "Gilgit-Baltistan", label: "Gilgit-Baltistan" },
+  { value: "Azad Kashmir", label: "Azad Jammu & Kashmir" },
+];
 
 export function CompanyProfileTab() {
   const [loading, setLoading] = useState(true);
@@ -34,6 +46,10 @@ export function CompanyProfileTab() {
       phone: "",
       address: "",
       taxNumber: "",
+      ntn: "",
+      strn: "",
+      province: "",
+      fbrRegistered: false,
       currencyCode: "PKR",
     },
   });
@@ -49,7 +65,11 @@ export function CompanyProfileTab() {
           email: c.email ?? "",
           phone: c.phone ?? "",
           address: c.address ?? "",
-          taxNumber: c.taxNumber ?? "",
+          taxNumber: c.ntn ?? c.taxNumber ?? "",
+          ntn: c.ntn ?? c.taxNumber ?? "",
+          strn: c.strn ?? "",
+          province: c.province ?? "",
+          fbrRegistered: Boolean(c.fbrRegistered),
           currencyCode: c.currencyCode,
         });
         setLoading(false);
@@ -62,15 +82,21 @@ export function CompanyProfileTab() {
     setError(null);
     setSuccess(null);
     try {
+      const effectiveNtn = values.ntn.trim() || values.taxNumber.trim() || null;
       await updateCompany({
-        ...values,
-        email: values.email || null,
-        phone: values.phone || null,
-        address: values.address || null,
-        taxNumber: values.taxNumber || null,
+        name: values.name.trim(),
+        email: values.email.trim() || null,
+        phone: values.phone.trim() || null,
+        address: values.address.trim() || null,
+        taxNumber: effectiveNtn,
+        ntn: effectiveNtn,
+        strn: values.strn.trim() || null,
+        province: values.province.trim() || null,
+        fbrRegistered: values.fbrRegistered,
+        currencyCode: values.currencyCode,
       });
       reportOnboardingEvent({ type: "settings-saved" });
-      setSuccess("Company profile updated.");
+      setSuccess("Company profile updated successfully.");
     } catch (err) {
       setError(getErrorMessage(err));
     } finally {
@@ -81,7 +107,7 @@ export function CompanyProfileTab() {
   if (loading) return <Text c="dimmed">Loading...</Text>;
 
   return (
-    <Card withBorder padding="lg" maw={600}>
+    <Card withBorder padding="lg" maw={650}>
       <Title order={5} mb="md">
         Company Profile
       </Title>
@@ -89,21 +115,54 @@ export function CompanyProfileTab() {
         <Stack gap="md">
           <TextInput
             label="Company Name"
+            placeholder="e.g. ABC Traders"
             required
             {...form.getInputProps("name")}
           />
-          <SimpleGrid cols={2}>
-            <TextInput label="Email" {...form.getInputProps("email")} />
-            <TextInput label="Phone" {...form.getInputProps("phone")} />
-          </SimpleGrid>
-          <TextInput label="Address" {...form.getInputProps("address")} />
-          <SimpleGrid cols={2}>
+          <SimpleGrid cols={{ base: 1, sm: 2 }}>
             <TextInput
-              label="Tax Number (NTN)"
-              {...form.getInputProps("taxNumber")}
+              label="Email"
+              placeholder="e.g. info@company.com"
+              {...form.getInputProps("email")}
+            />
+            <TextInput
+              label="Phone"
+              placeholder="e.g. 0300-1234567"
+              {...form.getInputProps("phone")}
+            />
+          </SimpleGrid>
+          <TextInput
+            label="Address"
+            placeholder="e.g. 123 Main Bazaar, Lahore"
+            {...form.getInputProps("address")}
+          />
+          <SimpleGrid cols={{ base: 1, sm: 2 }}>
+            <TextInput
+              label="National Tax Number (NTN)"
+              placeholder="e.g. 1234567-8"
+              {...form.getInputProps("ntn")}
+              onChange={(e) => {
+                const val = e.currentTarget.value;
+                form.setFieldValue("ntn", val);
+                form.setFieldValue("taxNumber", val);
+              }}
+            />
+            <TextInput
+              label="Sales Tax Reg # (STRN)"
+              placeholder="e.g. 12-34-5678-901-23"
+              {...form.getInputProps("strn")}
+            />
+          </SimpleGrid>
+          <SimpleGrid cols={{ base: 1, sm: 2 }}>
+            <Select
+              label="Province / Revenue Authority"
+              placeholder="Select tax jurisdiction"
+              data={PROVINCE_OPTIONS}
+              clearable
+              {...form.getInputProps("province")}
             />
             <Select
-              label="Currency"
+              label="Default Currency"
               data={
                 currencies.length > 0
                   ? currencies.map((c) => ({
@@ -115,6 +174,18 @@ export function CompanyProfileTab() {
               {...form.getInputProps("currencyCode")}
             />
           </SimpleGrid>
+
+          <Divider my="xs" label="Tax Compliance & Integrations" labelPosition="center" />
+
+          <Switch
+            label="FBR Digital Invoicing Integration Active"
+            description="Declare this company as registered with the Federal Board of Revenue for fiscal invoicing."
+            checked={form.values.fbrRegistered}
+            onChange={(event) =>
+              form.setFieldValue("fbrRegistered", event.currentTarget.checked)
+            }
+          />
+
           {error && (
             <Text c="red" size="sm">
               {error}

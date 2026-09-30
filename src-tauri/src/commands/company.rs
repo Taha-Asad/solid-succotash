@@ -183,6 +183,8 @@ pub async fn register_company(
         ));
     }
 
+    let ntn = tax_number.clone();
+
     sqlx::query(
         r#"
         INSERT INTO companies (
@@ -192,9 +194,10 @@ pub async fn register_company(
             phone,
             address,
             tax_number,
+            ntn,
             currency_code
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         "#,
     )
     .bind(&company_id)
@@ -203,6 +206,7 @@ pub async fn register_company(
     .bind(&phone)
     .bind(&address)
     .bind(&tax_number)
+    .bind(&ntn)
     .bind(&currency_code)
     .execute(&mut *transaction)
     .await
@@ -341,6 +345,10 @@ pub async fn update_company(
     address: Option<String>,
     tax_number: Option<String>,
     currency_code: String,
+    ntn: Option<String>,
+    strn: Option<String>,
+    province: Option<String>,
+    fbr_registered: Option<bool>,
 ) -> Result<PublicCompany, AppError> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
 
@@ -354,8 +362,18 @@ pub async fn update_company(
     let email = clean_optional_email(email)?;
     let phone = clean_optional_text(phone, "Phone", 50)?;
     let address = clean_optional_text(address, "Address", 500)?;
-    let tax_number = clean_optional_text(tax_number, "Tax number", 100)?;
+    let mut tax_number = clean_optional_text(tax_number, "Tax number", 100)?;
+    let mut ntn = clean_optional_text(ntn, "NTN", 50)?;
+    // Synchronize tax_number and NTN if either is provided
+    if tax_number.is_none() && ntn.is_some() {
+        tax_number = ntn.clone();
+    } else if ntn.is_none() && tax_number.is_some() {
+        ntn = tax_number.clone();
+    }
+    let strn = clean_optional_text(strn, "STRN", 50)?;
+    let province = clean_optional_text(province, "Province", 50)?;
     let currency_code = validate_currency_code(&currency_code)?;
+    let is_fbr = fbr_registered.unwrap_or(false);
 
     sqlx::query(
         r#"
@@ -366,6 +384,10 @@ pub async fn update_company(
             address = ?,
             tax_number = ?,
             currency_code = ?,
+            ntn = ?,
+            strn = ?,
+            province = ?,
+            fbr_registered = ?,
             updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
         "#,
@@ -376,6 +398,10 @@ pub async fn update_company(
     .bind(&address)
     .bind(&tax_number)
     .bind(&currency_code)
+    .bind(&ntn)
+    .bind(&strn)
+    .bind(&province)
+    .bind(is_fbr)
     .bind(&company_id)
     .execute(pool.inner())
     .await
@@ -482,7 +508,13 @@ pub async fn set_company_module(
         return Err(AppError::internal("Only company owners or admins can change modules".to_string()));
     }
 
-    let module_key = module_key.trim().to_lowercase();
+    let raw_key = module_key.trim().to_lowercase();
+    let module_key = if raw_key == "data_import" {
+        "import".to_string()
+    } else {
+        raw_key
+    };
+
     const VALID_MODULES: &[&str] = &[
         "inventory",
         "purchase_orders",
@@ -492,7 +524,8 @@ pub async fn set_company_module(
         "reports",
         "settings",
         "invoices",
-        "data_import",
+        "import",
+        "users",
     ];
     if !VALID_MODULES.contains(&module_key.as_str()) {
         return Err(AppError::internal(format!("Unknown module: {module_key}")));
@@ -937,6 +970,10 @@ mod tests {
             None,
             None,
             "USD".to_string(),
+            None,
+            None,
+            None,
+            None,
         )
         .await
         .expect("update succeeds");
@@ -972,10 +1009,53 @@ mod tests {
             None,
             None,
             "PKR".to_string(),
+            None,
+            None,
+            None,
+            None,
         )
         .await
         .expect("admin may update company");
         assert_eq!(updated.name, "Admin Renamed");
+    }
+
+    #[tokio::test]
+    async fn update_company_persists_fbr_attributes() {
+        // Input: owner updates NTN, STRN, Province, and FBR registration.
+        // Expected: Ok(company) with matching attributes persisted in database.
+        let app = setup_app().await;
+        register(&app).await;
+
+        let updated = update_company(
+            state_of(&app),
+            state_of(&app),
+            "Falcon Corp".to_string(),
+            Some("falcon@example.com".to_string()),
+            Some("042-111-222".to_string()),
+            Some("Lahore, Pakistan".to_string()),
+            Some("1234567-8".to_string()),
+            "PKR".to_string(),
+            Some("1234567-8".to_string()),
+            Some("01-02-1234-567-89".to_string()),
+            Some("Punjab".to_string()),
+            Some(true),
+        )
+        .await
+        .expect("update company with fbr attributes");
+
+        assert_eq!(updated.name, "Falcon Corp");
+        assert_eq!(updated.ntn.as_deref(), Some("1234567-8"));
+        assert_eq!(updated.strn.as_deref(), Some("01-02-1234-567-89"));
+        assert_eq!(updated.province.as_deref(), Some("Punjab"));
+        assert!(updated.fbr_registered);
+
+        let fetched = get_company(state_of(&app), state_of(&app))
+            .await
+            .expect("fetch company");
+        assert_eq!(fetched.ntn.as_deref(), Some("1234567-8"));
+        assert_eq!(fetched.strn.as_deref(), Some("01-02-1234-567-89"));
+        assert_eq!(fetched.province.as_deref(), Some("Punjab"));
+        assert!(fetched.fbr_registered);
     }
 
     #[tokio::test]
@@ -999,6 +1079,10 @@ mod tests {
             None,
             None,
             "PKR".to_string(),
+            None,
+            None,
+            None,
+            None,
         )
         .await
         .unwrap_err();
@@ -1019,6 +1103,10 @@ mod tests {
             None,
             None,
             "PKR".to_string(),
+            None,
+            None,
+            None,
+            None,
         )
         .await
         .unwrap_err();
@@ -1040,6 +1128,10 @@ mod tests {
             None,
             None,
             "XX".to_string(),
+            None,
+            None,
+            None,
+            None,
         )
         .await
         .unwrap_err();
@@ -1061,6 +1153,10 @@ mod tests {
             None,
             None,
             "PKR".to_string(),
+            None,
+            None,
+            None,
+            None,
         )
         .await
         .unwrap_err();

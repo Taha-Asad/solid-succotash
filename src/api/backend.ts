@@ -138,6 +138,10 @@ export function updateCompany(input: {
   address: string | null;
   taxNumber: string | null;
   currencyCode: string;
+  ntn?: string | null;
+  strn?: string | null;
+  province?: string | null;
+  fbrRegistered?: boolean;
 }): Promise<PublicCompany> {
   return invoke<PublicCompany>("update_company", input);
 }

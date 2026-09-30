@@ -1132,6 +1132,7 @@ use uuid::Uuid;
             "advance".to_string(),
             None,
             None,
+            None,
         )
         .await
         .expect("partial");
@@ -1147,6 +1148,7 @@ use uuid::Uuid;
             "2026-01-25".to_string(),
             "".to_string(),
             "".to_string(),
+            None,
             None,
             None,
         )
@@ -1175,6 +1177,7 @@ use uuid::Uuid;
             "".to_string(),
             None,
             None,
+            None,
         )
         .await
         .unwrap_err();
@@ -1198,6 +1201,7 @@ use uuid::Uuid;
             "2026-01-20".to_string(),
             "".to_string(),
             "".to_string(),
+            None,
             None,
             None,
         )
@@ -1224,6 +1228,7 @@ use uuid::Uuid;
             "".to_string(),
             None,
             None,
+            None,
         )
         .await
         .unwrap_err();
@@ -1246,6 +1251,7 @@ use uuid::Uuid;
             "2026-01-20".to_string(),
             "".to_string(),
             "".to_string(),
+            None,
             None,
             None,
         )
@@ -1272,6 +1278,7 @@ use uuid::Uuid;
             "first attempt".to_string(),
             None,
             None,
+            None,
         )
         .await
         .expect("first payment should succeed");
@@ -1290,6 +1297,7 @@ use uuid::Uuid;
             "retry attempt".to_string(),
             None,
             None,
+            None,
         )
         .await
         .expect("second payment should return existing state safely without error");
@@ -1297,6 +1305,49 @@ use uuid::Uuid;
         // Amount paid must NOT double to 1000!
         assert_eq!(second.amount_paid, 500);
         assert_eq!(second.balance_due, first.balance_due);
+    }
+
+    #[tokio::test]
+    async fn record_payment_with_explicit_idempotency_key() {
+        // Input: frontend generates explicit idempotencyKey even with empty reference.
+        let app = owner_app().await;
+        let (inv, _) = finalized_invoice_with_stock(&app).await;
+
+        let first = record_payment(
+            app.state(),
+            app.state(),
+            inv.id.clone(),
+            300,
+            "cash".to_string(),
+            "2026-01-20".to_string(),
+            "".to_string(),
+            "".to_string(),
+            None,
+            None,
+            Some("frontend-uuid-abc".to_string()),
+        )
+        .await
+        .expect("first payment");
+
+        assert_eq!(first.amount_paid, 300);
+
+        let second = record_payment(
+            app.state(),
+            app.state(),
+            inv.id.clone(),
+            300,
+            "cash".to_string(),
+            "2026-01-20".to_string(),
+            "".to_string(),
+            "".to_string(),
+            None,
+            None,
+            Some("frontend-uuid-abc".to_string()),
+        )
+        .await
+        .expect("idempotent replay");
+
+        assert_eq!(second.amount_paid, 300);
     }
 
     // ---------------------------------------------------------------
