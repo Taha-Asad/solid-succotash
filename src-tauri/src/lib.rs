@@ -2,6 +2,7 @@ mod commands;
 mod db;
 pub mod error;
 pub mod domain;
+pub mod application;
 mod pdf;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use std::str::FromStr;

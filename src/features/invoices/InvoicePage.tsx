@@ -30,7 +30,6 @@ import {
   Table,
   Text,
   TextInput,
-  Textarea,
   Title,
   ScrollArea,
   Alert,
@@ -74,12 +73,12 @@ import type {
 } from "../../types/backend";
 
 import { INK } from "../../theme";
-import { AppDateInput } from "../../components/AppDateInput";
-import { ReceiptText, Plus, Printer, MessageSquare, Coins, CheckCircle2, Zap, Barcode, ChevronDown, Trash2, XCircle, AlertTriangle } from "lucide-react";
+import { ReceiptText, Plus, Printer, MessageSquare, CheckCircle2, Zap, Barcode, ChevronDown, Trash2, XCircle, AlertTriangle } from "lucide-react";
 import { printHtmlContent } from "../../utils/printInvoice";
 import { reportOnboardingEvent } from "../../onboarding/bus";
 import { usePermissions } from "../permissions/PermissionsProvider";
 import InvoiceCreatePage from "./InvoiceCreatePage";
+import { InvoicePaymentModal } from "../payments/InvoicePaymentModal";
 import {
   formatWhatsAppNumber,
   launchWhatsAppUrl,
@@ -1627,11 +1626,12 @@ function InvoiceDetailView({
       />
 
       {/* Payment Modal */}
-      <PaymentModal
+      <InvoicePaymentModal
         opened={paymentModalOpen}
         onClose={() => setPaymentModalOpen(false)}
         onRecord={handleRecordPayment}
         balanceDue={invoice.balanceDue}
+        invoiceNumber={invoice.invoiceNumber}
         currencyConfig={currencyConfig}
       />
 
@@ -2038,251 +2038,3 @@ function AddItemModal({
   );
 }
 
-// ==========================================
-// PAYMENT MODAL
-// ==========================================
-
-function PaymentModal({
-  opened,
-  onClose,
-  onRecord,
-  balanceDue,
-  currencyConfig,
-}: {
-  opened: boolean;
-  onClose: () => void;
-  onRecord: (values: {
-    amount: number;
-    paymentMethod: string;
-    paymentDate: string;
-    reference: string;
-    notes: string;
-  }) => Promise<void>;
-  balanceDue: number;
-  currencyConfig?: CurrencyConfig | null;
-}) {
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [cashTendered, setCashTendered] = useState<number | string>("");
-
-  const form = useForm({
-    initialValues: {
-      amount: paisaToNumber(balanceDue, currencyConfig),
-      paymentMethod: "cash",
-      paymentDate: new Date().toISOString().split("T")[0],
-      reference: "",
-      notes: "",
-    },
-  });
-
-  useEffect(() => {
-    form.setFieldValue("amount", paisaToNumber(balanceDue, currencyConfig));
-    setCashTendered("");
-  }, [balanceDue, opened, currencyConfig]);
-
-  const billAmount = Number(form.values.amount) || 0;
-  const tenderedNum =
-    typeof cashTendered === "number"
-      ? cashTendered
-      : parseFloat(String(cashTendered).replace(/,/g, "")) || 0;
-  const changeToReturn =
-    tenderedNum > billAmount ? tenderedNum - billAmount : 0;
-  const isShort = tenderedNum > 0 && tenderedNum < billAmount;
-
-  // Quick cash chips based on billAmount
-  const quickCashOptions = [
-    { label: "Exact", val: billAmount },
-    ...(billAmount < 500 ? [{ label: "Rs. 500", val: 500 }] : []),
-    ...(billAmount < 1000 ? [{ label: "Rs. 1,000", val: 1000 }] : []),
-    ...(billAmount < 5000 ? [{ label: "Rs. 5,000", val: 5000 }] : []),
-    ...(billAmount >= 5000
-      ? [
-          {
-            label: `Rs. ${(Math.ceil(billAmount / 1000) * 1000).toLocaleString()}`,
-            val: Math.ceil(billAmount / 1000) * 1000,
-          },
-        ]
-      : []),
-  ];
-
-  async function handleSubmit(values: typeof form.values) {
-    setError(null);
-    setLoading(true);
-    try {
-      await onRecord({
-        amount: displayToPaisa(values.amount, currencyConfig),
-        paymentMethod: values.paymentMethod,
-        paymentDate: values.paymentDate,
-        reference: values.reference,
-        notes: values.notes,
-      });
-      form.reset();
-    } catch (err) {
-      setError(getErrorMessage(err));
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  return (
-    <Modal opened={opened} onClose={onClose} title="Record Payment" centered>
-      <form onSubmit={form.onSubmit(handleSubmit)}>
-        <Stack gap="md">
-          <Text size="sm" c="dimmed">
-            Balance due:{" "}
-            <Text span fw={700}>
-              {paisaToDisplay(balanceDue, currencyConfig)} {getCurrencyCode(currencyConfig)}
-            </Text>
-          </Text>
-
-          <NumberInput
-            label="Amount"
-            decimalScale={2}
-            fixedDecimalScale
-            min={0}
-            required
-            {...form.getInputProps("amount")}
-          />
-
-          <SimpleGrid cols={2}>
-            <Select
-              label="Payment Method"
-              data={[
-                { value: "cash", label: "Cash" },
-                { value: "bank_transfer", label: "Bank Transfer" },
-                { value: "card", label: "Card" },
-                { value: "cheque", label: "Cheque" },
-                { value: "online", label: "Online" },
-                { value: "other", label: "Other" },
-              ]}
-              {...form.getInputProps("paymentMethod")}
-            />
-            <AppDateInput
-              label="Payment Date"
-              value={form.values.paymentDate}
-              onChange={(v) => form.setFieldValue("paymentDate", v)}
-            />
-          </SimpleGrid>
-
-          {form.values.paymentMethod === "cash" && (
-            <Card
-              p="sm"
-              radius="md"
-              withBorder
-              style={{
-                background: "var(--app-soft, rgba(0,0,0,0.02))",
-                borderColor: INK.border,
-              }}
-            >
-              <Text
-                size="xs"
-                fw={700}
-                c="dimmed"
-                mb={6}
-                style={{ textTransform: "uppercase", letterSpacing: 0.5 }}
-              >
-                Cashier Change Calculator
-              </Text>
-
-              <Group gap={6} mb="xs" wrap="wrap">
-                <Text size="xs" c="dimmed">
-                  Customer Gave:
-                </Text>
-                {quickCashOptions.map(({ label, val }) => (
-                  <Button
-                    key={label}
-                    size="compact-xs"
-                    variant={tenderedNum === val ? "filled" : "light"}
-                    color={tenderedNum === val ? "teal" : "gray"}
-                    onClick={() => setCashTendered(val)}
-                  >
-                    {label}
-                  </Button>
-                ))}
-              </Group>
-
-              <NumberInput
-                placeholder="Enter cash handed over by customer"
-                decimalScale={2}
-                min={0}
-                value={cashTendered === "" ? undefined : Number(cashTendered)}
-                onChange={(v) =>
-                  setCashTendered(typeof v === "number" ? v : "")
-                }
-                leftSection={<Coins size={15} />}
-                radius="md"
-              />
-
-              {tenderedNum >= billAmount && tenderedNum > 0 && (
-                <Box
-                  mt="xs"
-                  p="xs"
-                  style={{
-                    borderRadius: 8,
-                    background: "rgba(16, 185, 129, 0.12)",
-                    border: "1px solid rgba(16, 185, 129, 0.4)",
-                  }}
-                >
-                  <Group justify="space-between" align="center">
-                    <Text size="xs" fw={700} style={{ color: "#059669" }}>
-                      CHANGE TO RETURN:
-                    </Text>
-                    <Text
-                      size="md"
-                      fw={800}
-                      style={{
-                        color: "#059669",
-                        fontFamily: "var(--mantine-font-family-monospace)",
-                      }}
-                    >
-                      Rs. {changeToReturn.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </Text>
-                  </Group>
-                </Box>
-              )}
-
-              {isShort && (
-                <Box
-                  mt="xs"
-                  p="xs"
-                  style={{
-                    borderRadius: 8,
-                    background: "rgba(239, 68, 68, 0.1)",
-                    border: "1px solid rgba(239, 68, 68, 0.3)",
-                  }}
-                >
-                  <Text size="xs" fw={600} c="red">
-                    Short by Rs. {(billAmount - tenderedNum).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (Customer gave less than bill)
-                  </Text>
-                </Box>
-              )}
-            </Card>
-          )}
-
-          <TextInput
-            label="Reference"
-            placeholder="Cheque #, Transaction ID, etc."
-            {...form.getInputProps("reference")}
-          />
-
-          <Textarea label="Notes" rows={2} {...form.getInputProps("notes")} />
-
-          {error && (
-            <Text c="red" size="sm">
-              {error}
-            </Text>
-          )}
-
-          <Group justify="flex-end">
-            <Button variant="subtle" onClick={onClose}>
-              Cancel
-            </Button>
-            <Button type="submit" loading={loading} color="green">
-              Record Payment
-            </Button>
-          </Group>
-        </Stack>
-      </form>
-    </Modal>
-  );
-}

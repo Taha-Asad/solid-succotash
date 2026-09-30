@@ -914,7 +914,7 @@ pub async fn finalize_invoice(
     Ok(updated)
 }
 
-/// Records a payment against an invoice
+/// Records a payment against an invoice (delegates to application service)
 #[tauri::command]
 pub async fn record_payment(
     pool: State<'_, SqlitePool>,
@@ -930,178 +930,28 @@ pub async fn record_payment(
 ) -> Result<PublicInvoice, AppError> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
 
-    check_permission(pool.inner(), &current_user.role, "invoices", "edit").await?;
-
-    let company_id = current_user
-        .company_id
-        .as_ref()
-        .ok_or("You are not assigned to a company")?;
-
-    if amount <= 0 {
-        return Err(AppError::internal("Payment amount must be positive".to_string()));
-    }
-
-    let valid_methods = ["cash", "bank_transfer", "card", "cheque", "online", "other"];
-    if !valid_methods.contains(&payment_method.as_str()) {
-        return Err(AppError::internal("Invalid payment method".to_string()));
-    }
-
-    let mut tx = pool
-        .inner()
-        .begin()
-        .await
-        .map_err(|e| AppError::internal(format!("Transaction error: {e}")))?;
-
-    // Get current invoice + its currency info
-    let invoice = sqlx::query_as::<_, (String, i64, i64, String, f64)>(
-        "SELECT status, grand_total, amount_paid, COALESCE(currency_code, ''), COALESCE(exchange_rate, 1.0) FROM invoices WHERE id = ? AND company_id = ?",
-    )
-    .bind(&invoice_id)
-    .bind(company_id)
-    .fetch_optional(&mut *tx)
-    .await
-    .map_err(|e| AppError::internal(format!("Database error: {e}")))?
-    .ok_or("Invoice not found")?;
-
-    if invoice.0 == "draft" || invoice.0 == "cancelled" {
-        return Err(AppError::internal("Cannot record payment for draft or cancelled invoices".to_string()));
-    }
-
-    // Compute base currency amount for accounting
-    let pay_currency = payment_currency_code.unwrap_or_else(|| invoice.3.clone());
-    let pay_rate = payment_exchange_rate.unwrap_or(invoice.4);
-    let base_currency_amount = crate::commands::currency::convert_amount(amount, pay_rate, 2);
-
-    let new_amount_paid = invoice.2 + base_currency_amount;
-    let new_balance = invoice.1 - new_amount_paid;
-
-    if new_balance < 0 {
-        return Err(AppError::internal(format!(
-            "Payment ({}) exceeds balance due ({}). Overpayment not allowed.",
-            base_currency_amount,
-            invoice.1 - invoice.2
-        )));
-    }
-
-    let new_status = if new_balance == 0 {
-        "paid"
-    } else {
-        "finalized"
+    let req = crate::application::payments::RecordPaymentRequest {
+        invoice_id: invoice_id.clone(),
+        amount,
+        payment_method: payment_method.clone(),
+        payment_date,
+        reference: reference.clone(),
+        notes,
+        payment_currency_code,
+        payment_exchange_rate,
+        idempotency_key: if !reference.trim().is_empty() {
+            Some(reference)
+        } else {
+            None
+        },
     };
 
-    // Record payment
-    let payment_id = uuid::Uuid::new_v4().to_string();
-    sqlx::query(
-        r#"
-        INSERT INTO payment_records
-            (id, invoice_id, company_id, amount, payment_method,
-             payment_date, reference, notes, received_by,
-             currency_code, exchange_rate, base_currency_amount)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        "#,
-    )
-    .bind(&payment_id)
-    .bind(&invoice_id)
-    .bind(company_id)
-    .bind(base_currency_amount)
-    .bind(&payment_method)
-    .bind(&payment_date)
-    .bind(clean_optional(&reference))
-    .bind(clean_optional(&notes))
-    .bind(&current_user.id)
-    .bind(&pay_currency)
-    .bind(pay_rate)
-    .bind(base_currency_amount)
-    .execute(&mut *tx)
-    .await
-    .map_err(|e| AppError::internal(format!("Payment record error: {e}")))?;
-
-    // Update invoice
-    sqlx::query(
-        r#"
-        UPDATE invoices
-        SET amount_paid = ?, balance_due = ?, status = ?, updated_at = CURRENT_TIMESTAMP
-        WHERE id = ? AND company_id = ?
-        "#,
-    )
-    .bind(new_amount_paid)
-    .bind(new_balance)
-    .bind(new_status)
-    .bind(&invoice_id)
-    .bind(company_id)
-    .execute(&mut *tx)
-    .await
-    .map_err(|e| AppError::internal(format!("Invoice update error: {e}")))?;
-
-    // Double-entry: Dr Cash / Cr Accounts Receivable.
-    let invoice_number =
-        sqlx::query_scalar::<_, String>("SELECT invoice_number FROM invoices WHERE id = ?")
-            .bind(&invoice_id)
-            .fetch_one(&mut *tx)
-            .await
-            .map_err(|e| AppError::internal(format!("Invoice lookup error: {e}")))?;
-
-    crate::commands::ledger::post_payment_collection(
-        &mut tx,
-        company_id,
-        &payment_id,
-        &payment_date,
-        &invoice_number,
-        base_currency_amount,
-        &current_user.id,
+    let updated = crate::application::payments::record_invoice_payment(
+        pool.inner(),
+        &current_user,
+        req,
     )
     .await?;
-
-    // Post FX gain/loss if payment currency differs from invoice currency
-    // or if the payment rate differs from the invoice rate
-    let expected_base = crate::commands::currency::convert_amount(amount, invoice.4, 2);
-    let fx_gain_loss = expected_base - base_currency_amount;
-
-    if fx_gain_loss.abs() > 1 {
-        let (debit_code, credit_code, description) = if fx_gain_loss > 0 {
-            // We received LESS than expected → FX Loss
-            ("7100", "1000", format!("FX loss on payment for invoice {invoice_number}"))
-        } else {
-            // We received MORE than expected → FX Gain
-            ("1000", "7000", format!("FX gain on payment for invoice {invoice_number}"))
-        };
-        let abs_diff = fx_gain_loss.abs() as i64;
-
-        crate::commands::ledger::post_journal_entry(
-            &mut tx,
-            company_id,
-            &payment_date,
-            "fx_adjustment",
-            Some(&payment_id),
-            &description,
-            vec![
-                crate::commands::ledger::JournalLineInput {
-                    account_code: debit_code.to_string(),
-                    debit: abs_diff,
-                    credit: 0,
-                    description: Some(format!("Payment {payment_id}")),
-                },
-                crate::commands::ledger::JournalLineInput {
-                    account_code: credit_code.to_string(),
-                    debit: 0,
-                    credit: abs_diff,
-                    description: Some(format!("Payment {payment_id}")),
-                },
-            ],
-            Some(&current_user.id),
-        )
-        .await?;
-    }
-
-    tx.commit()
-        .await
-        .map_err(|e| AppError::internal(format!("Commit error: {e}")))?;
-
-    let updated = sqlx::query_as::<_, PublicInvoice>("SELECT * FROM invoices WHERE id = ?")
-        .bind(&invoice_id)
-        .fetch_one(pool.inner())
-        .await
-        .map_err(|e| AppError::internal(format!("Database error: {e}")))?;
 
     let company_id = current_user.company_id.as_deref().unwrap_or("system");
     log_audit(
@@ -1113,14 +963,9 @@ pub async fn record_payment(
         "payment",
         "invoice",
         Some(&invoice_id),
-        &format!(
-            "Recorded payment of {} via {} (invoice now {})",
-            amount, payment_method, new_status
-        ),
+        &format!("Recorded payment of {amount} via {payment_method}"),
     )
     .await;
-
-    crate::commands::notifications::emit_notifications_changed();
 
     Ok(updated)
 }

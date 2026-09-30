@@ -1195,6 +1195,51 @@ use uuid::Uuid;
         assert_eq!(err, "Payment amount must be positive");
     }
 
+    #[tokio::test]
+    async fn record_payment_idempotent_duplicate_prevention() {
+        // Input: same payment request executed twice with same reference/idempotency key.
+        // Expected: Second call returns the existing invoice state without double-charging.
+        let app = owner_app().await;
+        let (inv, _) = finalized_invoice_with_stock(&app).await;
+
+        let first = record_payment(
+            app.state(),
+            app.state(),
+            inv.id.clone(),
+            500,
+            "cash".to_string(),
+            "2026-01-20".to_string(),
+            "idem-key-999".to_string(),
+            "first attempt".to_string(),
+            None,
+            None,
+        )
+        .await
+        .expect("first payment should succeed");
+
+        assert_eq!(first.amount_paid, 500);
+
+        // Immediate retry with the exact same reference key
+        let second = record_payment(
+            app.state(),
+            app.state(),
+            inv.id.clone(),
+            500,
+            "cash".to_string(),
+            "2026-01-20".to_string(),
+            "idem-key-999".to_string(),
+            "retry attempt".to_string(),
+            None,
+            None,
+        )
+        .await
+        .expect("second payment should return existing state safely without error");
+
+        // Amount paid must NOT double to 1000!
+        assert_eq!(second.amount_paid, 500);
+        assert_eq!(second.balance_due, first.balance_due);
+    }
+
     // ---------------------------------------------------------------
     // invoice settings
     // ---------------------------------------------------------------

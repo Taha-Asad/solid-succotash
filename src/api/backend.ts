@@ -538,6 +538,7 @@ export function recordPayment(input: {
   notes: string;
   paymentCurrencyCode?: string;
   paymentExchangeRate?: number;
+  idempotencyKey?: string;
 }): Promise<PublicInvoice> {
   return invoke<PublicInvoice>("record_payment", input);
 }
