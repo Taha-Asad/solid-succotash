@@ -73,6 +73,9 @@ interface ProductFormPageProps {
     taxRate: number;
     quantityInStock: number;
     unit: string;
+    barcode?: string | null;
+    description?: string | null;
+    isActive?: boolean;
   }) => Promise<void>;
   onCancel: () => void;
   onCategoryCreated?: (category: PublicCategory) => void;
@@ -233,10 +236,10 @@ export default function ProductFormPage({
       taxRate: initial ? initial.taxRate / 100 : 0,
       quantityInStock: initial?.quantityInStock ?? 0,
       unit: initial?.unit ?? "pcs",
-      barcode: "",
-      description: "",
-      isActive: true,
-      isTaxable: true,
+      barcode: initial?.barcode ?? "",
+      description: initial?.description ?? "",
+      isActive: initial ? initial.isActive : true,
+      isTaxable: initial ? initial.taxRate > 0 : true,
     },
     validate: {
       name: (val) =>
@@ -300,9 +303,12 @@ export default function ProductFormPage({
         supplierId: values.supplierId,
         costPrice: values.costPrice,
         sellPrice: values.sellPrice,
-        taxRate: values.taxRate,
+        taxRate: values.isTaxable ? values.taxRate : 0,
         quantityInStock: values.quantityInStock,
         unit: values.unit,
+        barcode: values.barcode.trim() || null,
+        description: values.description.trim() || null,
+        isActive: values.isActive,
       });
     } catch (err) {
       setError(getErrorMessage(err));

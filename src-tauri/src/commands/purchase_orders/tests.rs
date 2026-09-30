@@ -46,6 +46,9 @@ use uuid::Uuid;
             0,
             0,
             "pcs".to_string(),
+            None,
+            None,
+            None,
         )
         .await
         .expect("create product")

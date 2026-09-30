@@ -299,6 +299,7 @@ export default function InvoiceCreatePage({
       (p) =>
         p.isActive &&
         (p.sku.toLowerCase() === query ||
+          (p.barcode && p.barcode.toLowerCase() === query) ||
           p.name.toLowerCase() === query ||
           p.name.toLowerCase().includes(query))
     );

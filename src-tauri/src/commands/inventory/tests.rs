@@ -63,6 +63,9 @@ use uuid::Uuid;
             0,
             0,
             "pcs".to_string(),
+            None,
+            None,
+            None,
         )
         .await
         .expect("create product")
@@ -124,6 +127,9 @@ use uuid::Uuid;
             0,
             0,
             "pcs".to_string(),
+            None,
+            None,
+            None,
         )
         .await
         .expect("first insert");
@@ -140,6 +146,9 @@ use uuid::Uuid;
             0,
             0,
             "pcs".to_string(),
+            None,
+            None,
+            None,
         )
         .await
         .unwrap_err();
@@ -811,6 +820,9 @@ use uuid::Uuid;
             0,
             0,
             "pcs".to_string(),
+            None,
+            None,
+            None,
         )
         .await
         .expect("create");
@@ -834,6 +846,9 @@ use uuid::Uuid;
             0,
             25,
             "pcs".to_string(),
+            None,
+            None,
+            None,
         )
         .await
         .expect("create");
@@ -863,6 +878,9 @@ use uuid::Uuid;
             0,
             0,
             "pcs".to_string(),
+            None,
+            None,
+            None,
         )
         .await
         .unwrap_err();
@@ -886,6 +904,9 @@ use uuid::Uuid;
             0,
             -5,
             "pcs".to_string(),
+            None,
+            None,
+            None,
         )
         .await
         .unwrap_err();
@@ -909,6 +930,9 @@ use uuid::Uuid;
             0,
             0,
             "pcs".to_string(),
+            None,
+            None,
+            None,
         )
         .await
         .expect("first create");
@@ -925,6 +949,9 @@ use uuid::Uuid;
             0,
             0,
             "pcs".to_string(),
+            None,
+            None,
+            None,
         )
         .await
         .unwrap_err();
@@ -948,6 +975,9 @@ use uuid::Uuid;
             0,
             0,
             "pcs".to_string(),
+            None,
+            None,
+            None,
         )
         .await
         .unwrap_err();
@@ -982,6 +1012,9 @@ use uuid::Uuid;
             0,
             0,
             "pcs".to_string(),
+            None,
+            None,
+            None,
         )
         .await
         .unwrap_err();
@@ -1012,6 +1045,9 @@ use uuid::Uuid;
             1300,
             5,
             "box".to_string(),
+            None,
+            None,
+            None,
         )
         .await
         .expect("update");
@@ -1042,6 +1078,9 @@ use uuid::Uuid;
             1300,
             0,
             "pcs".to_string(),
+            None,
+            None,
+            None,
         )
         .await
         .expect("update");
@@ -1067,6 +1106,9 @@ use uuid::Uuid;
             200,
             0,
             "pcs".to_string(),
+            None,
+            None,
+            None,
         )
         .await
         .unwrap_err();
@@ -1092,6 +1134,9 @@ use uuid::Uuid;
             -1,
             0,
             "pcs".to_string(),
+            None,
+            None,
+            None,
         )
         .await
         .unwrap_err();
@@ -1116,10 +1161,81 @@ use uuid::Uuid;
             200,
             0,
             "pcs".to_string(),
+            None,
+            None,
+            None,
         )
         .await
         .unwrap_err();
         assert_eq!(err, "Record not found or deleted");
+    }
+
+    #[tokio::test]
+    async fn create_and_update_product_persists_barcode_description_is_active() {
+        let app = owner_app().await;
+
+        // 1. Create product with barcode, description, and is_active = false
+        let p = create_product(
+            app.state(),
+            app.state(),
+            "BAR-001".to_string(),
+            "Barcoded Item".to_string(),
+            "".to_string(),
+            "".to_string(),
+            500,
+            800,
+            1800,
+            10,
+            "pcs".to_string(),
+            Some("8964000123456".to_string()),
+            Some("100ml glass bottle".to_string()),
+            Some(false),
+        )
+        .await
+        .expect("create barcoded product");
+
+        assert_eq!(p.barcode, Some("8964000123456".to_string()));
+        assert_eq!(p.description, Some("100ml glass bottle".to_string()));
+        assert_eq!(p.is_active, false);
+
+        // Verify list_products returns the columns
+        let list = list_products(app.state(), app.state()).await.expect("list");
+        let found = list.into_iter().find(|item| item.id == p.id).expect("product in list");
+        assert_eq!(found.barcode, Some("8964000123456".to_string()));
+        assert_eq!(found.description, Some("100ml glass bottle".to_string()));
+        assert_eq!(found.is_active, false);
+
+        // 2. Update product with new barcode, description, and is_active = true
+        let updated = update_product(
+            app.state(),
+            app.state(),
+            p.version,
+            p.id.clone(),
+            "BAR-001".to_string(),
+            "Barcoded Item".to_string(),
+            "".to_string(),
+            "".to_string(),
+            550,
+            850,
+            1800,
+            "pcs".to_string(),
+            Some("8964000999999".to_string()),
+            Some("Updated notes".to_string()),
+            Some(true),
+        )
+        .await
+        .expect("update barcoded product");
+
+        assert_eq!(updated.barcode, Some("8964000999999".to_string()));
+        assert_eq!(updated.description, Some("Updated notes".to_string()));
+        assert_eq!(updated.is_active, true);
+
+        // Verify list_products reflects the update
+        let list2 = list_products(app.state(), app.state()).await.expect("list2");
+        let found2 = list2.into_iter().find(|item| item.id == p.id).expect("product in list2");
+        assert_eq!(found2.barcode, Some("8964000999999".to_string()));
+        assert_eq!(found2.description, Some("Updated notes".to_string()));
+        assert_eq!(found2.is_active, true);
     }
 
     // ---------------------------------------------------------------

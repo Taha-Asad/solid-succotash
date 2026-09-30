@@ -150,6 +150,11 @@ fn get_embedded_migrations() -> Vec<(i64, &'static str, &'static str)> {
             "020_invoice_signatures_and_balance",
             include_str!("../../migrations/sqlite/020_invoice_signatures_and_balance.sql"),
         ),
+        (
+            21,
+            "021_product_barcode_description",
+            include_str!("../../migrations/sqlite/021_product_barcode_description.sql"),
+        ),
     ]
 }
 
@@ -227,6 +232,7 @@ pub async fn run_sqlite_migrations(sqlite_url: &str) -> Result<(), Box<dyn std::
         println!("Applied {new_migrations_applied} new migration(s). Running post-migration schema integrity checks...");
         ensure_batch_number_column(&pool).await?;
         ensure_invoice_design_columns(&pool).await?;
+        ensure_product_columns(&pool).await?;
         ensure_import_job_columns(&pool).await?;
         ensure_import_template_columns(&pool).await?;
         ensure_saas_columns(&pool).await?;
@@ -236,6 +242,7 @@ pub async fn run_sqlite_migrations(sqlite_url: &str) -> Result<(), Box<dyn std::
     } else {
         println!("Database schema is up to date (no pending migrations).");
         ensure_invoice_design_columns(&pool).await?;
+        ensure_product_columns(&pool).await?;
     }
 
     pool.close().await;
@@ -400,6 +407,33 @@ async fn ensure_invoice_design_columns(pool: &SqlitePool) -> Result<(), Box<dyn 
     if !columns.iter().any(|c| c == "show_previous_balance") {
         println!("Adding company_invoice_settings.show_previous_balance column");
         sqlx::raw_sql("ALTER TABLE company_invoice_settings ADD COLUMN show_previous_balance INTEGER NOT NULL DEFAULT 1")
+            .execute(pool)
+            .await?;
+    }
+
+    Ok(())
+}
+
+/// Adds barcode and description columns to products table if missing.
+async fn ensure_product_columns(pool: &SqlitePool) -> Result<(), Box<dyn std::error::Error>> {
+    let columns: Vec<String> = sqlx::query("PRAGMA table_info(products)")
+        .map(|row: sqlx::sqlite::SqliteRow| row.get::<String, _>(1))
+        .fetch_all(pool)
+        .await?;
+
+    if !columns.iter().any(|c| c == "barcode") {
+        println!("Adding products.barcode column");
+        sqlx::raw_sql("ALTER TABLE products ADD COLUMN barcode TEXT")
+            .execute(pool)
+            .await?;
+        sqlx::raw_sql("CREATE INDEX IF NOT EXISTS idx_products_company_barcode ON products(company_id, barcode)")
+            .execute(pool)
+            .await?;
+    }
+
+    if !columns.iter().any(|c| c == "description") {
+        println!("Adding products.description column");
+        sqlx::raw_sql("ALTER TABLE products ADD COLUMN description TEXT")
             .execute(pool)
             .await?;
     }

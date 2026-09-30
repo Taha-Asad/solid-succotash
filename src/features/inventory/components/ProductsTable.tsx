@@ -131,13 +131,20 @@ export function ProductsTable({
                     </Box>
 
                     <Stack gap={2} style={{ minWidth: 140 }}>
-                      <Text
-                        fw={600}
-                        size="sm"
-                        style={{ color: "var(--app-text)", lineHeight: 1.3 }}
-                      >
-                        {prod.name}
-                      </Text>
+                      <Group gap={6} align="center">
+                        <Text
+                          fw={600}
+                          size="sm"
+                          style={{ color: "var(--app-text)", lineHeight: 1.3 }}
+                        >
+                          {prod.name}
+                        </Text>
+                        {!prod.isActive && (
+                          <Badge size="xs" variant="outline" color="red">
+                            Inactive
+                          </Badge>
+                        )}
+                      </Group>
                       <Group gap={6} wrap="wrap">
                         <Text
                           size="xs"
@@ -152,6 +159,21 @@ export function ProductsTable({
                         >
                           #{prod.sku}
                         </Text>
+                        {prod.barcode && (
+                          <Text
+                            size="xs"
+                            fw={500}
+                            style={{
+                              ...LEDGER_NUM,
+                              color: "var(--app-muted)",
+                              background: "var(--app-soft)",
+                              padding: "1px 6px",
+                              borderRadius: 4,
+                            }}
+                          >
+                            UPC: {prod.barcode}
+                          </Text>
+                        )}
                         {prod.unit && (
                           <Text size="xs" c="dimmed">
                             · {prod.unit}

@@ -168,6 +168,7 @@ export function ProductsTab({ onFormModeChange, onOpenImport }: ProductsTabProps
       result = result.filter(
         (p) =>
           p.sku.toLowerCase().includes(q) ||
+          (p.barcode && p.barcode.toLowerCase().includes(q)) ||
           p.name.toLowerCase().includes(q) ||
           (p.categoryId &&
             (categoryMap.get(p.categoryId) ?? "").toLowerCase().includes(q)) ||
@@ -257,6 +258,9 @@ export function ProductsTab({ onFormModeChange, onOpenImport }: ProductsTabProps
     taxRate: number;
     quantityInStock: number;
     unit: string;
+    barcode?: string | null;
+    description?: string | null;
+    isActive?: boolean;
   }) {
     try {
       const costPricePaisa = displayToPaisa(values.costPrice);
@@ -275,6 +279,9 @@ export function ProductsTab({ onFormModeChange, onOpenImport }: ProductsTabProps
           sellPrice: sellPricePaisa,
           taxRate: taxRateBasisPoints,
           unit: values.unit,
+          barcode: values.barcode ?? null,
+          description: values.description ?? null,
+          isActive: values.isActive ?? true,
         });
       } else {
         await createProduct({
@@ -287,6 +294,9 @@ export function ProductsTab({ onFormModeChange, onOpenImport }: ProductsTabProps
           taxRate: taxRateBasisPoints,
           quantityInStock: values.quantityInStock,
           unit: values.unit,
+          barcode: values.barcode ?? null,
+          description: values.description ?? null,
+          isActive: values.isActive ?? true,
         });
         reportOnboardingEvent({ type: "product-created" });
       }

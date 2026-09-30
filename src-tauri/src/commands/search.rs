@@ -108,9 +108,9 @@ pub async fn search_all(
         let like_pattern = format!("%{trimmed}%");
 
         let products = sqlx::query_as::<_, (String, String, String, i64)>(
-            "SELECT id, name, sku, quantity_in_stock FROM products WHERE company_id = ? AND deleted_at IS NULL AND (name LIKE ? OR sku LIKE ?) LIMIT 5"
+            "SELECT id, name, sku, quantity_in_stock FROM products WHERE company_id = ? AND deleted_at IS NULL AND (name LIKE ? OR sku LIKE ? OR barcode LIKE ?) LIMIT 5"
         )
-        .bind(company_id).bind(&like_pattern).bind(&like_pattern)
+        .bind(company_id).bind(&like_pattern).bind(&like_pattern).bind(&like_pattern)
         .fetch_all(pool.inner()).await.unwrap_or_default();
 
         for (id, name, sku, stock) in products {

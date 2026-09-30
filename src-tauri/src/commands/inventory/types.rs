@@ -52,6 +52,10 @@ pub struct PublicProduct {
     #[sqlx(default)]
     pub next_expiry_date: Option<String>,
     pub is_active: bool,
+    #[sqlx(default)]
+    pub barcode: Option<String>,
+    #[sqlx(default)]
+    pub description: Option<String>,
     pub created_at: String,
     pub updated_at: String,
     pub version: i64,

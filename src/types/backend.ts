@@ -176,6 +176,8 @@ export type PublicProduct = {
   customFields: string | null; // JSON blob for company-specific fields
   nextExpiryDate: string | null;
   isActive: boolean;
+  barcode?: string | null;
+  description?: string | null;
   createdAt: string;
   updatedAt: string;
   version: number;
@@ -204,6 +206,9 @@ export type ProductInput = {
   taxRate: number;
   quantityInStock: number;
   unit: string;
+  barcode?: string | null;
+  description?: string | null;
+  isActive?: boolean;
 };
 
 // Input for updating a product (no quantity change)
@@ -218,6 +223,9 @@ export type UpdateProductInput = {
   sellPrice: number;
   taxRate: number;
   unit: string;
+  barcode?: string | null;
+  description?: string | null;
+  isActive?: boolean;
 };
 
 // Input for stock adjustment

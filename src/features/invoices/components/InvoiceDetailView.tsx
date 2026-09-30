@@ -162,6 +162,7 @@ export function InvoiceDetailView({ invoiceId, onBack }: InvoiceDetailViewProps)
 
     const matched = products.find((p) => {
       if (p.sku.toLowerCase() === raw.toLowerCase()) return true;
+      if (p.barcode && p.barcode.toLowerCase() === raw.toLowerCase()) return true;
       if (p.customFields) {
         try {
           const parsed = JSON.parse(p.customFields);

@@ -24,7 +24,7 @@ pub async fn list_products(
         r#"
         SELECT id, company_id, sku, name, category_id, supplier_id,
                cost_price, sell_price, tax_rate, quantity_in_stock,
-               unit, custom_fields, is_active, created_at, updated_at, version,
+               unit, custom_fields, is_active, barcode, description, created_at, updated_at, version,
                (SELECT expiry_date FROM stock_batches b
                 WHERE b.product_id = products.id AND b.quantity > 0
                 ORDER BY b.expiry_date ASC LIMIT 1) AS next_expiry_date
@@ -59,6 +59,9 @@ pub async fn create_product(
     tax_rate: i64,
     quantity_in_stock: i64,
     unit: String,
+    barcode: Option<String>,
+    description: Option<String>,
+    is_active: Option<bool>,
 ) -> Result<PublicProduct, AppError> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
 
@@ -97,6 +100,9 @@ pub async fn create_product(
 
     let cat_id = clean_optional(&category_id);
     let sup_id = clean_optional(&supplier_id);
+    let final_barcode = barcode.as_deref().and_then(clean_optional);
+    let final_desc = description.as_deref().and_then(clean_optional);
+    let active = is_active.unwrap_or(true);
 
     // If the user left SKU blank, generate one from the category's
     // SKU prefix plus the next sequential number (ELEC-001, ELEC-002, ...).
@@ -111,8 +117,9 @@ pub async fn create_product(
         r#"
         INSERT INTO products
             (id, company_id, sku, name, category_id, supplier_id,
-             cost_price, sell_price, tax_rate, quantity_in_stock, unit)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             cost_price, sell_price, tax_rate, quantity_in_stock, unit,
+             barcode, description, is_active)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#,
     )
     .bind(&id)
@@ -126,6 +133,9 @@ pub async fn create_product(
     .bind(tax_rate)
     .bind(quantity_in_stock)
     .bind(&trimmed_unit)
+    .bind(&final_barcode)
+    .bind(&final_desc)
+    .bind(active)
     .execute(pool.inner())
     .await
     .map_err(|e| map_product_db_error(e, &final_sku))?;
@@ -191,6 +201,9 @@ pub async fn update_product(
     sell_price: i64,
     tax_rate: i64,
     unit: String,
+    barcode: Option<String>,
+    description: Option<String>,
+    is_active: Option<bool>,
 ) -> Result<PublicProduct, AppError> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
 
@@ -232,6 +245,9 @@ pub async fn update_product(
 
     let cat_id = clean_optional(&category_id);
     let sup_id = clean_optional(&supplier_id);
+    let final_barcode = barcode.as_deref().and_then(clean_optional);
+    let final_desc = description.as_deref().and_then(clean_optional);
+    let active = is_active.unwrap_or(true);
 
     check_version(pool.inner(), "products", &product_id, expected_version).await?;
 
@@ -240,6 +256,7 @@ pub async fn update_product(
         UPDATE products
         SET sku = ?, name = ?, category_id = ?, supplier_id = ?,
             cost_price = ?, sell_price = ?, tax_rate = ?, unit = ?,
+            barcode = ?, description = ?, is_active = ?,
             updated_at = CURRENT_TIMESTAMP
         WHERE id = ? AND company_id = ?
         "#,
@@ -252,6 +269,9 @@ pub async fn update_product(
     .bind(sell_price)
     .bind(tax_rate)
     .bind(&trimmed_unit)
+    .bind(&final_barcode)
+    .bind(&final_desc)
+    .bind(active)
     .bind(&product_id)
     .bind(company_id)
     .execute(pool.inner())

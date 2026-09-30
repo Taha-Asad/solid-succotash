@@ -375,6 +375,9 @@ mod tests {
             0,
             5,
             "pcs".to_string(),
+            None,
+            None,
+            None,
         )
         .await
         .expect("create product");
