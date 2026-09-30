@@ -529,6 +529,17 @@ export function finalizeInvoice(invoiceId: string): Promise<PublicInvoice> {
   return invoke<PublicInvoice>("finalize_invoice", { invoiceId });
 }
 
+export function deleteInvoice(invoiceId: string): Promise<boolean> {
+  return invoke<boolean>("delete_invoice", { invoiceId });
+}
+
+export function cancelInvoice(
+  invoiceId: string,
+  reason?: string
+): Promise<PublicInvoice> {
+  return invoke<PublicInvoice>("cancel_invoice", { invoiceId, reason });
+}
+
 export function recordPayment(input: {
   invoiceId: string;
   amount: number;

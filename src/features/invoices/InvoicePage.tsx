@@ -48,6 +48,8 @@ import {
   removeInvoiceItem,
   updateInvoiceItem,
   finalizeInvoice,
+  deleteInvoice,
+  cancelInvoice,
   recordPayment,
   listProducts,
   generateInvoiceHtml,
@@ -73,7 +75,7 @@ import type {
 
 import { INK } from "../../theme";
 import { AppDateInput } from "../../components/AppDateInput";
-import { ReceiptText, Plus, Printer, MessageSquare, Coins, CheckCircle2, Zap, Barcode, ChevronDown } from "lucide-react";
+import { ReceiptText, Plus, Printer, MessageSquare, Coins, CheckCircle2, Zap, Barcode, ChevronDown, Trash2, XCircle, AlertTriangle } from "lucide-react";
 import { printHtmlContent } from "../../utils/printInvoice";
 import { reportOnboardingEvent } from "../../onboarding/bus";
 import { usePermissions } from "../permissions/PermissionsProvider";
@@ -496,6 +498,7 @@ function InvoiceDetailView({
   const perms = usePermissions();
   const canFinalize = perms.can("invoices", "finalize");
   const canEdit = perms.can("invoices", "edit");
+  const canDelete = perms.can("invoices", "delete") || perms.can("invoices", "edit");
   const [details, setDetails] = useState<InvoiceWithDetails | null>(null);
   const [products, setProducts] = useState<PublicProduct[]>([]);
   const [loading, setLoading] = useState(true);
@@ -511,6 +514,13 @@ function InvoiceDetailView({
   const [debitNoteReason, setDebitNoteReason] = useState("");
   const [debitNoteAmount, setDebitNoteAmount] = useState(0);
   const [customerTotalDue, setCustomerTotalDue] = useState<number | null>(null);
+
+  // Invoice Deletion & Cancellation States
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [cancelModalOpen, setCancelModalOpen] = useState(false);
+  const [cancelReason, setCancelReason] = useState("");
+  const [cancelling, setCancelling] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   // Fast Line Item Entry state (Cashier & Quick Invoicing)
   const [quickProductId, setQuickProductId] = useState<string | null>(null);
@@ -848,6 +858,44 @@ function InvoiceDetailView({
     }
   }
 
+  async function handleDeleteInvoice() {
+    setDeleting(true);
+    try {
+      await deleteInvoice(invoiceId);
+      notifications.show({
+        title: "Draft Deleted",
+        message: "Draft invoice deleted successfully.",
+        color: "teal",
+      });
+      setDeleteModalOpen(false);
+      onBack();
+    } catch (err) {
+      setError(getErrorMessage(err));
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  async function handleCancelInvoice() {
+    if (!cancelReason.trim()) return;
+    setCancelling(true);
+    try {
+      await cancelInvoice(invoiceId, cancelReason.trim());
+      notifications.show({
+        title: "Invoice Voided",
+        message: "Invoice cancelled and inventory stock returned to warehouse.",
+        color: "teal",
+      });
+      setCancelModalOpen(false);
+      setCancelReason("");
+      await load();
+    } catch (err) {
+      setError(getErrorMessage(err));
+    } finally {
+      setCancelling(false);
+    }
+  }
+
   async function handlePrint(designOverride?: string) {
     try {
       const html = await generateInvoiceHtml(invoiceId, designOverride);
@@ -901,6 +949,20 @@ function InvoiceDetailView({
 
   return (
     <Stack data-tour="invoice-detail">
+      {/* Cancellation Notice Banner */}
+      {invoice.status === "cancelled" && (
+        <Alert color="red" icon={<XCircle size={20} />} title="Invoice Voided / Cancelled" radius="md">
+          <Text size="sm">
+            This invoice has been cancelled and voided. Deducted items have been restored to warehouse stock, and double-entry accounting entries were reversed.
+          </Text>
+          {invoice.referenceNote && (
+            <Text size="xs" mt={4} c="dimmed">
+              Audit Record: {invoice.referenceNote}
+            </Text>
+          )}
+        </Alert>
+      )}
+
       {/* Header */}
       <Group justify="space-between">
         <Group>
@@ -1015,6 +1077,28 @@ function InvoiceDetailView({
           {isFinalized && canEdit && (
             <Button color="blue" onClick={() => setPaymentModalOpen(true)}>
               💰 Record Payment
+            </Button>
+          )}
+          {/* Delete Draft Button */}
+          {isDraft && canDelete && (
+            <Button
+              color="red"
+              variant="subtle"
+              leftSection={<Trash2 size={15} />}
+              onClick={() => setDeleteModalOpen(true)}
+            >
+              Delete Draft
+            </Button>
+          )}
+          {/* Cancel / Void Finalized Invoice Button */}
+          {(isFinalized || invoice.status === "paid") && canDelete && (
+            <Button
+              color="red"
+              variant="outline"
+              leftSection={<XCircle size={15} />}
+              onClick={() => setCancelModalOpen(true)}
+            >
+              Void Invoice
             </Button>
           )}
         </Group>
@@ -1625,6 +1709,77 @@ function InvoiceDetailView({
               disabled={!debitNoteReason || debitNoteAmount <= 0}
             >
               Create Debit Note
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+
+      {/* Delete Draft Modal */}
+      <Modal
+        opened={deleteModalOpen}
+        onClose={() => setDeleteModalOpen(false)}
+        title="Delete Draft Invoice"
+        centered
+      >
+        <Stack gap="md">
+          <Text size="sm">
+            Are you sure you want to permanently delete draft invoice{" "}
+            <strong>{invoice.invoiceNumber}</strong>?
+          </Text>
+          <Text size="xs" c="dimmed">
+            Line items will be removed. Because this invoice is still a draft, inventory stock and financial accounts will not be affected.
+          </Text>
+          <Group justify="flex-end" gap="xs">
+            <Button variant="default" onClick={() => setDeleteModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              color="red"
+              loading={deleting}
+              onClick={handleDeleteInvoice}
+            >
+              Delete Draft
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+
+      {/* Cancel / Void Invoice Modal */}
+      <Modal
+        opened={cancelModalOpen}
+        onClose={() => setCancelModalOpen(false)}
+        title={`Void / Cancel Invoice ${invoice.invoiceNumber}`}
+        centered
+      >
+        <Stack gap="md">
+          <Alert color="red" icon={<AlertTriangle size={16} />} variant="light">
+            <Text size="xs" fw={700}>
+              Warning: This action will cancel invoice {invoice.invoiceNumber}.
+            </Text>
+            <Text size="xs">
+              All deducted products will be automatically returned to inventory stock, and reversing accounting ledger entries will be posted.
+            </Text>
+          </Alert>
+
+          <TextInput
+            label="Reason for Cancellation"
+            placeholder="e.g. Customer returned items, wrong billing, created by mistake"
+            required
+            value={cancelReason}
+            onChange={(e) => setCancelReason(e.currentTarget.value)}
+          />
+
+          <Group justify="flex-end" gap="xs">
+            <Button variant="default" onClick={() => setCancelModalOpen(false)}>
+              Go Back
+            </Button>
+            <Button
+              color="red"
+              loading={cancelling}
+              disabled={!cancelReason.trim()}
+              onClick={handleCancelInvoice}
+            >
+              Confirm Void & Return Stock
             </Button>
           </Group>
         </Stack>

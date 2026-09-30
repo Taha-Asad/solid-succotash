@@ -1593,3 +1593,81 @@ use uuid::Uuid;
         assert_eq!(m.get("items_1_name").map(String::as_str), Some("Widget"));
         assert_eq!(m.get("items_1_qty").map(String::as_str), Some("2"));
     }
+
+    #[tokio::test]
+    async fn delete_invoice_draft_succeeds() {
+        let app = owner_app().await;
+        let customer = make_customer(&app, "Delete Draft Cust").await;
+        let product = make_product(&app, "DRAFT-DEL", 10).await;
+        let inv = make_invoice(&app, &customer.id).await;
+        add_item(&app, &inv.id, &product.id, 2, 100, 0).await;
+
+        let res = delete_invoice(app.state(), app.state(), inv.id.clone())
+            .await
+            .expect("delete draft");
+        assert!(res);
+    }
+
+    #[tokio::test]
+    async fn delete_invoice_rejects_finalized() {
+        let app = owner_app().await;
+        let (inv, _) = finalized_invoice_with_stock(&app).await;
+
+        let err = delete_invoice(app.state(), app.state(), inv.id)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("Only draft invoices can be deleted"));
+    }
+
+    #[tokio::test]
+    async fn cancel_invoice_restores_stock_and_reverses() {
+        let app = owner_app().await;
+        let (inv, product) = finalized_invoice_with_stock(&app).await;
+
+        let pool = app.state::<SqlitePool>();
+        let cid = company_id(&app).await;
+
+        // Stock after finalize was 10 - 2 = 8
+        let stock_before: i64 = sqlx::query_scalar(
+            "SELECT quantity_in_stock FROM products WHERE id = ? AND company_id = ?",
+        )
+        .bind(&product.id)
+        .bind(&cid)
+        .fetch_one(pool.inner())
+        .await
+        .expect("stock lookup");
+        assert_eq!(stock_before, 8);
+
+        // Cancel the invoice
+        let cancelled = cancel_invoice(
+            app.state(),
+            app.state(),
+            inv.id.clone(),
+            Some("Wrong bill".to_string()),
+        )
+        .await
+        .expect("cancel invoice");
+
+        assert_eq!(cancelled.status, "cancelled");
+
+        // Stock must be restored: 8 + 2 = 10!
+        let stock_after: i64 = sqlx::query_scalar(
+            "SELECT quantity_in_stock FROM products WHERE id = ? AND company_id = ?",
+        )
+        .bind(&product.id)
+        .bind(&cid)
+        .fetch_one(pool.inner())
+        .await
+        .expect("stock lookup");
+        assert_eq!(stock_after, 10);
+
+        // Check stock movement return record
+        let movement_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM stock_movements WHERE product_id = ? AND movement_type = 'return'",
+        )
+        .bind(&product.id)
+        .fetch_one(pool.inner())
+        .await
+        .expect("movement lookup");
+        assert!(movement_count >= 1);
+    }

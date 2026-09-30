@@ -222,6 +222,8 @@ pub async fn run() {
             commands::invoices::update_invoice_item,
             commands::invoices::remove_invoice_item,
             commands::invoices::finalize_invoice,
+            commands::invoices::delete_invoice,
+            commands::invoices::cancel_invoice,
             commands::invoices::record_payment,
             commands::invoices::get_invoice_settings,
             commands::invoices::update_invoice_settings,

@@ -21,6 +21,7 @@ import {
   Grid,
   Group,
   Kbd,
+  Menu,
   Modal,
   NumberInput,
   Paper,
@@ -40,6 +41,7 @@ import {
   ArrowLeft,
   Barcode,
   CheckCircle2,
+  ChevronDown,
   Printer,
   ReceiptText,
   Save,
@@ -164,8 +166,9 @@ export default function InvoiceCreatePage({
   const [creatingCustomer, setCreatingCustomer] = useState(false);
   const [customerModalError, setCustomerModalError] = useState<string | null>(null);
 
-  // Payment state
-  const [paymentMode, setPaymentMode] = useState<"cash" | "bank_transfer" | "card" | "credit">("cash");
+  // Payment & Settlement State
+  const [paymentStatus, setPaymentStatus] = useState<"paid" | "partial" | "unpaid">("paid");
+  const [paymentMethod, setPaymentMethod] = useState<"cash" | "bank_transfer" | "card">("cash");
   const [amountTendered, setAmountTendered] = useState<number | "">("");
   const [paymentReference, setPaymentReference] = useState<string>("");
   const [submitting, setSubmitting] = useState(false);
@@ -186,7 +189,15 @@ export default function InvoiceCreatePage({
           if (parsed.dueDate) setDueDate(parsed.dueDate);
           if (parsed.poNumber) setPoNumber(parsed.poNumber);
           if (parsed.referenceNote) setReferenceNote(parsed.referenceNote);
-          if (parsed.paymentMode) setPaymentMode(parsed.paymentMode);
+          if (parsed.paymentStatus) {
+            setPaymentStatus(parsed.paymentStatus);
+          } else if (parsed.paymentMode === "credit") {
+            setPaymentStatus("unpaid");
+          } else if (parsed.paymentMode) {
+            setPaymentStatus("paid");
+            setPaymentMethod(parsed.paymentMode === "bank_transfer" || parsed.paymentMode === "card" ? parsed.paymentMode : "cash");
+          }
+          if (parsed.paymentMethod) setPaymentMethod(parsed.paymentMethod);
           if (parsed.amountTendered !== undefined) setAmountTendered(parsed.amountTendered);
           if (parsed.paymentReference) setPaymentReference(parsed.paymentReference);
           setDraftRecoveredTime(parsed.savedAt || new Date().toLocaleTimeString());
@@ -210,7 +221,8 @@ export default function InvoiceCreatePage({
           dueDate,
           poNumber,
           referenceNote,
-          paymentMode,
+          paymentStatus,
+          paymentMethod,
           amountTendered,
           paymentReference,
           savedAt: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
@@ -222,7 +234,7 @@ export default function InvoiceCreatePage({
     } catch (e) {
       console.error("Failed to save invoice draft to localStorage", e);
     }
-  }, [items, customerId, walkinName, walkinPhone, invoiceDate, dueDate, poNumber, referenceNote, paymentMode, amountTendered, paymentReference]);
+  }, [items, customerId, walkinName, walkinPhone, invoiceDate, dueDate, poNumber, referenceNote, paymentStatus, paymentMethod, amountTendered, paymentReference]);
 
   const handleClearDraft = () => {
     localStorage.removeItem(STORAGE_KEY);
@@ -231,6 +243,8 @@ export default function InvoiceCreatePage({
     setWalkinPhone("");
     setPoNumber("");
     setReferenceNote("");
+    setPaymentStatus("paid");
+    setPaymentMethod("cash");
     setAmountTendered("");
     setDraftRecoveredTime(null);
     notifications.show({
@@ -361,25 +375,14 @@ export default function InvoiceCreatePage({
     };
   }, [items]);
 
-  // Keep tendered amount in sync with total when in Cash/Bank mode if unchanged
+  // Keep tendered amount in sync with grand total when in Paid in Full mode
   useEffect(() => {
-    if (paymentMode !== "credit") {
-      setAmountTendered((prev) => {
-        // If empty or user hasn't explicitly customized, match exact total
-        if (prev === "" || prev === 0) {
-          return totals.grandTotalRupees;
-        }
-        return prev;
-      });
+    if (paymentStatus === "paid") {
+      setAmountTendered(totals.grandTotalRupees);
+    } else if (paymentStatus === "unpaid") {
+      setAmountTendered(0);
     }
-  }, [totals.grandTotalRupees, paymentMode]);
-
-  // Switch payment mode off credit if walk-in customer is active
-  useEffect(() => {
-    if (isWalkinCustomer && paymentMode === "credit") {
-      setPaymentMode("cash");
-    }
-  }, [isWalkinCustomer, paymentMode]);
+  }, [totals.grandTotalRupees, paymentStatus]);
 
   // Change Return Calculation
   const tenderedRupees = typeof amountTendered === "number" ? amountTendered : 0;
@@ -517,7 +520,7 @@ export default function InvoiceCreatePage({
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [customers, items, customerId, totals, paymentMode, amountTendered, submitting]);
+  }, [customers, items, customerId, totals, paymentStatus, paymentMethod, amountTendered, submitting]);
 
   // Execute Complete Sale, Save Draft, or WhatsApp Bill
   const handleExecuteCheckout = async (
@@ -576,12 +579,32 @@ export default function InvoiceCreatePage({
 
       reportOnboardingEvent({ type: "invoice-created" });
 
-      // If user chose "Save as Draft", stop here
+      // If user chose "Save as Draft", handle draft save (and optional draft WhatsApp estimate)
       if (asDraft) {
+        if (andWhatsApp) {
+          const phone = isWalkinCustomer
+            ? walkinPhone.trim()
+            : (customers.find((c) => c.id === customerId)?.phone || "");
+          const custName = isWalkinCustomer
+            ? (walkinName.trim() || "Walk-in Customer")
+            : (customers.find((c) => c.id === customerId)?.name || "Valued Customer");
+          const link = buildInvoiceShareLink(
+            custName,
+            phone,
+            `${invoice.invoiceNumber} (Estimate / Draft)`,
+            totals.grandTotalPaisa,
+            totals.grandTotalPaisa,
+            "Corbel ERP"
+          );
+          void launchWhatsAppUrl(link);
+        }
+
         localStorage.removeItem(STORAGE_KEY);
         notifications.show({
-          title: "Invoice Draft Saved",
-          message: `Invoice ${invoice.invoiceNumber} saved as draft.`,
+          title: andWhatsApp ? "Estimate Saved & Sent" : "Invoice Draft Saved",
+          message: andWhatsApp
+            ? `Invoice ${invoice.invoiceNumber} saved as draft and WhatsApp estimate opened.`
+            : `Invoice ${invoice.invoiceNumber} saved as draft.`,
           color: "blue",
         });
         onInvoiceCreated(invoice.id);
@@ -592,16 +615,19 @@ export default function InvoiceCreatePage({
       const finalized = await finalizeInvoice(invoice.id);
       reportOnboardingEvent({ type: "invoice-finalized" });
 
-      // Step 4: Record Payment if not pure credit
-      if (paymentMode !== "credit") {
+      // Step 4: Record Payment if not unpaid
+      if (paymentStatus !== "unpaid") {
         const tenderedPaisa = Math.round(tenderedRupees * 100);
-        const payablePaisa = Math.min(tenderedPaisa, finalized.grandTotal);
+        const payablePaisa =
+          paymentStatus === "paid"
+            ? finalized.grandTotal
+            : Math.min(tenderedPaisa, finalized.grandTotal);
 
         if (payablePaisa > 0) {
           await recordPayment({
             invoiceId: invoice.id,
             amount: payablePaisa,
-            paymentMethod: paymentMode,
+            paymentMethod: paymentMethod,
             paymentDate: invoiceDate,
             reference: paymentReference.trim(),
             notes:
@@ -624,7 +650,7 @@ export default function InvoiceCreatePage({
         }
       }
 
-      // Step 6: Optional WhatsApp Dispatch
+      // Step 6: Optional WhatsApp Dispatch for finalized bill
       if (andWhatsApp) {
         const phone = isWalkinCustomer
           ? walkinPhone.trim()
@@ -632,12 +658,20 @@ export default function InvoiceCreatePage({
         const custName = isWalkinCustomer
           ? (walkinName.trim() || "Walk-in Customer")
           : (customers.find((c) => c.id === customerId)?.name || "Valued Customer");
+        const effectivePaidPaisa =
+          paymentStatus === "paid"
+            ? finalized.grandTotal
+            : paymentStatus === "unpaid"
+            ? 0
+            : Math.min(Math.round(tenderedRupees * 100), finalized.grandTotal);
+        const effectiveBalancePaisa = Math.max(0, finalized.grandTotal - effectivePaidPaisa);
+
         const link = buildInvoiceShareLink(
           custName,
           phone,
           invoice.invoiceNumber,
           finalized.grandTotal,
-          finalized.balanceDue,
+          effectiveBalancePaisa,
           "Corbel ERP"
         );
         void launchWhatsAppUrl(link);
@@ -1244,35 +1278,59 @@ export default function InvoiceCreatePage({
               </Text>
 
               <Stack gap="sm">
-                {/* Payment Mode Selector */}
-                <SegmentedControl
-                  fullWidth
-                  size="xs"
-                  value={paymentMode}
-                  onChange={(v) => setPaymentMode(v as any)}
-                  data={[
-                    { label: "Cash", value: "cash" },
-                    { label: "Bank", value: "bank_transfer" },
-                    { label: "Card", value: "card" },
-                    {
-                      label: "Khata (Credit)",
-                      value: "credit",
-                      disabled: isWalkinCustomer,
-                    },
-                  ]}
-                />
-                {isWalkinCustomer && (
-                  <Text size="xs" c="dimmed" mt={-4}>
-                    ℹ️ Walk-in cash customers cannot purchase on Khata credit. Select or register a named customer to record ledger debt.
+                {/* Settlement Status Selector */}
+                <div>
+                  <Text size="xs" fw={600} mb={4} c="dimmed">
+                    Settlement Status:
                   </Text>
+                  <SegmentedControl
+                    fullWidth
+                    size="xs"
+                    value={paymentStatus}
+                    onChange={(v) => setPaymentStatus(v as any)}
+                    data={[
+                      { label: "Paid in Full", value: "paid" },
+                      { label: "Partial Paid", value: "partial" },
+                      { label: "Unpaid / Credit", value: "unpaid" },
+                    ]}
+                  />
+                </div>
+
+                {/* If Paid in Full or Partial Paid: choose Payment Method */}
+                {paymentStatus !== "unpaid" && (
+                  <div>
+                    <Text size="xs" fw={600} mb={4} c="dimmed">
+                      Payment Method:
+                    </Text>
+                    <SegmentedControl
+                      fullWidth
+                      size="xs"
+                      value={paymentMethod}
+                      onChange={(v) => setPaymentMethod(v as any)}
+                      data={[
+                        { label: "Cash", value: "cash" },
+                        { label: "Bank Transfer", value: "bank_transfer" },
+                        { label: "Card", value: "card" },
+                      ]}
+                    />
+                  </div>
                 )}
 
-                {/* If Cash / Bank / Card is active */}
-                {paymentMode !== "credit" ? (
+                {/* Paid in Full details */}
+                {paymentStatus === "paid" && (
+                  <Alert color="teal" variant="light" radius="md" p="xs">
+                    <Text size="xs">
+                      Full payment of <strong>Rs {totals.grandTotalRupees.toLocaleString()}</strong> will be recorded via <strong>{paymentMethod.toUpperCase()}</strong> on completion. Zero balance due.
+                    </Text>
+                  </Alert>
+                )}
+
+                {/* Partial Paid details */}
+                {paymentStatus === "partial" && (
                   <>
                     <NumberInput
-                      label="Amount Tendered / Paid (Rs)"
-                      description="Amount handed over by customer"
+                      label="Amount Tendered / Received (Rs)"
+                      description="Enter the amount received from customer"
                       decimalScale={2}
                       min={0}
                       value={amountTendered}
@@ -1280,7 +1338,7 @@ export default function InvoiceCreatePage({
                     />
 
                     {/* Quick Cash Buttons */}
-                    {paymentMode === "cash" && (
+                    {paymentMethod === "cash" && (
                       <Group gap={6} wrap="wrap">
                         <Button
                           size="compact-xs"
@@ -1341,27 +1399,37 @@ export default function InvoiceCreatePage({
                         </Group>
                       </Box>
                     ) : null}
-
-                    <TextInput
-                      label="Payment Reference / Txn #"
-                      placeholder="e.g. Bank slip, Cheque #, or Cash counter"
-                      size="xs"
-                      value={paymentReference}
-                      onChange={(e) => setPaymentReference(e.currentTarget.value)}
-                    />
                   </>
-                ) : (
+                )}
+
+                {/* Unpaid / Credit details */}
+                {paymentStatus === "unpaid" && (
                   <Alert color="blue" variant="light" radius="md" p="xs">
                     <Text size="xs">
-                      Invoice will be finalized on <strong>Credit</strong>. The entire amount of{" "}
-                      <strong>{fmt(totals.grandTotalPaisa)} PKR</strong> will be posted to the customer's Khata (Accounts Receivable).
+                      Invoice will be issued with <strong>zero payment recorded</strong>.
+                      {isWalkinCustomer ? (
+                        <> Payment remains pending upon customer pickup or delivery.</>
+                      ) : (
+                        <> The entire amount of <strong>{fmt(totals.grandTotalPaisa)} PKR</strong> will be posted to the customer's Khata (Accounts Receivable).</>
+                      )}
                     </Text>
                   </Alert>
                 )}
 
+                {/* Optional reference */}
+                {paymentStatus !== "unpaid" && (
+                  <TextInput
+                    label="Payment Reference / Txn #"
+                    placeholder="e.g. Cash counter, Bank slip, Cheque #"
+                    size="xs"
+                    value={paymentReference}
+                    onChange={(e) => setPaymentReference(e.currentTarget.value)}
+                  />
+                )}
+
                 <Divider my="xs" />
 
-                {/* PRIMARY ONE-CLICK ACTION BUTTONS */}
+                {/* PRIMARY ACTION BUTTONS */}
                 <Stack gap="xs">
                   <Button
                     size="md"
@@ -1369,7 +1437,7 @@ export default function InvoiceCreatePage({
                     loading={submitting}
                     disabled={items.length === 0 || !customerId}
                     leftSection={<Printer size={18} />}
-                    onClick={() => handleExecuteCheckout(true)}
+                    onClick={() => handleExecuteCheckout(true, false, false)}
                     styles={{
                       root: {
                         background: "linear-gradient(135deg, #10B981 0%, #059669 100%)",
@@ -1382,18 +1450,6 @@ export default function InvoiceCreatePage({
                     Complete Sale & Print (F10)
                   </Button>
 
-                  <Button
-                    size="sm"
-                    variant="light"
-                    color="teal"
-                    loading={submitting}
-                    disabled={items.length === 0 || !customerId}
-                    leftSection={<MessageSquare size={15} />}
-                    onClick={() => handleExecuteCheckout(false, false, true)}
-                  >
-                    Complete & WhatsApp Bill
-                  </Button>
-
                   <Group grow gap="xs">
                     <Button
                       size="sm"
@@ -1401,7 +1457,7 @@ export default function InvoiceCreatePage({
                       color="indigo"
                       loading={submitting}
                       disabled={items.length === 0 || !customerId}
-                      onClick={() => handleExecuteCheckout(false)}
+                      onClick={() => handleExecuteCheckout(false, false, false)}
                     >
                       Complete (No Print)
                     </Button>
@@ -1412,11 +1468,50 @@ export default function InvoiceCreatePage({
                       loading={submitting}
                       disabled={items.length === 0 || !customerId}
                       leftSection={<Save size={14} />}
-                      onClick={() => handleExecuteCheckout(false, true)}
+                      onClick={() => handleExecuteCheckout(false, true, false)}
                     >
                       Save Draft
                     </Button>
                   </Group>
+
+                  {/* Dedicated WhatsApp Sharing Action */}
+                  <Menu position="bottom" withinPortal shadow="md">
+                    <Menu.Target>
+                      <Button
+                        size="sm"
+                        variant="light"
+                        color="teal"
+                        loading={submitting}
+                        disabled={items.length === 0 || !customerId}
+                        leftSection={<MessageSquare size={16} />}
+                        rightSection={<ChevronDown size={14} />}
+                      >
+                        Send to WhatsApp...
+                      </Button>
+                    </Menu.Target>
+                    <Menu.Dropdown>
+                      <Menu.Label>WhatsApp Options</Menu.Label>
+                      <Menu.Item
+                        leftSection={<CheckCircle2 size={16} color="#10b981" />}
+                        onClick={() => handleExecuteCheckout(false, false, true)}
+                      >
+                        <div>
+                          <Text size="xs" fw={700}>Complete Sale & WhatsApp Bill</Text>
+                          <Text size="xs" c="dimmed">Finalizes invoice, commits stock deduction & opens WhatsApp</Text>
+                        </div>
+                      </Menu.Item>
+                      <Menu.Divider />
+                      <Menu.Item
+                        leftSection={<Save size={16} color="#3b82f6" />}
+                        onClick={() => handleExecuteCheckout(false, true, true)}
+                      >
+                        <div>
+                          <Text size="xs" fw={700}>Save Draft & Send Estimate Quote</Text>
+                          <Text size="xs" c="dimmed">Keeps as draft without deducting inventory or recording payment</Text>
+                        </div>
+                      </Menu.Item>
+                    </Menu.Dropdown>
+                  </Menu>
 
                   <Button
                     variant="subtle"
