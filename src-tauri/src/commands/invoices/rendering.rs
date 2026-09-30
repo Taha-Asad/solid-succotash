@@ -1458,5 +1458,3 @@ pub(crate) fn qr_svg(payload: &str, size: u32) -> String {
         Err(_) => String::new(),
     }
 }
-
-// / Formats a Unix timestamp into a readable date string

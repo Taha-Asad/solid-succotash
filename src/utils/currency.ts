@@ -56,13 +56,26 @@ export function parseDisplayToPaisa(display: string, config?: CurrencyConfig | n
 }
 
 /**
+ * Converts paisa (smallest integer unit) to a numeric value in whole currency units (e.g. rupees/dollars).
+ * Safe for feeding directly into numeric input fields without string formatting or comma delimiters.
+ * E.g., paisaToNumber(840000) -> 8400
+ */
+export function paisaToNumber(paisa: number | null | undefined, config?: CurrencyConfig | null): number {
+  if (paisa == null || isNaN(paisa)) return 0;
+  const c = config ?? DEFAULT_CONFIG;
+  return Number((paisa / Math.pow(10, c.decimalPlaces)).toFixed(c.decimalPlaces));
+}
+
+/**
  * Converts a display string to paisa for backend submission.
  * Same as parseDisplayToPaisa but returns 0 for empty/invalid input.
  */
 export function displayToPaisa(display: string | number, config?: CurrencyConfig | null): number {
-  if (typeof display === "number") return Math.round(display * 100);
-  if (!display || display.trim() === "") return 0;
-  return parseDisplayToPaisa(display, config);
+  const c = config ?? DEFAULT_CONFIG;
+  const multiplier = Math.pow(10, c.decimalPlaces);
+  if (typeof display === "number") return Math.round(display * multiplier);
+  if (!display || String(display).trim() === "") return 0;
+  return parseDisplayToPaisa(String(display), config);
 }
 
 /**

@@ -93,14 +93,16 @@ import {
   formatPaisa as fmtPaisa,
   displayToPaisa as dtp,
   roundToCurrency,
+  paisaToNumber,
+  getCurrencyCode,
 } from "../../utils/currency";
 
 function paisaToDisplay(paisa: number, config?: CurrencyConfig | null): string {
   return fmtPaisa(paisa, config);
 }
 
-function displayToPaisa(display: string | number): number {
-  return dtp(display);
+function displayToPaisa(display: string | number, config?: CurrencyConfig | null): number {
+  return dtp(display, config);
 }
 
 // Rounds paisa to the nearest whole currency unit (matches the backend).
@@ -514,6 +516,7 @@ function InvoiceDetailView({
   const [debitNoteReason, setDebitNoteReason] = useState("");
   const [debitNoteAmount, setDebitNoteAmount] = useState(0);
   const [customerTotalDue, setCustomerTotalDue] = useState<number | null>(null);
+  const [currencyConfig, setCurrencyConfig] = useState<CurrencyConfig | null>(null);
 
   // Invoice Deletion & Cancellation States
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
@@ -643,7 +646,7 @@ function InvoiceDetailView({
     }
     const found = products.find((p) => p.id === id);
     if (found) {
-      setQuickPrice(parseFloat(paisaToDisplay(found.sellPrice)));
+      setQuickPrice(paisaToNumber(found.sellPrice, currencyConfig));
     }
   }
 
@@ -658,7 +661,7 @@ function InvoiceDetailView({
         invoiceId,
         productId: quickProductId,
         quantity: quickQuantity,
-        unitPrice: displayToPaisa(quickPrice),
+        unitPrice: displayToPaisa(quickPrice, currencyConfig),
         taxRate: selectedProd.taxRate,
         discountType: "percent",
         discountValue: 0,
@@ -677,13 +680,15 @@ function InvoiceDetailView({
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [det, prods, allInvoices] = await Promise.all([
+      const [det, prods, allInvoices, curConfig] = await Promise.all([
         getInvoice(invoiceId),
         listProducts(),
         listInvoices().catch(() => [] as PublicInvoice[]),
+        getCompanyCurrency().catch(() => null),
       ]);
       setDetails(det);
       setProducts(prods);
+      if (curConfig) setCurrencyConfig(curConfig);
       if (det?.customer?.id) {
         const otherDue = allInvoices
           .filter(
@@ -1618,6 +1623,7 @@ function InvoiceDetailView({
         onUpdate={handleUpdateItem}
         editingItem={editingItem}
         products={products}
+        currencyConfig={currencyConfig}
       />
 
       {/* Payment Modal */}
@@ -1626,6 +1632,7 @@ function InvoiceDetailView({
         onClose={() => setPaymentModalOpen(false)}
         onRecord={handleRecordPayment}
         balanceDue={invoice.balanceDue}
+        currencyConfig={currencyConfig}
       />
 
       {/* Credit Note Modal */}
@@ -1799,6 +1806,7 @@ function AddItemModal({
   onUpdate,
   editingItem,
   products,
+  currencyConfig,
 }: {
   opened: boolean;
   onClose: () => void;
@@ -1823,6 +1831,7 @@ function AddItemModal({
   ) => Promise<void>;
   editingItem: PublicInvoiceItem | null;
   products: PublicProduct[];
+  currencyConfig?: CurrencyConfig | null;
 }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1850,18 +1859,18 @@ function AddItemModal({
       form.setValues({
         productId: editingItem.productId,
         quantity: editingItem.quantity,
-        unitPrice: parseFloat(paisaToDisplay(editingItem.unitPrice)),
+        unitPrice: paisaToNumber(editingItem.unitPrice, currencyConfig),
         taxRate: editingItem.taxRate / 100,
         discountType: editingItem.discountType === "amount" ? "amount" : "percent",
         discountValue:
           editingItem.discountType === "amount"
-            ? parseFloat(paisaToDisplay(editingItem.discountAmount))
+            ? paisaToNumber(editingItem.discountAmount, currencyConfig)
             : editingItem.discountRate / 100,
       });
     } else if (opened) {
       form.reset();
     }
-  }, [opened, editingItem]);
+  }, [opened, editingItem, currencyConfig]);
 
   // Auto-fill price when product changes
   function handleProductChange(productId: string) {
@@ -1870,7 +1879,7 @@ function AddItemModal({
     if (product) {
       form.setFieldValue(
         "unitPrice",
-        parseFloat(paisaToDisplay(product.sellPrice)),
+        paisaToNumber(product.sellPrice, currencyConfig),
       );
       form.setFieldValue("taxRate", product.taxRate / 100);
     }
@@ -1882,12 +1891,12 @@ function AddItemModal({
     const payload = {
       productId: values.productId,
       quantity: values.quantity,
-      unitPrice: displayToPaisa(values.unitPrice),
+      unitPrice: displayToPaisa(values.unitPrice, currencyConfig),
       taxRate: Math.round(values.taxRate * 100),
       discountType: values.discountType,
       discountValue:
         values.discountType === "amount"
-          ? displayToPaisa(values.discountValue)
+          ? displayToPaisa(values.discountValue, currencyConfig)
           : Math.round(values.discountValue * 100),
     };
     try {
@@ -1913,12 +1922,12 @@ function AddItemModal({
 
   const preview = computeLinePreview({
     quantity: form.values.quantity,
-    unitPricePaisa: displayToPaisa(form.values.unitPrice),
+    unitPricePaisa: displayToPaisa(form.values.unitPrice, currencyConfig),
     taxRateBp: Math.round(form.values.taxRate * 100),
     discountType: form.values.discountType,
     discountValue:
       form.values.discountType === "amount"
-        ? displayToPaisa(form.values.discountValue)
+        ? displayToPaisa(form.values.discountValue, currencyConfig)
         : Math.round(form.values.discountValue * 100),
   });
 
@@ -2000,11 +2009,11 @@ function AddItemModal({
               <Text size="sm">
                 Line total:{" "}
                 <Text span fw={700}>
-                  {paisaToDisplay(preview.total)} PKR
+                  {paisaToDisplay(preview.total, currencyConfig)} {getCurrencyCode(currencyConfig)}
                 </Text>{" "}
-                (Subtotal {paisaToDisplay(preview.subtotal)} − Discount{" "}
-                {paisaToDisplay(preview.discount)} + Tax{" "}
-                {paisaToDisplay(preview.tax)}, rounded to nearest rupee)
+                (Subtotal {paisaToDisplay(preview.subtotal, currencyConfig)} − Discount{" "}
+                {paisaToDisplay(preview.discount, currencyConfig)} + Tax{" "}
+                {paisaToDisplay(preview.tax, currencyConfig)}, rounded to nearest rupee)
               </Text>
             </Alert>
           )}
@@ -2038,6 +2047,7 @@ function PaymentModal({
   onClose,
   onRecord,
   balanceDue,
+  currencyConfig,
 }: {
   opened: boolean;
   onClose: () => void;
@@ -2049,6 +2059,7 @@ function PaymentModal({
     notes: string;
   }) => Promise<void>;
   balanceDue: number;
+  currencyConfig?: CurrencyConfig | null;
 }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -2056,7 +2067,7 @@ function PaymentModal({
 
   const form = useForm({
     initialValues: {
-      amount: parseFloat(paisaToDisplay(balanceDue)),
+      amount: paisaToNumber(balanceDue, currencyConfig),
       paymentMethod: "cash",
       paymentDate: new Date().toISOString().split("T")[0],
       reference: "",
@@ -2065,15 +2076,15 @@ function PaymentModal({
   });
 
   useEffect(() => {
-    form.setFieldValue("amount", parseFloat(paisaToDisplay(balanceDue)));
+    form.setFieldValue("amount", paisaToNumber(balanceDue, currencyConfig));
     setCashTendered("");
-  }, [balanceDue, opened]);
+  }, [balanceDue, opened, currencyConfig]);
 
   const billAmount = Number(form.values.amount) || 0;
   const tenderedNum =
     typeof cashTendered === "number"
       ? cashTendered
-      : parseFloat(String(cashTendered)) || 0;
+      : parseFloat(String(cashTendered).replace(/,/g, "")) || 0;
   const changeToReturn =
     tenderedNum > billAmount ? tenderedNum - billAmount : 0;
   const isShort = tenderedNum > 0 && tenderedNum < billAmount;
@@ -2099,7 +2110,7 @@ function PaymentModal({
     setLoading(true);
     try {
       await onRecord({
-        amount: displayToPaisa(values.amount),
+        amount: displayToPaisa(values.amount, currencyConfig),
         paymentMethod: values.paymentMethod,
         paymentDate: values.paymentDate,
         reference: values.reference,
@@ -2120,7 +2131,7 @@ function PaymentModal({
           <Text size="sm" c="dimmed">
             Balance due:{" "}
             <Text span fw={700}>
-              {paisaToDisplay(balanceDue)} PKR
+              {paisaToDisplay(balanceDue, currencyConfig)} {getCurrencyCode(currencyConfig)}
             </Text>
           </Text>
 

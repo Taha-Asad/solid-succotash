@@ -167,7 +167,9 @@ function paisaToDisplay(paisa: number): string {
 
 // Convert display string to paisa: "15.00" → 1500
 function displayToPaisa(display: string | number): number {
-  const num = typeof display === "number" ? display : parseFloat(display);
+  if (typeof display === "number") return Math.round(display * 100);
+  const cleaned = String(display).replace(/,/g, "").trim();
+  const num = parseFloat(cleaned);
   if (isNaN(num)) return 0;
   return Math.round(num * 100);
 }

@@ -91,7 +91,9 @@ function paisaToDisplay(paisa: number): string {
 }
 
 function displayToPaisa(display: string | number): number {
-  const n = typeof display === "number" ? display : parseFloat(display);
+  if (typeof display === "number") return Math.round(display * 100);
+  const cleaned = String(display).replace(/,/g, "").trim();
+  const n = parseFloat(cleaned);
   return isNaN(n) ? 0 : Math.round(n * 100);
 }
 
@@ -1030,7 +1032,7 @@ function AddPOItemModal({
   function handleProductChange(id: string) {
     form.setFieldValue("productId", id);
     const prod = products.find((p) => p.id === id);
-    if (prod) form.setFieldValue("unitCost", parseFloat(paisaToDisplay(prod.costPrice)));
+    if (prod) form.setFieldValue("unitCost", prod.costPrice / 100);
   }
 
   async function submit(values: typeof form.values) {
@@ -1238,7 +1240,7 @@ function POPaymentModal({
   const [error, setError] = useState<string | null>(null);
   const form = useForm({
     initialValues: {
-      amount: parseFloat(paisaToDisplay(balanceDue)),
+      amount: balanceDue / 100,
       paymentMethod: "cash",
       paymentDate: new Date().toISOString().split("T")[0],
       reference: "",
@@ -1247,7 +1249,7 @@ function POPaymentModal({
   });
 
   useEffect(() => {
-    form.setFieldValue("amount", parseFloat(paisaToDisplay(balanceDue)));
+    form.setFieldValue("amount", balanceDue / 100);
   }, [balanceDue]);
 
   async function submit(values: typeof form.values) {
