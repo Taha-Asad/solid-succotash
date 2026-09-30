@@ -239,10 +239,12 @@ pub async fn run_sqlite_migrations(sqlite_url: &str) -> Result<(), Box<dyn std::
         ensure_multi_currency_columns(&pool).await?;
         ensure_fbr_columns(&pool).await?;
         ensure_company_modules_seeded(&pool).await?;
+        ensure_fts_triggers(&pool).await?;
     } else {
         println!("Database schema is up to date (no pending migrations).");
         ensure_invoice_design_columns(&pool).await?;
         ensure_product_columns(&pool).await?;
+        ensure_fts_triggers(&pool).await?;
     }
 
     pool.close().await;
@@ -812,6 +814,80 @@ async fn ensure_company_modules_seeded(pool: &SqlitePool) -> Result<(), Box<dyn 
                 .await?;
             }
         }
+    }
+
+    Ok(())
+}
+
+/// Drops old and recreates correct triggers for FTS5 external content tables.
+/// Previous triggers used `DELETE FROM ..._fts WHERE rowid = OLD.rowid`, which
+/// corrupts external content FTS5 tables with `code: 267 (malformed disk image)`.
+/// External content tables require `INSERT INTO ..._fts(..._fts, rowid, ...) VALUES('delete', ...)`.
+async fn ensure_fts_triggers(pool: &SqlitePool) -> Result<(), Box<dyn std::error::Error>> {
+    let statements = [
+        "DROP TRIGGER IF EXISTS customers_fts_update",
+        "DROP TRIGGER IF EXISTS customers_fts_delete",
+        "DROP TRIGGER IF EXISTS customers_fts_delete_on_update",
+        "DROP TRIGGER IF EXISTS customers_fts_insert_on_update",
+        r#"
+        CREATE TRIGGER IF NOT EXISTS customers_fts_delete_on_update AFTER UPDATE ON customers
+        WHEN OLD.deleted_at IS NULL
+        BEGIN
+            INSERT INTO customers_fts(customers_fts, rowid, name, email, phone, cnic, ntn)
+            VALUES ('delete', OLD.rowid, OLD.name, COALESCE(OLD.email, ''),
+                    COALESCE(OLD.phone, ''), COALESCE(OLD.cnic, ''), COALESCE(OLD.ntn, ''));
+        END;
+        "#,
+        r#"
+        CREATE TRIGGER IF NOT EXISTS customers_fts_insert_on_update AFTER UPDATE ON customers
+        WHEN NEW.deleted_at IS NULL
+        BEGIN
+            INSERT INTO customers_fts(rowid, name, email, phone, cnic, ntn)
+            VALUES (NEW.rowid, NEW.name, COALESCE(NEW.email, ''),
+                    COALESCE(NEW.phone, ''), COALESCE(NEW.cnic, ''), COALESCE(NEW.ntn, ''));
+        END;
+        "#,
+        r#"
+        CREATE TRIGGER IF NOT EXISTS customers_fts_delete AFTER DELETE ON customers
+        WHEN OLD.deleted_at IS NULL
+        BEGIN
+            INSERT INTO customers_fts(customers_fts, rowid, name, email, phone, cnic, ntn)
+            VALUES ('delete', OLD.rowid, OLD.name, COALESCE(OLD.email, ''),
+                    COALESCE(OLD.phone, ''), COALESCE(OLD.cnic, ''), COALESCE(OLD.ntn, ''));
+        END;
+        "#,
+        "DROP TRIGGER IF EXISTS products_fts_update",
+        "DROP TRIGGER IF EXISTS products_fts_delete",
+        "DROP TRIGGER IF EXISTS products_fts_delete_on_update",
+        "DROP TRIGGER IF EXISTS products_fts_insert_on_update",
+        r#"
+        CREATE TRIGGER IF NOT EXISTS products_fts_delete_on_update AFTER UPDATE ON products
+        WHEN OLD.deleted_at IS NULL
+        BEGIN
+            INSERT INTO products_fts(products_fts, rowid, name, sku, custom_fields)
+            VALUES ('delete', OLD.rowid, OLD.name, OLD.sku, COALESCE(OLD.custom_fields, ''));
+        END;
+        "#,
+        r#"
+        CREATE TRIGGER IF NOT EXISTS products_fts_insert_on_update AFTER UPDATE ON products
+        WHEN NEW.deleted_at IS NULL
+        BEGIN
+            INSERT INTO products_fts(rowid, name, sku, custom_fields)
+            VALUES (NEW.rowid, NEW.name, NEW.sku, COALESCE(NEW.custom_fields, ''));
+        END;
+        "#,
+        r#"
+        CREATE TRIGGER IF NOT EXISTS products_fts_delete AFTER DELETE ON products
+        WHEN OLD.deleted_at IS NULL
+        BEGIN
+            INSERT INTO products_fts(products_fts, rowid, name, sku, custom_fields)
+            VALUES ('delete', OLD.rowid, OLD.name, OLD.sku, COALESCE(OLD.custom_fields, ''));
+        END;
+        "#,
+    ];
+
+    for stmt in statements {
+        let _ = sqlx::raw_sql(stmt).execute(pool).await;
     }
 
     Ok(())

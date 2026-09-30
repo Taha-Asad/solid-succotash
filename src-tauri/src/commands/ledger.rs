@@ -630,6 +630,7 @@ mod tests {
             "".to_string(),
             "".to_string(),
             "registered".to_string(),
+            None,
         )
         .await
         .expect("create customer")

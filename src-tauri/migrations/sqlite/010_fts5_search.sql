@@ -25,17 +25,25 @@ BEGIN
     VALUES (NEW.rowid, NEW.name, NEW.sku, COALESCE(NEW.custom_fields, ''));
 END;
 
-CREATE TRIGGER IF NOT EXISTS products_fts_update AFTER UPDATE ON products
+CREATE TRIGGER IF NOT EXISTS products_fts_delete_on_update AFTER UPDATE ON products
+WHEN OLD.deleted_at IS NULL
 BEGIN
-    DELETE FROM products_fts WHERE rowid = OLD.rowid;
+    INSERT INTO products_fts(products_fts, rowid, name, sku, custom_fields)
+    VALUES ('delete', OLD.rowid, OLD.name, OLD.sku, COALESCE(OLD.custom_fields, ''));
+END;
+
+CREATE TRIGGER IF NOT EXISTS products_fts_insert_on_update AFTER UPDATE ON products
+WHEN NEW.deleted_at IS NULL
+BEGIN
     INSERT INTO products_fts(rowid, name, sku, custom_fields)
-    SELECT rowid, name, sku, COALESCE(custom_fields, '')
-    FROM products WHERE id = NEW.id AND deleted_at IS NULL;
+    VALUES (NEW.rowid, NEW.name, NEW.sku, COALESCE(NEW.custom_fields, ''));
 END;
 
 CREATE TRIGGER IF NOT EXISTS products_fts_delete AFTER DELETE ON products
+WHEN OLD.deleted_at IS NULL
 BEGIN
-    DELETE FROM products_fts WHERE rowid = OLD.rowid;
+    INSERT INTO products_fts(products_fts, rowid, name, sku, custom_fields)
+    VALUES ('delete', OLD.rowid, OLD.name, OLD.sku, COALESCE(OLD.custom_fields, ''));
 END;
 
 
@@ -59,16 +67,26 @@ BEGIN
             COALESCE(NEW.phone,''), COALESCE(NEW.cnic,''), COALESCE(NEW.ntn,''));
 END;
 
-CREATE TRIGGER IF NOT EXISTS customers_fts_update AFTER UPDATE ON customers
+CREATE TRIGGER IF NOT EXISTS customers_fts_delete_on_update AFTER UPDATE ON customers
+WHEN OLD.deleted_at IS NULL
 BEGIN
-    DELETE FROM customers_fts WHERE rowid = OLD.rowid;
+    INSERT INTO customers_fts(customers_fts, rowid, name, email, phone, cnic, ntn)
+    VALUES ('delete', OLD.rowid, OLD.name, COALESCE(OLD.email, ''),
+            COALESCE(OLD.phone, ''), COALESCE(OLD.cnic, ''), COALESCE(OLD.ntn, ''));
+END;
+
+CREATE TRIGGER IF NOT EXISTS customers_fts_insert_on_update AFTER UPDATE ON customers
+WHEN NEW.deleted_at IS NULL
+BEGIN
     INSERT INTO customers_fts(rowid, name, email, phone, cnic, ntn)
-    SELECT rowid, name, COALESCE(email,''), COALESCE(phone,''),
-           COALESCE(cnic,''), COALESCE(ntn,'')
-    FROM customers WHERE id = NEW.id AND deleted_at IS NULL;
+    VALUES (NEW.rowid, NEW.name, COALESCE(NEW.email, ''),
+            COALESCE(NEW.phone, ''), COALESCE(NEW.cnic, ''), COALESCE(NEW.ntn, ''));
 END;
 
 CREATE TRIGGER IF NOT EXISTS customers_fts_delete AFTER DELETE ON customers
+WHEN OLD.deleted_at IS NULL
 BEGIN
-    DELETE FROM customers_fts WHERE rowid = OLD.rowid;
+    INSERT INTO customers_fts(customers_fts, rowid, name, email, phone, cnic, ntn)
+    VALUES ('delete', OLD.rowid, OLD.name, COALESCE(OLD.email, ''),
+            COALESCE(OLD.phone, ''), COALESCE(OLD.cnic, ''), COALESCE(OLD.ntn, ''));
 END;

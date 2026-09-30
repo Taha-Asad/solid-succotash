@@ -37,6 +37,7 @@ import {
   ScrollArea,
   SimpleGrid,
   Stack,
+  Switch,
   Table,
   Tabs,
   Text,
@@ -776,6 +777,8 @@ function CustomerLedgerReport() {
   const [data, setData] = useState<CustomerLedgerEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isolateWalkin, setIsolateWalkin] = useState(true);
+  const [onlyOutstanding, setOnlyOutstanding] = useState(false);
 
   useEffect(() => {
     reportCustomerLedger()
@@ -787,9 +790,20 @@ function CustomerLedgerReport() {
   if (loading) return <LoadingState />;
   if (error) return <ErrorState message={error} />;
 
-  const totalInvoiced = data.reduce((s, d) => s + d.totalInvoiced, 0);
-  const totalPaid = data.reduce((s, d) => s + d.totalPaid, 0);
-  const totalBalance = data.reduce((s, d) => s + d.balanceDue, 0);
+  const isWalkinName = (name: string) => {
+    const n = name.toLowerCase();
+    return n.includes("walk-in") || n.includes("cash customer") || n.includes("counter sale");
+  };
+
+  const filteredData = data.filter((entry) => {
+    if (isolateWalkin && isWalkinName(entry.customerName)) return false;
+    if (onlyOutstanding && entry.balanceDue <= 0) return false;
+    return true;
+  });
+
+  const totalInvoiced = filteredData.reduce((s, d) => s + d.totalInvoiced, 0);
+  const totalPaid = filteredData.reduce((s, d) => s + d.totalPaid, 0);
+  const totalBalance = filteredData.reduce((s, d) => s + d.balanceDue, 0);
 
   const donutData =
     totalInvoiced <= 0
@@ -854,16 +868,35 @@ function CustomerLedgerReport() {
 
         <motion.div {...fadeUp} transition={{ duration: 0.5, delay: 0.16 }} style={{ gridColumn: "2 / 4" }}>
           <Card withBorder shadow="sm" p="lg" style={{ height: "100%" }}>
-            <Group justify="space-between" mb="md">
-              <Text fw={700} style={{ color: INK.text }}>Customer Balances</Text>
-              <Group>
+            <Group justify="space-between" mb="md" wrap="wrap" gap="sm">
+              <Stack gap={2}>
+                <Text fw={700} style={{ color: INK.text }}>Customer Balances & Khata</Text>
+                <Text size="xs" c="dimmed">
+                  Credit receivables breakdown by customer account
+                </Text>
+              </Stack>
+              <Group gap="sm" wrap="wrap">
+                <Switch
+                  size="xs"
+                  label="Isolate Walk-in / Cash"
+                  checked={isolateWalkin}
+                  onChange={(e) => setIsolateWalkin(e.currentTarget.checked)}
+                />
+                <Switch
+                  size="xs"
+                  label="Outstanding Only"
+                  checked={onlyOutstanding}
+                  onChange={(e) => setOnlyOutstanding(e.currentTarget.checked)}
+                />
                 <ExportButtons kind="ledger" align="flex-end" />
-                <Badge color="gold" variant="light">{data.length} customers</Badge>
+                <Badge color="gold" variant="light">
+                  {filteredData.length} of {data.length} accounts
+                </Badge>
               </Group>
             </Group>
-            {data.length === 0 ? (
+            {filteredData.length === 0 ? (
               <Box style={{ height: 210, display: "grid", placeItems: "center" }}>
-                <Text c="dimmed" size="sm">No customer data yet.</Text>
+                <Text c="dimmed" size="sm">No matching customer ledger data.</Text>
               </Box>
             ) : (
               <ScrollArea style={{ maxHeight: 420 }}>
@@ -879,7 +912,7 @@ function CustomerLedgerReport() {
                     </Table.Tr>
                   </Table.Thead>
                   <Table.Tbody>
-                    {data.map((entry, i) => (
+                    {filteredData.map((entry, i) => (
                       <motion.tr key={entry.customerId} initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.02 * i, duration: 0.25 }}>
                         <Table.Td>
                           <Text size="sm" fw={600} style={{ color: INK.text }}>{entry.customerName}</Text>

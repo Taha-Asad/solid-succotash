@@ -216,6 +216,8 @@ pub async fn run() {
             commands::units::delete_unit,
             commands::invoices::list_customers,
             commands::invoices::create_customer,
+            commands::invoices::update_customer,
+            commands::invoices::set_customer_active,
             commands::invoices::delete_customer,
             commands::invoices::list_invoices,
             commands::invoices::get_invoice,

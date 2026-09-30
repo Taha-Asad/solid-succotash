@@ -425,6 +425,32 @@ export type PublicCustomer = {
   version: number;
 };
 
+export type CreateCustomerInput = {
+  name: string;
+  email: string;
+  phone: string;
+  address: string;
+  cnic: string;
+  ntn: string;
+  strn: string;
+  buyerType: string;
+  isActive?: boolean;
+};
+
+export type UpdateCustomerInput = {
+  customerId: string;
+  expectedVersion: number;
+  name: string;
+  email: string;
+  phone: string;
+  address: string;
+  cnic: string;
+  ntn: string;
+  strn: string;
+  buyerType: string;
+  isActive?: boolean;
+};
+
 export type PublicInvoice = {
   id: string;
   companyId: string;

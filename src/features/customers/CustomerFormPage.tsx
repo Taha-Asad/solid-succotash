@@ -16,6 +16,7 @@ import {
   Radio,
   SimpleGrid,
   Stack,
+  Switch,
   Text,
   TextInput,
   Textarea,
@@ -33,7 +34,7 @@ import {
   AlertCircle,
   Save,
 } from "lucide-react";
-import { createCustomer, getErrorMessage } from "../../api/backend";
+import { createCustomer, getErrorMessage, updateCustomer } from "../../api/backend";
 import type { PublicCustomer } from "../../types/backend";
 import {
   formatWhatsAppNumber,
@@ -42,27 +43,33 @@ import {
 } from "../../utils/whatsapp";
 
 interface CustomerFormPageProps {
+  initial?: PublicCustomer | null;
   onBack: () => void;
-  onCustomerCreated: (customer: PublicCustomer) => void;
+  onCustomerSaved: (customer: PublicCustomer) => void;
+  onCustomerCreated?: (customer: PublicCustomer) => void;
 }
 
 export default function CustomerFormPage({
+  initial,
   onBack,
+  onCustomerSaved,
   onCustomerCreated,
 }: CustomerFormPageProps) {
+  const isEdit = Boolean(initial);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const form = useForm({
     initialValues: {
-      name: "",
-      phone: "",
-      email: "",
-      address: "",
-      buyerType: "unregistered" as "unregistered" | "registered",
-      cnic: "",
-      ntn: "",
-      strn: "",
+      name: initial?.name ?? "",
+      phone: initial?.phone ?? "",
+      email: initial?.email ?? "",
+      address: initial?.address ?? "",
+      buyerType: ((initial?.buyerType as "unregistered" | "registered") || "unregistered"),
+      cnic: initial?.cnic ?? "",
+      ntn: initial?.ntn ?? "",
+      strn: initial?.strn ?? "",
+      isActive: initial ? initial.isActive : true,
     },
     validate: {
       name: (val) =>
@@ -87,17 +94,37 @@ export default function CustomerFormPage({
     setSubmitting(true);
     setError(null);
     try {
-      const created = await createCustomer({
-        name: values.name.trim(),
-        phone: values.phone.trim(),
-        email: values.email.trim(),
-        address: values.address.trim(),
-        buyerType: values.buyerType,
-        cnic: values.cnic.trim(),
-        ntn: values.ntn.trim(),
-        strn: values.strn.trim(),
-      });
-      onCustomerCreated(created);
+      if (initial) {
+        const updated = await updateCustomer({
+          customerId: initial.id,
+          expectedVersion: initial.version,
+          name: values.name.trim(),
+          phone: values.phone.trim(),
+          email: values.email.trim(),
+          address: values.address.trim(),
+          buyerType: values.buyerType,
+          cnic: values.cnic.trim(),
+          ntn: values.ntn.trim(),
+          strn: values.strn.trim(),
+          isActive: values.isActive,
+        });
+        onCustomerSaved(updated);
+        onCustomerCreated?.(updated);
+      } else {
+        const created = await createCustomer({
+          name: values.name.trim(),
+          phone: values.phone.trim(),
+          email: values.email.trim(),
+          address: values.address.trim(),
+          buyerType: values.buyerType,
+          cnic: values.cnic.trim(),
+          ntn: values.ntn.trim(),
+          strn: values.strn.trim(),
+          isActive: values.isActive,
+        });
+        onCustomerSaved(created);
+        onCustomerCreated?.(created);
+      }
     } catch (err) {
       setError(getErrorMessage(err));
     } finally {
@@ -149,10 +176,12 @@ export default function CustomerFormPage({
         <Group justify="space-between" align="flex-end">
           <Box>
             <Title order={2} style={{ letterSpacing: -0.4 }}>
-              Register New Customer
+              {isEdit ? `Edit Customer: ${initial?.name}` : "Register New Customer"}
             </Title>
             <Text size="sm" c="dimmed" mt={4}>
-              Add an individual client or commercial business for billing, ledger tracking, and FBR compliance.
+              {isEdit
+                ? "Update contact information, tax status, and ledger profile."
+                : "Add an individual client or commercial business for billing, ledger tracking, and FBR compliance."}
             </Text>
           </Box>
 
@@ -170,7 +199,7 @@ export default function CustomerFormPage({
                 fontWeight: 600,
               }}
             >
-              Save Customer
+              {isEdit ? "Update Customer" : "Save Customer"}
             </Button>
           </Group>
         </Group>
@@ -179,7 +208,7 @@ export default function CustomerFormPage({
       {error && (
         <Alert
           icon={<AlertCircle size={16} />}
-          title="Could not register customer"
+          title={isEdit ? "Could not update customer" : "Could not register customer"}
           color="red"
           withCloseButton
           onClose={() => setError(null)}
@@ -210,12 +239,12 @@ export default function CustomerFormPage({
                   Customer Identity & Classification
                 </Text>
                 <Text size="xs" c="dimmed">
-                  Official name and commercial tax status for invoicing.
+                  Official name, tax status, and account activity state.
                 </Text>
               </Box>
             </Group>
 
-            <SimpleGrid cols={{ base: 1, md: 2 }} spacing="lg">
+            <SimpleGrid cols={{ base: 1, md: 3 }} spacing="lg">
               <TextInput
                 label="Full Name or Business Name"
                 placeholder="e.g. Al-Madina Hardware or Muhammad Bilal"
@@ -229,17 +258,30 @@ export default function CustomerFormPage({
                   Buyer Tax Classification
                 </Text>
                 <Radio.Group {...form.getInputProps("buyerType")}>
-                  <Group mt="xs" gap="xl">
+                  <Group mt="xs" gap="md">
                     <Radio
                       value="unregistered"
-                      label="Unregistered / Retail (Individual or Walk-in)"
+                      label="Retail / Unregistered"
                     />
                     <Radio
                       value="registered"
-                      label="B2B Registered (Has NTN/STRN)"
+                      label="B2B Registered"
                     />
                   </Group>
                 </Radio.Group>
+              </Box>
+
+              <Box>
+                <Text size="sm" fw={500} mb="xs">
+                  Account Status
+                </Text>
+                <Switch
+                  mt="sm"
+                  label={form.values.isActive ? "Active Account" : "Inactive / Suspended"}
+                  checked={form.values.isActive}
+                  onChange={(e) => form.setFieldValue("isActive", e.currentTarget.checked)}
+                  color="green"
+                />
               </Box>
             </SimpleGrid>
           </Card>

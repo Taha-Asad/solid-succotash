@@ -16,6 +16,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   AccountStatementRow,
   CompanySetupInput,
+  CreateCustomerInput,
   CreateUserInput,
   CurrencyConfig,
   CustomerLedgerEntry,
@@ -64,6 +65,7 @@ import type {
   StockSummary,
   TopCustomer,
   TopProduct,
+  UpdateCustomerInput,
   UpdatePermissionInput,
   UpdateProductInput,
   UpdateRoleInput,
@@ -441,17 +443,23 @@ export function listCustomers(): Promise<PublicCustomer[]> {
   return invoke<PublicCustomer[]>("list_customers");
 }
 
-export function createCustomer(input: {
-  name: string;
-  email: string;
-  phone: string;
-  address: string;
-  cnic: string;
-  ntn: string;
-  strn: string;
-  buyerType: string;
-}): Promise<PublicCustomer> {
+export function createCustomer(
+  input: CreateCustomerInput,
+): Promise<PublicCustomer> {
   return invoke<PublicCustomer>("create_customer", input);
+}
+
+export function updateCustomer(
+  input: UpdateCustomerInput,
+): Promise<PublicCustomer> {
+  return invoke<PublicCustomer>("update_customer", input);
+}
+
+export function setCustomerActive(input: {
+  customerId: string;
+  active: boolean;
+}): Promise<PublicCustomer> {
+  return invoke<PublicCustomer>("set_customer_active", input);
 }
 
 export function deleteCustomer(customerId: string): Promise<void> {

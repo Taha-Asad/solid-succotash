@@ -27,6 +27,7 @@ use uuid::Uuid;
             "".to_string(),
             "".to_string(),
             "registered".to_string(),
+            None,
         )
         .await
         .expect("create customer")
@@ -457,12 +458,14 @@ use uuid::Uuid;
             "".to_string(),
             "".to_string(),
             "registered".to_string(),
+            None,
         )
         .await
         .expect("create");
         assert_eq!(c.name, "Acme Ltd");
         assert_eq!(c.buyer_type, "registered");
         assert_eq!(c.email.as_deref(), Some("acme@test.com"));
+        assert!(c.is_active);
     }
 
     #[tokio::test]
@@ -481,6 +484,7 @@ use uuid::Uuid;
             "".to_string(),
             "".to_string(),
             "registered".to_string(),
+            None,
         )
         .await
         .unwrap_err();
@@ -503,6 +507,7 @@ use uuid::Uuid;
             "".to_string(),
             "".to_string(),
             "walk-in".to_string(),
+            None,
         )
         .await
         .unwrap_err();
@@ -536,10 +541,59 @@ use uuid::Uuid;
             "".to_string(),
             "".to_string(),
             "registered".to_string(),
+            None,
         )
         .await
         .unwrap_err();
         assert!(err.contains("Access denied"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn update_customer_succeeds_and_bumps_version() {
+        let app = owner_app().await;
+        let c = make_customer(&app, "Original Name").await;
+
+        let updated = update_customer(
+            app.state(),
+            app.state(),
+            c.version,
+            c.id.clone(),
+            "Updated Name".to_string(),
+            "new@test.com".to_string(),
+            "0300-999".to_string(),
+            "Islamabad".to_string(),
+            "35201-1234567-1".to_string(),
+            "1234567-8".to_string(),
+            "".to_string(),
+            "unregistered".to_string(),
+            Some(false),
+        )
+        .await
+        .expect("update customer");
+
+        assert_eq!(updated.name, "Updated Name");
+        assert_eq!(updated.email.as_deref(), Some("new@test.com"));
+        assert_eq!(updated.phone.as_deref(), Some("0300-999"));
+        assert_eq!(updated.buyer_type, "unregistered");
+        assert!(!updated.is_active);
+        assert!(updated.version > c.version);
+    }
+
+    #[tokio::test]
+    async fn set_customer_active_toggles_status() {
+        let app = owner_app().await;
+        let c = make_customer(&app, "Toggle Client").await;
+        assert!(c.is_active);
+
+        let deactivated = set_customer_active(app.state(), app.state(), c.id.clone(), false)
+            .await
+            .expect("deactivate");
+        assert!(!deactivated.is_active);
+
+        let reactivated = set_customer_active(app.state(), app.state(), c.id.clone(), true)
+            .await
+            .expect("reactivate");
+        assert!(reactivated.is_active);
     }
 
     #[tokio::test]

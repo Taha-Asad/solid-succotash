@@ -25,6 +25,7 @@ import {
   deleteCustomer,
   getErrorMessage,
   listCustomers,
+  setCustomerActive,
 } from "../../api/backend";
 
 import type { PublicCustomer, PublicUser } from "../../types/backend";
@@ -44,6 +45,7 @@ import {
   MessageSquare,
   Building2,
   UserCheck,
+  Pencil,
 } from "lucide-react";
 
 export default function CustomersPage({ user }: { user: PublicUser }) {
@@ -53,7 +55,8 @@ export default function CustomersPage({ user }: { user: PublicUser }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
-  const [viewMode, setViewMode] = useState<"list" | "create">("list");
+  const [editingCustomer, setEditingCustomer] = useState<PublicCustomer | null>(null);
+  const [viewMode, setViewMode] = useState<"list" | "form">("list");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -71,11 +74,16 @@ export default function CustomersPage({ user }: { user: PublicUser }) {
     load();
   }, [load]);
 
-  if (viewMode === "create") {
+  if (viewMode === "form") {
     return (
       <CustomerFormPage
-        onBack={() => setViewMode("list")}
-        onCustomerCreated={() => {
+        initial={editingCustomer}
+        onBack={() => {
+          setEditingCustomer(null);
+          setViewMode("list");
+        }}
+        onCustomerSaved={() => {
+          setEditingCustomer(null);
           setViewMode("list");
           void load();
         }}
@@ -158,7 +166,10 @@ export default function CustomersPage({ user }: { user: PublicUser }) {
 
           <Button
             leftSection={<Plus size={16} />}
-            onClick={() => setViewMode("create")}
+            onClick={() => {
+              setEditingCustomer(null);
+              setViewMode("form");
+            }}
             style={{
               background: "var(--app-accent, #1d2b54)",
               color: "#ffffff",
@@ -290,18 +301,56 @@ export default function CustomersPage({ user }: { user: PublicUser }) {
                     </Table.Td>
 
                     <Table.Td>
-                      <Badge
-                        color={customer.isActive ? "green" : "red"}
-                        variant="light"
-                        radius="sm"
+                      <Tooltip
+                        label={
+                          canManage
+                            ? customer.isActive
+                              ? "Click to deactivate"
+                              : "Click to activate"
+                            : undefined
+                        }
                       >
-                        {customer.isActive ? "Active" : "Inactive"}
-                      </Badge>
+                        <Badge
+                          color={customer.isActive ? "green" : "red"}
+                          variant="light"
+                          radius="sm"
+                          style={{
+                            cursor: canManage ? "pointer" : "default",
+                            userSelect: "none",
+                          }}
+                          onClick={async () => {
+                            if (!canManage) return;
+                            try {
+                              await setCustomerActive({
+                                customerId: customer.id,
+                                active: !customer.isActive,
+                              });
+                              await load();
+                            } catch (err) {
+                              setError(getErrorMessage(err));
+                            }
+                          }}
+                        >
+                          {customer.isActive ? "Active" : "Inactive"}
+                        </Badge>
+                      </Tooltip>
                     </Table.Td>
 
                     <Table.Td style={{ textAlign: "right" }}>
                       {canManage && (
                         <Group gap="xs" justify="flex-end">
+                          <Tooltip label="Edit customer details">
+                            <ActionIcon
+                              variant="subtle"
+                              color="blue"
+                              onClick={() => {
+                                setEditingCustomer(customer);
+                                setViewMode("form");
+                              }}
+                            >
+                              <Pencil size={15} />
+                            </ActionIcon>
+                          </Tooltip>
                           <Tooltip label="Archive customer">
                             <ActionIcon
                               variant="subtle"
@@ -333,7 +382,10 @@ export default function CustomersPage({ user }: { user: PublicUser }) {
                   variant="light"
                   size="sm"
                   leftSection={<Plus size={15} />}
-                  onClick={() => setViewMode("create")}
+                  onClick={() => {
+                    setEditingCustomer(null);
+                    setViewMode("form");
+                  }}
                 >
                   Add Your First Customer
                 </Button>
