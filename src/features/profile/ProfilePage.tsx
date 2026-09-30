@@ -112,12 +112,6 @@ const ROLE_INFO: Record<
       "Personal appearance & password management",
     ],
   },
-  super_admin: {
-    label: "Platform Super Admin",
-    color: "violet",
-    description: "Cross-tenant technical platform operator.",
-    permissions: ["Full multi-tenant server access & telemetry"],
-  },
 };
 
 function getPasswordStrength(password: string): { score: number; color: string; label: string } {

@@ -2,8 +2,8 @@
 // ROLE TYPES
 // ==========================================
 
-// Roles inside one company (tenant-scoped)
-export type UserRole = "owner" | "admin" | "employee" | "super_admin";
+// Roles inside one company (single-tenant)
+export type UserRole = "owner" | "admin" | "employee";
 
 // ==========================================
 // CURRENCY TYPES (migration 018)
@@ -39,10 +39,6 @@ export type PublicUser = {
   companyId: string | null;
   isActive: boolean;
   createdAt: string;
-  // Cross-tenant admin flag (migration 017, spec §3.11).
-  // Super admins have companyId = null and are not tenant-scoped.
-  isSuperAdmin: boolean;
-  // Forces a password change on the next login (spec §7.3).
   mustChangePassword: boolean;
 };
 

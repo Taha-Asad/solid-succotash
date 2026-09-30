@@ -108,7 +108,7 @@ export function OnboardingProvider({
 }: {
   /** Which screen the app is currently showing. */
   screen: "loading" | "setup" | "login" | "change-password" | "dashboard" | "fatal-error";
-  user: { id: string; role: UserRole; isSuperAdmin: boolean } | null;
+  user: { id: string; role: UserRole } | null;
   children: ReactNode;
 }) {
   const [phase, setPhase] = useState<OnboardingPhase>("idle");
@@ -168,7 +168,7 @@ export function OnboardingProvider({
       return;
     }
 
-    if (screen === "dashboard" && user && !user.isSuperAdmin) {
+    if (screen === "dashboard" && user) {
       // Reaching the dashboard means the user has gotten past login.
       markLoginSeen();
       userIdRef.current = user.id;
@@ -185,7 +185,7 @@ export function OnboardingProvider({
       return;
     }
 
-    // setup / loading / fatal-error / super-admin dashboard → nothing
+    // setup / loading / fatal-error → nothing
     setPhase((p) => (p === "app" || p === "login" ? "idle" : p));
   }, [screen, user, startPhase]);
 
