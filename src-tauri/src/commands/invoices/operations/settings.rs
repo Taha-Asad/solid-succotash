@@ -1,4 +1,4 @@
-use sqlx::SqlitePool;
+use sqlx::{Row, SqlitePool};
 use tauri::State;
 
 use crate::commands::audit::log_audit;
@@ -15,32 +15,14 @@ pub async fn get_or_create_settings(
     company_id: &str,
 ) -> Result<InvoiceSettings, AppError> {
     // Try to get existing
-    let existing = sqlx::query_as::<
-        _,
-        (
-            Option<String>,
-            Option<String>,
-            Option<String>,
-            String,
-            i64,
-            i64,
-            Option<String>,
-            Option<String>,
-            String,
-            String,
-            i64,
-            Option<String>,
-            Option<String>,
-            Option<String>,
-            Option<String>,
-        ),
-    >(
+    let existing = sqlx::query(
         r#"
         SELECT company_ntn, company_strn, company_cnic,
                invoice_prefix, next_number, default_due_days,
                invoice_footer, terms_conditions,
                invoice_design, design_accent_color, show_qr,
-               excel_template_base64, disclaimer, copyright, bank_details
+               excel_template_base64, disclaimer, copyright, bank_details,
+               show_signatures, show_previous_balance
         FROM company_invoice_settings
         WHERE company_id = ?
         "#,
@@ -50,40 +32,31 @@ pub async fn get_or_create_settings(
     .await
     .map_err(|e| AppError::internal(format!("Settings lookup error: {e}")))?;
 
-    if let Some((
-        ntn,
-        strn,
-        cnic,
-        prefix,
-        next,
-        due_days,
-        footer,
-        terms,
-        design,
-        accent,
-        show_qr,
-        excel_template,
-        disclaimer,
-        copyright,
-        bank_details,
-    )) = existing
-    {
+    if let Some(row) = existing {
         return Ok(InvoiceSettings {
-            company_ntn: ntn,
-            company_strn: strn,
-            company_cnic: cnic,
-            invoice_prefix: prefix,
-            next_number: next,
-            default_due_days: due_days,
-            invoice_footer: footer,
-            terms_conditions: terms,
-            invoice_design: design,
-            design_accent_color: accent,
-            show_qr: show_qr != 0,
-            excel_template_base64: excel_template,
-            disclaimer,
-            copyright,
-            bank_details,
+            company_ntn: row.get("company_ntn"),
+            company_strn: row.get("company_strn"),
+            company_cnic: row.get("company_cnic"),
+            invoice_prefix: row.get("invoice_prefix"),
+            next_number: row.get("next_number"),
+            default_due_days: row.get("default_due_days"),
+            invoice_footer: row.get("invoice_footer"),
+            terms_conditions: row.get("terms_conditions"),
+            invoice_design: row.get("invoice_design"),
+            design_accent_color: row.get("design_accent_color"),
+            show_qr: row.get::<i64, _>("show_qr") != 0,
+            excel_template_base64: row.get("excel_template_base64"),
+            disclaimer: row.get("disclaimer"),
+            copyright: row.get("copyright"),
+            bank_details: row.get("bank_details"),
+            show_signatures: row
+                .get::<Option<i64>, _>("show_signatures")
+                .map(|v| v != 0)
+                .unwrap_or(true),
+            show_previous_balance: row
+                .get::<Option<i64>, _>("show_previous_balance")
+                .map(|v| v != 0)
+                .unwrap_or(true),
         });
     }
 
@@ -117,6 +90,8 @@ pub async fn get_or_create_settings(
         disclaimer: None,
         copyright: None,
         bank_details: None,
+        show_signatures: true,
+        show_previous_balance: true,
     })
 }
 
@@ -153,6 +128,8 @@ pub async fn update_invoice_settings(
     disclaimer: String,
     copyright: String,
     bank_details: String,
+    show_signatures: Option<bool>,
+    show_previous_balance: Option<bool>,
 ) -> Result<InvoiceSettings, AppError> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
 
@@ -192,6 +169,9 @@ pub async fn update_invoice_settings(
         "#1d2b54".to_string()
     };
 
+    let show_sigs = show_signatures.unwrap_or(true);
+    let show_prev_bal = show_previous_balance.unwrap_or(true);
+
     // Upsert settings
     let id = uuid::Uuid::new_v4().to_string();
     sqlx::query(
@@ -200,8 +180,8 @@ pub async fn update_invoice_settings(
             (id, company_id, company_ntn, company_strn, company_cnic,
              invoice_prefix, default_due_days, invoice_footer, terms_conditions,
              invoice_design, design_accent_color, show_qr,
-             disclaimer, copyright, bank_details)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             disclaimer, copyright, bank_details, show_signatures, show_previous_balance)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(company_id) DO UPDATE SET
             company_ntn = excluded.company_ntn,
             company_strn = excluded.company_strn,
@@ -216,6 +196,8 @@ pub async fn update_invoice_settings(
             disclaimer = excluded.disclaimer,
             copyright = excluded.copyright,
             bank_details = excluded.bank_details,
+            show_signatures = excluded.show_signatures,
+            show_previous_balance = excluded.show_previous_balance,
             updated_at = CURRENT_TIMESTAMP
         "#,
     )
@@ -234,6 +216,8 @@ pub async fn update_invoice_settings(
     .bind(clean_optional(&disclaimer))
     .bind(clean_optional(&copyright))
     .bind(clean_optional(&bank_details))
+    .bind(if show_sigs { 1i64 } else { 0i64 })
+    .bind(if show_prev_bal { 1i64 } else { 0i64 })
     .execute(pool.inner())
     .await
     .map_err(|e| AppError::internal(format!("Database error: {e}")))?;

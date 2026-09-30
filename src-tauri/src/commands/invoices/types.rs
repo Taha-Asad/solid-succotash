@@ -115,6 +115,8 @@ pub struct InvoiceSettings {
     pub disclaimer: Option<String>,
     pub copyright: Option<String>,
     pub bank_details: Option<String>,
+    pub show_signatures: bool,
+    pub show_previous_balance: bool,
 }
 
 /// All data required to render an invoice to any output format.

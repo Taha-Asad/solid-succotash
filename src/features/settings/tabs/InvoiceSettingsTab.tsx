@@ -102,10 +102,6 @@ export function InvoiceSettingsTab() {
   const [success, setSuccess] = useState<string | null>(null);
   const [company, setCompany] = useState<PublicCompany | null>(null);
 
-  // Toggles for visual elements
-  const [showPreviousBalance, setShowPreviousBalance] = useState(true);
-  const [showSignatures, setShowSignatures] = useState(true);
-
   // Legacy Excel template state
   const [templateAnalysis, setTemplateAnalysis] =
     useState<ExcelTemplateAnalysis | null>(null);
@@ -127,6 +123,8 @@ export function InvoiceSettingsTab() {
       invoiceDesign: "wholesale_a4",
       designAccentColor: "#1d2b54",
       showQr: true,
+      showSignatures: true,
+      showPreviousBalance: true,
       disclaimer: "Goods once sold are not returnable.",
       copyright: "© 2026 Corbel ERP",
       bankDetails: "Meezan Bank · A/C: 0101-0102938471 · Title: Corbel Trading Co.",
@@ -150,6 +148,8 @@ export function InvoiceSettingsTab() {
           invoiceDesign: design,
           designAccentColor: s.designAccentColor || "#1d2b54",
           showQr: s.showQr ?? true,
+          showSignatures: s.showSignatures ?? true,
+          showPreviousBalance: s.showPreviousBalance ?? true,
           disclaimer: s.disclaimer ?? "",
           copyright: s.copyright ?? "",
           bankDetails: s.bankDetails ?? "",
@@ -235,8 +235,8 @@ export function InvoiceSettingsTab() {
     const printHtml = generateTestInvoiceHtml({
       company,
       values: form.values,
-      showPreviousBalance,
-      showSignatures,
+      showPreviousBalance: form.values.showPreviousBalance,
+      showSignatures: form.values.showSignatures,
     });
     printHtmlContent(printHtml);
   }
@@ -391,7 +391,16 @@ export function InvoiceSettingsTab() {
             </Text>
 
             <Stack gap={14}>
-              <Group justify="space-between">
+              <Group
+                justify="space-between"
+                style={{ cursor: "pointer", userSelect: "none" }}
+                onClick={() =>
+                  form.setFieldValue(
+                    "showPreviousBalance",
+                    !form.values.showPreviousBalance
+                  )
+                }
+              >
                 <div>
                   <Text size="sm" fw={600}>
                     Show Previous Ledger Balance
@@ -401,14 +410,25 @@ export function InvoiceSettingsTab() {
                   </Text>
                 </div>
                 <Switch
-                  checked={showPreviousBalance}
-                  onChange={(e) => setShowPreviousBalance(e.currentTarget.checked)}
+                  {...form.getInputProps("showPreviousBalance", {
+                    type: "checkbox",
+                  })}
+                  onClick={(e) => e.stopPropagation()}
                 />
               </Group>
 
               <Divider />
 
-              <Group justify="space-between">
+              <Group
+                justify="space-between"
+                style={{ cursor: "pointer", userSelect: "none" }}
+                onClick={() =>
+                  form.setFieldValue(
+                    "showSignatures",
+                    !form.values.showSignatures
+                  )
+                }
+              >
                 <div>
                   <Text size="sm" fw={600}>
                     Dual Signature Lines
@@ -418,14 +438,22 @@ export function InvoiceSettingsTab() {
                   </Text>
                 </div>
                 <Switch
-                  checked={showSignatures}
-                  onChange={(e) => setShowSignatures(e.currentTarget.checked)}
+                  {...form.getInputProps("showSignatures", {
+                    type: "checkbox",
+                  })}
+                  onClick={(e) => e.stopPropagation()}
                 />
               </Group>
 
               <Divider />
 
-              <Group justify="space-between">
+              <Group
+                justify="space-between"
+                style={{ cursor: "pointer", userSelect: "none" }}
+                onClick={() =>
+                  form.setFieldValue("showQr", !form.values.showQr)
+                }
+              >
                 <div>
                   <Text size="sm" fw={600}>
                     FBR Tax QR Verification Box
@@ -436,6 +464,7 @@ export function InvoiceSettingsTab() {
                 </div>
                 <Switch
                   {...form.getInputProps("showQr", { type: "checkbox" })}
+                  onClick={(e) => e.stopPropagation()}
                 />
               </Group>
 
@@ -639,8 +668,8 @@ export function InvoiceSettingsTab() {
               designAccentColor={form.values.designAccentColor}
               companyNtn={form.values.companyNtn}
               invoicePrefix={form.values.invoicePrefix}
-              showPreviousBalance={showPreviousBalance}
-              showSignatures={showSignatures}
+              showPreviousBalance={form.values.showPreviousBalance}
+              showSignatures={form.values.showSignatures}
               showQr={form.values.showQr}
               invoiceFooter={form.values.invoiceFooter}
               bankDetails={form.values.bankDetails}

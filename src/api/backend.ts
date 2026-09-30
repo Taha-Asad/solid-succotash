@@ -565,6 +565,8 @@ export function updateInvoiceSettings(input: {
   disclaimer: string;
   copyright: string;
   bankDetails: string;
+  showSignatures?: boolean;
+  showPreviousBalance?: boolean;
 }): Promise<InvoiceSettings> {
   return invoke<InvoiceSettings>("update_invoice_settings", input);
 }

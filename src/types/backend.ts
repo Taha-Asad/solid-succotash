@@ -503,6 +503,8 @@ export type InvoiceSettings = {
   disclaimer: string | null;
   copyright: string | null;
   bankDetails: string | null;
+  showSignatures?: boolean;
+  showPreviousBalance?: boolean;
 };
 
 // ==========================================

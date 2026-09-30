@@ -145,6 +145,11 @@ fn get_embedded_migrations() -> Vec<(i64, &'static str, &'static str)> {
             "019_fbr_integration",
             include_str!("../../migrations/sqlite/019_fbr_integration.sql"),
         ),
+        (
+            20,
+            "020_invoice_signatures_and_balance",
+            include_str!("../../migrations/sqlite/020_invoice_signatures_and_balance.sql"),
+        ),
     ]
 }
 
@@ -230,6 +235,7 @@ pub async fn run_sqlite_migrations(sqlite_url: &str) -> Result<(), Box<dyn std::
         ensure_company_modules_seeded(&pool).await?;
     } else {
         println!("Database schema is up to date (no pending migrations).");
+        ensure_invoice_design_columns(&pool).await?;
     }
 
     pool.close().await;
@@ -382,6 +388,18 @@ async fn ensure_invoice_design_columns(pool: &SqlitePool) -> Result<(), Box<dyn 
     if !columns.iter().any(|c| c == "bank_details") {
         println!("Adding company_invoice_settings.bank_details column (old database)");
         sqlx::raw_sql("ALTER TABLE company_invoice_settings ADD COLUMN bank_details TEXT")
+            .execute(pool)
+            .await?;
+    }
+    if !columns.iter().any(|c| c == "show_signatures") {
+        println!("Adding company_invoice_settings.show_signatures column");
+        sqlx::raw_sql("ALTER TABLE company_invoice_settings ADD COLUMN show_signatures INTEGER NOT NULL DEFAULT 1")
+            .execute(pool)
+            .await?;
+    }
+    if !columns.iter().any(|c| c == "show_previous_balance") {
+        println!("Adding company_invoice_settings.show_previous_balance column");
+        sqlx::raw_sql("ALTER TABLE company_invoice_settings ADD COLUMN show_previous_balance INTEGER NOT NULL DEFAULT 1")
             .execute(pool)
             .await?;
     }

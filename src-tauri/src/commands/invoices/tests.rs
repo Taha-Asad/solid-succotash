@@ -386,6 +386,8 @@ use uuid::Uuid;
                 disclaimer: None,
                 copyright: None,
                 bank_details: None,
+                show_signatures: true,
+                show_previous_balance: true,
             },
             logo_base64: None,
             company_tagline: None,
@@ -1279,6 +1281,8 @@ use uuid::Uuid;
             "disclaimer".to_string(),
             "copyright".to_string(),
             "bank".to_string(),
+            Some(false),
+            Some(false),
         )
         .await
         .expect("update");
@@ -1288,6 +1292,8 @@ use uuid::Uuid;
         assert_eq!(s.invoice_design, "modern");
         assert_eq!(s.design_accent_color, "#2563eb");
         assert!(s.show_qr);
+        assert!(!s.show_signatures);
+        assert!(!s.show_previous_balance);
 
         let s2 = update_invoice_settings(
             app.state(),
@@ -1305,11 +1311,15 @@ use uuid::Uuid;
             "".to_string(),
             "".to_string(),
             "".to_string(),
+            Some(true),
+            Some(true),
         )
         .await
         .expect("update again");
         assert_eq!(s2.invoice_prefix, "INV", "blank prefix falls back to INV");
         assert_eq!(s2.default_due_days, 30, "due days below 1 falls back to 30");
+        assert!(s2.show_signatures);
+        assert!(s2.show_previous_balance);
     }
 
     #[tokio::test]
@@ -1344,6 +1354,8 @@ use uuid::Uuid;
             "".to_string(),
             "".to_string(),
             "".to_string(),
+            Some(true),
+            Some(true),
         )
         .await
         .unwrap_err();
@@ -1623,6 +1635,8 @@ use uuid::Uuid;
             "disclaimer".to_string(),
             "copyright".to_string(),
             "bank".to_string(),
+            Some(true),
+            Some(true),
         )
         .await
         .expect("update settings");

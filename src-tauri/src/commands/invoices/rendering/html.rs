@@ -274,10 +274,15 @@ fn build_invoice_html(doc: &InvoiceDoc) -> String {
     vals.insert("amount_paid_display".to_string(), fmt_paisa(doc.invoice.amount_paid));
     vals.insert("balance_due_display".to_string(), fmt_paisa(doc.invoice.balance_due));
 
-    let signature_box_html = r#"<div class="signature-box">
+    let signature_box_html = if doc.settings.show_signatures {
+        r#"<div class="signature-box">
         <div class="signature-line">Customer Signature</div>
         <div class="signature-line">Authorized Signature</div>
-    </div>"#.to_string();
+    </div>"#
+            .to_string()
+    } else {
+        String::new()
+    };
     vals.insert("signature_box_html".to_string(), signature_box_html);
 
     let template = r#"<!DOCTYPE html>
