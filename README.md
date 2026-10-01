@@ -2,7 +2,7 @@
 
 A single-tenant desktop ERP & Point of Sale for modern wholesale, retail, and distribution businesses — built with **Tauri 2**, **React 19**, **Mantine 9**, and **TypeScript** on the frontend and **Rust (sqlx 0.9 + SQLite)** on the backend.
 
-This is a working **v1.1.0 desktop** application — shipping inventory, invoicing, POS hardware support (barcode scanning & thermal printing), FBR/PRAL digital invoicing, purchase orders, double-entry accounting ledger, user management, and a 6-target import wizard with background jobs, live progress, conflict strategies, and 24-hour rollback.
+This is a working **v1.3.0 desktop** application — shipping inventory, invoicing, POS hardware support (barcode scanning & thermal printing), FBR/PRAL digital invoicing, purchase orders, double-entry accounting ledger, user management, customer lifecycle management with walk-in Khata isolation, and a 6-target import wizard with background jobs, live progress, conflict strategies, and 24-hour rollback.
 
 ---
 
@@ -12,18 +12,18 @@ This is a working **v1.1.0 desktop** application — shipping inventory, invoici
 - **Authentication & roles** — bcrypt-hashed passwords, persistent login session, login rate limiting, roles: `owner` / `admin` / `employee` (DB-trigger enforced) plus **custom roles with a permission matrix**.
 - **Role-Aware Settings** — 3-tier settings divided into Personal Workspace (all users), Counter & POS Operations (Cashiers & Admins), and Business Governance & Compliance (Admins & Owners).
 - **Personalized Appearance** — Per-user accent colors and color schemes (`corbel_accent_${userId}`) decoupled from company invoice stationery branding.
-- **Module system** — 8 modules seeded per company (`inventory`, `invoices`, `purchase_orders`, `reports`, `ledger`, `users`, `settings`, `import`); owner toggles on/off in Settings → Modules; sidebar hides disabled modules.
+- **Module system** — 10 modules seeded per company (`inventory`, `invoices`, `purchase_orders`, `pos`, `fbr`, `reports`, `ledger`, `users`, `settings`, `import`); owner toggles on/off in Settings → Modules; sidebar hides disabled modules.
 - **Forced first-login password change** — all new users must change their temporary password on first login; dedicated change-password screen blocks navigation until completed.
-- **Dedicated Workflows** — Full-page customer registration, dedicated inline category and supplier managers replacing cramped popup modals.
-- **Inventory** — categories, suppliers, products (paisa-based prices, tax, stock, units), stock movements, expiry batch tracking, and company-specific custom fields (JSON-driven, schema never changes per company).
-- **Invoicing** — customers (with FBR fields: CNIC / NTN / STRN / buyer type), draft → finalize → paid lifecycle, transactional stock deduction on finalize, payments, invoice numbering/settings, and automatic posting to the accounting ledger.
-- **FBR/PRAL Digital Invoicing** — outbox-pattern submission queue, FBR API payload builder, sandbox/production endpoints, exponential backoff retry (0→2m→10m→30m→2h, dead letter after 5 attempts), IRN lifecycle, credit/debit notes referencing original IRN, FBR-compliant QR codes, dedicated settings tab with test connection and queue status.
+- **Dedicated Workflows & Customer Khata Isolation** — Full-page customer registration, dedicated inline category and supplier managers, and independent walk-in cash customer isolation preventing counter sales from polluting credit Khata accounts.
+- **Inventory & Field Parity** — categories, suppliers, products (barcode, description, tax eligibility, active toggle, paisa-based prices, units), stock movements, expiry batch tracking, and company-specific custom fields.
+- **Invoicing & Cashier Settlement** — customers (with FBR fields: CNIC / NTN / STRN / buyer type), draft → finalize → paid lifecycle, transactional stock deduction on finalize, double-click idempotency key protection, invoice numbering/settings, and automatic posting to the accounting ledger.
+- **FBR/PRAL Digital Invoicing & Tax Profile** — outbox-pattern submission queue, FBR API payload builder, sandbox/production endpoints, exponential backoff retry (0→2m→10m→30m→2h, dead letter after 5 attempts), IRN lifecycle, credit/debit notes referencing original IRN, FBR-compliant QR codes, dedicated company profile tax jurisdiction (PRA, SRB, KPRA, BRA, ICT), and real-time queue monitoring.
 - **Multi-currency** — invoices in 50+ supported currencies with live exchange rates (exchangerate-api.com), invoice-level foreign currency, FX gain/loss accounting in the ledger, and dynamic currency formatting across all pages.
 - **Invoice design system** — built-in designs (`wholesale_a4`, `thermal_80mm`, `thermal_58mm`, `compact_a5`), accent color, show/hide FBR QR block, footer fields (disclaimer / copyright / bank details), **user-uploaded `.xlsx` invoice template** with placeholder tokens, native **PDF export**, and **Excel invoice export**.
 - **Purchase orders** — create → submit → receive (stock-in + expiry batch creation) → record payments, atomic PO numbering.
 - **Accounting ledger** — seeded chart of accounts, double-entry journal posting (automatic from invoices/payments, plus manual entries), account statements, P&L.
 - **Import wizard** — analyze and import historical data from **CSV / Excel (XLS/XLSX) / DOCX / PDF / images (OCR)** for **Products / Customers / Suppliers / Opening Stock / Sales Invoices / Purchase Bills** with automatic column mapping, conflict strategies (skip / overwrite / suffix), per-row error reporting, background jobs with live progress, per-target reusable templates with auto-map, ERP adapters (QuickBooks / Odoo / ERPNext / Tally), and a **24-hour rollback** window.
-- **Search** — FTS5 full-text search across products, customers, and invoices.
+- **High-Integrity Search** — FTS5 full-text search with canonical triggers protecting against index corruption.
 - **Reports & export** — sales/stock/P&L/customer-ledger/product-movement reports with charts, CSV exports, and PDF report export.
 - **Compliance tooling** — audit logging (PECA 2016), failed-login tracking, ETO 5-year retention summary + owner-only archival.
 - **Observability & error handling** — unified `AppError` type (8 error codes: VALIDATION, NOT_FOUND, UNAUTHORIZED, FORBIDDEN, CONFLICT, RATE_LIMITED, DATABASE, INTERNAL) with structured message and details, serializes to JSON for Tauri IPC; `tracing` + `tracing-subscriber` with env-filter and JSON output; desktop SSE events (`fbr:queue:updated`, `import:progress`, `import:complete`, `notification:updated`); frontend `AppError` parsing with `isAppError()` type guard and user-friendly error messages per code.
@@ -62,7 +62,7 @@ npm run build
 # check the Rust backend
 cargo check --manifest-path src-tauri/Cargo.toml --all-targets
 
-# run the Rust test suite (499 integration tests)
+# run the Rust test suite (494 integration & unit tests)
 cargo test --manifest-path src-tauri/Cargo.toml --lib
 
 # production build (NSIS installer)
@@ -118,8 +118,8 @@ PROJECT_ANALYSIS.md       # gap analysis vs. the spec, status, roadmap
 
 See `PROJECT_ANALYSIS.md` for the full audit. Short version:
 
-- **Working:** auth + roles, company setup, inventory + expiry, invoicing (draft/finalize/payments), FBR/PRAL digital invoicing (outbox queue, IRN, credit/debit notes, FBR QR), multi-currency with live exchange rates and FX gain/loss, invoice design (PDF/Excel/QR/templates), purchase orders, accounting ledger, reports + CSV/PDF export, FTS5 search, notifications, retention archival, backup/restore, auto-update, 6-target import wizard with background jobs + live progress + conflict strategies + 24-hour rollback, dark mode, NSIS installer, unified error handling (AppError with 8 codes), tracing observability, desktop SSE events, frontend error parsing.
-- **Known gaps:** `notifications`/`retention`/`search`/`theme`/`fbr` lack automated tests; NSIS is the primary Windows installer target.
+- **Working:** auth + roles, company setup, inventory + expiry, invoicing (draft/finalize/payments), FBR/PRAL digital invoicing (outbox queue, IRN, credit/debit notes, FBR QR), multi-currency with live exchange rates and FX gain/loss, invoice design (PDF/Excel/QR/templates), purchase orders, accounting ledger, reports + CSV/PDF export, FTS5 search, notifications, retention archival, backup/restore, auto-update, 6-target import wizard with background jobs + live progress + conflict strategies + 24-hour rollback, dark mode, multi-platform installer packaging (NSIS Windows installer and AppImage/App targets), full automated test coverage across all modules (including notifications, retention, search, theme, and FBR digital invoicing), unified error handling (AppError with 8 codes), tracing observability, desktop SSE events, frontend error parsing.
 - **Not built (by design for the desktop phase):** the entire SaaS layer — PostgreSQL/multi-tenancy, super admin, packages/subscriptions, AI analytics.
 
 The database file lives in the user's data directory (`dirs::data_dir()/corbel-erp/corbel.db`).
+

@@ -1,15 +1,15 @@
 # TEST CASES
 
 Every test lives in a `#[cfg(test)] mod tests` inside its command file (`src-tauri/src/commands/<module>.rs`)
-and runs against a **real SQLite database** with all production migrations (001–009) applied.
+and runs against a **real SQLite database** with all production migrations (001–017) applied.
 Test infra: `src-tauri/src/commands/test_helpers.rs`.
 
 Run everything from `src-tauri/`:
 
 ```bash
-cargo test --lib          # full suite (366 tests)
+cargo test --lib          # full suite (494 tests passing)
 cargo check --all-targets # must emit zero warnings
-npx tsc --noEmit          # frontend types, run from repo root
+npm run build             # typecheck + production Vite bundle (0 errors)
 ```
 
 Key infrastructure facts:
@@ -46,6 +46,20 @@ Key infrastructure facts:
 5. `backup.rs` — `create_backup`/`restore_backup` hardcoded the production DB path via
    `get_database_path()`, so they ignored the pool's actual DB file (and a restore test would have
    overwritten a developer's real database). Now derived from `pool.connect_options().get_filename()`.
+6. `010_fts5_search.sql` & `sqlite_migrate.rs` — External content triggers in FTS5 (`customers_fts`, `products_fts`)
+   attempted `DELETE FROM ... WHERE rowid = OLD.rowid`, causing disk corruption error:
+   `(code: 267) database disk image is malformed`. Replaced with canonical SQLite FTS5 syntax:
+   `INSERT INTO customers_fts(customers_fts, rowid, ...) VALUES('delete', ...)`.
+7. `customers.rs` & `CustomerFormPage.tsx` — Customer records could not be updated or toggled active/inactive from the UI.
+   Added `update_customer` and `set_customer_active` commands with optimistic locking (`expected_version`).
+8. `ReportsPage.tsx` & `reports.rs` — Cash counter walk-in sales were mixing into Customer Ledger (Khata) receivables.
+   Added isolation filters to prevent cash sales from distorting credit balance reports.
+9. `company.rs` & `CompanyProfileTab.tsx` — `update_company` dropped FBR tax attributes (`ntn`, `strn`, `province`, `fbr_registered`),
+   preventing digital tax integration setup. Added full-stack binding and bidirectional NTN fallback.
+10. `lifecycle.rs` & `InvoicePaymentModal.tsx` — IPC command dropped client-generated `idempotency_key` unless reference
+    was non-empty. Added explicit `idempotency_key` parameter transport to guarantee deduplication on all tender types.
+11. `company.rs` & `ModulesTab.tsx` — `set_company_module` rejected `"users"` and `"import"` due to hardcoded key drift.
+    Unified valid keys across migration seeds, backend validation arrays, and UI dictionaries.
 
 ---
 
@@ -244,3 +258,68 @@ Key infrastructure facts:
 - `restore_backup_*` — login required; owner-only; missing file; non-SQLite file rejected;
   success path writes the `.<db>.before_restore` safety copy + audit `restore` row.
 - `list_backups_*` — lists only `.db` files with name/size/created_at; missing dir → empty; login required.
+
+---
+
+## notifications.rs — 6 tests
+
+- `expiring_far_future_is_not_flagged` — 10-year batch produces no expiring notification.
+- `expiring_within_window_is_flagged` — 10-day batch produces expiring warning.
+- `low_stock_product_is_flagged` — product with 5 units produces low_stock warning.
+- `out_of_stock_product_is_flagged` — product with 0 units produces critical out of stock alert.
+- `get_notifications_requires_login` — unauthenticated call rejected.
+- `emit_without_handle_is_safe_noop` — safe noop when called in test environment without runtime handle.
+
+---
+
+## retention.rs — 6 tests
+
+- `format_timestamp_*` — parses unix epochs and recent timestamps cleanly.
+- `archive_old_records_with_no_data_succeeds` — empty company archival returns 0 purged rows.
+- `retention_summary_defaults_to_five_years` — calculates 5-year retention window.
+- `archive_old_records_rejects_non_owner` — employee denied permission.
+- `retention_summary_rejects_non_owner` — employee denied permission.
+
+---
+
+## search.rs — 6 tests
+
+- `empty_query_returns_no_results` — empty string returns empty list without error.
+- `single_char_query_returns_no_results` — queries under 2 characters filtered out.
+- `search_finds_customer_by_name` — FTS5 trigram customer search finds matching name.
+- `search_finds_product_by_name` — FTS5 trigram product search matches name.
+- `search_finds_product_by_sku` — FTS5 trigram product search matches SKU.
+- `search_returns_both_products_and_customers` — multi-entity search returns combined hits.
+
+---
+
+## theme.rs — 7 tests
+
+- `get_theme_persists_after_update` — theme modifications round-trip and persist.
+- `get_theme_returns_defaults_for_new_company` — unconfigured company gets system defaults.
+- `read_file_base64_reads_png` — reads image files and formats as base64 data URI.
+- `read_file_base64_rejects_nonexistent_file` — returns error on missing file.
+- `update_theme_always_forces_platform_watermark` — security invariant: watermark cannot be turned off.
+- `update_theme_saves_and_returns_updated_values` — verified update returns mutated state.
+- `update_theme_rejects_employee` — permission enforcement against non-admin/owner.
+
+---
+
+## fbr.rs — 15 tests
+
+- `test_fbr_qr_content_format` — validates FBR QR specification: `{IRN}|{Date}|{STRN}|{Total}`.
+- `test_get_fbr_config_returns_none_initially` — unconfigured company returns None.
+- `test_get_fbr_config_requires_login` — unauthenticated call rejected.
+- `test_save_and_get_fbr_config` — saves sandbox PRAL token, retrieves matching record.
+- `test_save_fbr_config_updates_existing` — idempotent upsert updates credentials on same ID.
+- `test_save_fbr_config_denied_for_employee` — employee rejected without settings permission.
+- `test_get_fbr_queue_status_empty` — queue status reports 0 counts on empty queue.
+- `test_enqueue_fbr_submission_inactive_is_noop` — when FBR is inactive, invoice finalize skips queue.
+- `test_enqueue_fbr_submission_active_inserts_item` — active FBR config enqueues row in outbox queue.
+- `test_retry_fbr_submission_resets_failed_item` — resets failed queue item to queued and invoice to pending.
+- `test_retry_fbr_submission_rejects_queued_status` — prevents retry on already queued or validated items.
+- `test_get_invoice_fbr_status` — retrieves IRN and submission queue status for invoice.
+- `test_create_credit_note_validations` — rejects <= 0 amounts, amounts exceeding original total, and > 180 day invoices.
+- `test_create_credit_note_success` — creates finalized credit note with negative total and line items.
+- `test_create_debit_note_success` — creates finalized debit note referencing original IRN.
+

@@ -293,13 +293,28 @@ The v1.0.8 work shipped a comprehensive FBR/PRAL integration as a desktop adapta
 | roles           | 5     | custom role CRUD, permission updates, built-in role protection                         |
 | units           | **4** | unit CRUD, default-unit constraint, audit logging, deletion protection                 |
 | error           | **7** | AppError tagged enum serialization, error code mapping, From<String>, From<sqlx::Error>, JSON IPC output |
-| notifications   | 0     | **⚠️ no tests**                                                                        |
-| retention       | 0     | **⚠️ no tests**                                                                        |
-| search          | 0     | **⚠️ no tests**                                                                        |
-| theme           | 0     | **⚠️ no tests**                                                                        |
+| notifications   | **6** | low-stock and out-of-stock product alerts, 30-day expiry threshold filtering, handle emission safety, auth protection |
+| retention       | **6** | format_timestamp epoch/recent date parsing, 5-year retention window calculation, non-owner authorization checks, empty-data archival safety |
+| search          | **6** | FTS5 customer/product indexing, SKU matching, single-character threshold, multi-entity unified results, empty query handling |
+| theme           | **7** | company theme persistence, default theme generation, base64 logo reading, platform watermark enforcement, employee edit rejection |
+| fbr             | **15**| PRAL config CRUD & role permissions, FBR QR format ({IRN}|{Date}|{STRN}|{Total}), queue outbox enqueuing on invoice finalize, retry state machine (failed -> queued), status tracking, credit/debit note generation (180-day window, paisa totals, negative items), backoff failure handling |
 
-Production bugs surfaced and fixed by the suite: 3 SQL literal-misplacements in PO stock inserts, `next_po_number` race, `finalize_invoice` missing `balance_due`, import "Tax Rate"→`sell_price` mapping, backup hardcoding the production DB path, `detect_customer_field` mis-mapping `"Buyer Type"` → `customer_name`, and (v1.0.4) journal-posting and PO receive/payment regressions. See `TEST_CASES.md` header.
+Production bugs surfaced and fixed by the suite: 3 SQL literal-misplacements in PO stock inserts, `next_po_number` race, `finalize_invoice` missing `balance_due`, import "Tax Rate"→`sell_price` mapping, backup hardcoding the production DB path, `detect_customer_field` mis-mapping `"Buyer Type"` → `customer_name`, FTS5 external content deletion trigger syntax corruption, and (v1.0.4) journal-posting and PO receive/payment regressions. See `TEST_CASES.md` header.
+
 
 ---
 
-_Report refreshed 2026-08-20 against the live tree (v1.0.8 + FBR digital invoicing + multi-currency support + unified error schema + tracing observability + desktop SSE events). Verification: `cargo test --lib` (499 green, 200s), `tsc --noEmit` clean, `cargo check --all-targets` clean, direct inspection of all 19 migrations, 121 registered commands, multi-currency (currency_config/exchange_rates tables, FX gain/loss accounts, 5 currency commands), FBR integration (fbr_config + fbr_submission_queue tables, 9 FBR commands, outbox queue, exponential backoff, IRN lifecycle, credit/debit notes, FBR-compliant QR), unified AppError (8 error codes, 7 unit tests, all command files migrated), tracing + tracing-subscriber initialized, desktop SSE events (fbr:queue:updated, import:progress, import:complete, notification:updated), frontend AppError parsing (isAppError, getErrorMessage, TypeScript type), the six import targets + adapters + templates + quotas + jobs/rollback + push-progress events + bundled Tesseract pipeline, units CRUD/picker, and the invoice design/PDF/Excel/QR commands._
+## 11. Addendum: v1.3.0 Full-Stack Parity & Field Synchronization (2026-10-01)
+
+Following the initial v1.0.8 desktop stabilization and v1.2.0 invoice reversal overhaul, milestone v1.3.0 executed an end-to-end full-stack field audit across all database entities, IPC commands, and frontend forms:
+- **Company Profile FBR Synchronization**: Persisted `ntn`, `strn`, `province`, and `fbr_registered` through the `update_company` command and reactive Mantine forms.
+- **SQLite FTS5 External Content Triggers**: Corrected delete triggers to use canonical `INSERT INTO ... VALUES('delete', ...)` syntax, resolving malformed disk image panics (code 267).
+- **Payment Deduplication Key Transport**: Preserved client-generated `idempotency_key` nonces through the IPC parameter boundary into SQLite.
+- **Walk-in Khata Isolation**: Prevented cash walk-in sales (customer ID: 0) from inflating Accounts Receivable ledgers.
+- **Module Key Normalization**: Aligned module registration identifiers (`data_import`, `inventory`, `invoices`, etc.) across DB seeds, backend validation arrays, and UI navigation dictionaries.
+- **Verification Baseline**: 494/494 Rust tests green (`cargo test --lib`), clean TypeScript/Vite bundle, zero unhandled errors.
+
+---
+
+_Report refreshed 2026-10-01 against the live tree (v1.3.0 Full-Stack Entity & Query Parity)._
+

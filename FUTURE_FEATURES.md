@@ -37,57 +37,47 @@ models can produce trustworthy outputs.
 
 ---
 
-## 2. Multi-Currency Support
+## 2. Multi-Currency Support (Status: Shipped in v1.0.8)
 
-Current system operates in a single currency (PKR by default). Future phases
-will add:
-
-- Per-company base currency configuration.
-- Real-time exchange-rate feed integration.
+Landed in migration `018` and `src-tauri/src/commands/currency.rs`:
+- Per-company base currency configuration (50+ currencies seeded in `currency_config`).
+- Real-time exchange-rate feed integration via `exchangerate-api.com`.
 - Multi-currency invoices with automatic conversion for P&L reporting.
-- Currency-gain/loss journal entries.
+- Foreign exchange gain/loss journal entries (`7000`/`7100`) posted automatically.
 
 ---
 
-## 3. Tenant Sharding & Multi-Region
+## 3. Tenant Sharding & Multi-Region (Status: Deferred to Cloud SaaS)
 
-- Logical tenant sharding for SaaS deployment (separate database schemas per
-  tenant group).
+- Logical tenant sharding for SaaS deployment (separate database schemas per tenant group).
 - Multi-region failover with read replicas.
 - GDPR data-residency compliance (data stays in the tenant's region).
 
 ---
 
-## 4. ERP Migration Adapters
+## 4. ERP Migration Adapters (Status: Shipped in v1.0.8)
 
-Adapters to import data from other popular ERP systems:
-
-- QuickBooks Online / Desktop.
-- Odoo (CSV/XML export).
-- SAP Business One (B1IF or CSV).
-- Tally ERP 9 (XML).
-
-Each adapter implements a common `MigrationAdapter` trait with `discover`,
-`map`, and `import` phases.
+Landed in `src-tauri/src/commands/import_wizard.rs`:
+- Pre-built header vocabulary and field-mapping adapters for QuickBooks, Odoo, ERPNext, Tally, and Excel.
+- Auto-detect template mapping on file upload with rollback support.
 
 ---
 
-## 5. Plugin SDK
+## 5. Plugin SDK (Status: Post-v1.0 Roadmap)
 
 A plugin system allowing third-party extensions. See
 [PLUGIN_SDK_SPEC.md](PLUGIN_SDK_SPEC.md) for the full specification.
 
 ---
 
-## 6. Module Enablement via Feature Flags
+## 6. Module Enablement via Feature Flags (Status: Shipped in v1.0.8 / v1.3.0)
 
-The schema already supports per-company module and feature flags
-(SAAS_SPECIFICATION.md §4). Future work:
-
-- Self-serve module toggle in company admin dashboard.
-- Usage-based pricing tiers tied to active module count.
-- Module dependency resolution (e.g., `reports` requires `invoices`).
+Landed in migration `019`, `company.rs`, and UI Settings:
+- 8 seeded modules (`inventory`, `invoices`, `purchase_orders`, `reports`, `ledger`, `users`, `settings`, `data_import`).
+- Owner toggle via Settings → Modules and sidebar dynamic filtering.
+- Full parity across migration seed, Rust command validation, and frontend module dictionaries.
 
 ---
 
-*Last updated: 2026-08-18*
+*Last updated: 2026-10-01 (v1.3.0 Parity Refresh)*
+

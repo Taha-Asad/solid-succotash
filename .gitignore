@@ -27,3 +27,10 @@ dist-ssr
 scripts/.cache/
 src-tauri/bin/tesseract/*
 !src-tauri/bin/tesseract/.gitkeep
+
+# SQLite database and backup files
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
+

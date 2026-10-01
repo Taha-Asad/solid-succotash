@@ -198,7 +198,7 @@ fn province_code(province: &str) -> Option<String> {
 
 /// Build the FBR JSON payload for an invoice (spec section 17.3).
 async fn build_fbr_payload(
-    pool: &SqlitePool,
+    conn: &mut sqlx::SqliteConnection,
     company_id: &str,
     invoice_id: &str,
     invoice_type: &str,
@@ -208,7 +208,7 @@ async fn build_fbr_payload(
             "SELECT ntn, strn, province, name FROM companies WHERE id = ?",
         )
         .bind(company_id)
-        .fetch_optional(pool)
+        .fetch_optional(&mut *conn)
         .await
         .map_err(|e| AppError::internal(format!("Company lookup error: {e}")))?
         .ok_or("Company not found")?;
@@ -222,7 +222,7 @@ async fn build_fbr_payload(
         "SELECT company_ntn, company_strn FROM company_invoice_settings WHERE company_id = ?",
     )
     .bind(company_id)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *conn)
     .await
     .map_err(|e| AppError::internal(format!("Settings lookup error: {e}")))?
     .unwrap_or((None, None));
@@ -236,7 +236,7 @@ async fn build_fbr_payload(
     )
     .bind(invoice_id)
     .bind(company_id)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *conn)
     .await
     .map_err(|e| AppError::internal(format!("Invoice lookup error: {e}")))?
     .ok_or("Invoice not found")?;
@@ -246,7 +246,7 @@ async fn build_fbr_payload(
     )
     .bind(&invoice.2)
     .bind(company_id)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *conn)
     .await
     .map_err(|e| AppError::internal(format!("Customer lookup error: {e}")))?
     .ok_or("Customer not found")?;
@@ -256,9 +256,10 @@ async fn build_fbr_payload(
          FROM invoice_items WHERE invoice_id = ?",
     )
     .bind(invoice_id)
-    .fetch_all(pool)
+    .fetch_all(&mut *conn)
     .await
     .map_err(|e| AppError::internal(format!("Items lookup error: {e}")))?;
+
 
     let mut total_quantity: i64 = 0;
     let items: Vec<FbrInvoiceItem> = raw_items
@@ -1033,10 +1034,11 @@ pub async fn process_fbr_queue_now(
 /// Enqueue an invoice for FBR submission (outbox pattern).
 pub async fn enqueue_fbr_submission(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
-    pool: &SqlitePool,
+    _pool: &SqlitePool,
     company_id: &str,
     invoice_id: &str,
 ) -> Result<(), AppError> {
+
     let config: Option<bool> = sqlx::query_scalar(
         "SELECT is_active FROM fbr_config WHERE company_id = ?",
     )
@@ -1050,7 +1052,7 @@ pub async fn enqueue_fbr_submission(
         return Ok(());
     }
 
-    let payload = build_fbr_payload(pool, company_id, invoice_id, "SI").await?;
+    let payload = build_fbr_payload(&mut **tx, company_id, invoice_id, "SI").await?;
 
     let id = Uuid::new_v4().to_string();
     let now = chrono::Utc::now()
@@ -1161,7 +1163,7 @@ pub async fn create_credit_note(
         "INSERT INTO invoices (id, company_id, invoice_number, invoice_date, due_date, \
          customer_id, status, subtotal, tax_total, discount_total, \
          grand_total, amount_paid, balance_due, created_by, irn, fbr_status) \
-         VALUES (?, ?, ?, ?, ?, ?, 'finalized', ?, 0, 0, ?, 0, ?, ?, ?, 'pending')",
+         VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, 0, 0, ?, 0, ?, ?, ?, 'pending')",
     )
     .bind(&cn_id)
     .bind(company_id)
@@ -1169,6 +1171,7 @@ pub async fn create_credit_note(
     .bind(&today_str)
     .bind(&today_str)
     .bind(&customer_id)
+    .bind(-credit_amount)
     .bind(-credit_amount)
     .bind(-credit_amount)
     .bind(&current_user.id)
@@ -1208,6 +1211,13 @@ pub async fn create_credit_note(
             }
         }
     }
+
+    sqlx::query("UPDATE invoices SET status = 'finalized' WHERE id = ?")
+        .bind(&cn_id)
+        .execute(pool.inner())
+        .await
+        .map_err(|e| AppError::internal(format!("Database error: {e}")))?;
+
 
     log_audit(
         pool.inner(),
@@ -1303,7 +1313,7 @@ pub async fn create_debit_note(
         "INSERT INTO invoices (id, company_id, invoice_number, invoice_date, due_date, \
          customer_id, status, subtotal, tax_total, discount_total, \
          grand_total, amount_paid, balance_due, created_by, irn, fbr_status) \
-         VALUES (?, ?, ?, ?, ?, ?, 'finalized', ?, 0, 0, ?, 0, ?, ?, ?, 'pending')",
+         VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, 0, 0, ?, 0, ?, ?, ?, 'pending')",
     )
     .bind(&dn_id)
     .bind(company_id)
@@ -1311,6 +1321,7 @@ pub async fn create_debit_note(
     .bind(&today_str)
     .bind(&today_str)
     .bind(&customer_id)
+    .bind(debit_amount)
     .bind(debit_amount)
     .bind(debit_amount)
     .bind(&current_user.id)
@@ -1351,6 +1362,13 @@ pub async fn create_debit_note(
         }
     }
 
+    sqlx::query("UPDATE invoices SET status = 'finalized' WHERE id = ?")
+        .bind(&dn_id)
+        .execute(pool.inner())
+        .await
+        .map_err(|e| AppError::internal(format!("Database error: {e}")))?;
+
+
     log_audit(
         pool.inner(),
         company_id,
@@ -1372,3 +1390,8 @@ pub async fn create_debit_note(
         .await
         .map_err(|e| AppError::internal(format!("Database error: {e}")))
 }
+
+#[cfg(test)]
+#[path = "fbr_tests.rs"]
+mod tests;
+

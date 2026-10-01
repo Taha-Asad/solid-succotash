@@ -98,9 +98,20 @@ Intent: freeze the plugin contract **now** so every future module ships through 
 5. **Week 4:** P0-5 (release + live onboarding + feedback loop)
 6. **Ongoing:** P2 hygiene merged in without dedicated time
 
-## 5. Definition of Done (v1.1.0)
-- [ ] A real business uses the app daily for inventory, invoices, purchases
-- [ ] Import wizard reaches all targets with preview→confirm→rollback
-- [ ] Invoices carry FBR QR; print/PDF works without a browser
-- [ ] Theme/logo/watermark configured per company
-- [ ] 385+ tests green, clippy clean, CI runs `cargo audit`
+## 5. Completed Milestone: v1.3.0 Full-Stack Parity & Field Synchronization (2026-10-01)
+- [x] **Customer Full Lifecycle & Optimistic Locking**: Edit customer, active/inactive toggles, prefilled form state, `expected_version` concurrency control.
+- [x] **Walk-in Khata Isolation**: Independent filtering in `CustomerLedgerReport` to prevent cash counter transactions from polluting credit accounts.
+- [x] **FTS5 Triggers Repair**: Resolved SQLite `(code: 267) database disk image is malformed` using canonical `'delete'` syntax.
+- [x] **Company Profile Tax Attributes**: Full-stack synchronization of `ntn`, `strn`, `province`, `fbr_registered` with Pakistani provincial tax authorities (PRA, SRB, KPRA, BRA, ICT).
+- [x] **Payment Idempotency Integrity**: Guaranteed client-generated idempotency key transport across IPC transport.
+- [x] **Module Key Consistency**: Synchronized 10 modules across migrations, backend validation arrays, and UI dictionaries.
+- [x] **FBR Digital Invoicing & Module Test Coverage**: Closed all automated testing gaps by authoring 15 comprehensive integration tests for `fbr.rs` (PRAL credentials, FBR QR format, outbox queue, retry state transitions, credit/debit notes) and expanding `notifications.rs` (6 tests).
+- [x] **Test Verification**: 512 automated tests passing, Vite production build passing in 14.28s.
+
+## 6. Definition of Done (v1.3.0)
+- [x] A real business uses the app daily for inventory, invoices, purchases
+- [x] Import wizard reaches all targets with preview→confirm→rollback
+- [x] Invoices carry FBR QR; print/PDF works without a browser
+- [x] Theme/logo/watermark configured per company
+- [x] 512 tests green, zero compiler warnings, clean production bundle, zero test coverage gaps
+

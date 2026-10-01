@@ -358,9 +358,72 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn low_stock_product_is_flagged() {
+        let app = setup_app().await;
+        let owner = register_owner_full(&app, "owner@test.com").await;
+        let _product_id = insert_product(&app, &owner.company.id).await;
+
+        let result = get_notifications(
+            state_of::<SqlitePool>(&app),
+            state_of::<SessionState>(&app),
+        )
+        .await
+        .expect("get_notifications should succeed");
+
+        assert!(
+            result.iter().any(|n| n.notification_type == "low_stock" && n.severity == "warning"),
+            "a product with 5 in stock should produce a low_stock warning: {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn out_of_stock_product_is_flagged() {
+        let app = setup_app().await;
+        let owner = register_owner_full(&app, "owner@test.com").await;
+        let pool = state_of::<SqlitePool>(&app);
+        let id = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            r#"
+            INSERT INTO products (id, company_id, sku, name, cost_price, sell_price, quantity_in_stock)
+            VALUES (?, ?, 'OUT-1', 'Out of Stock Product', 100, 150, 0)
+            "#,
+        )
+        .bind(&id)
+        .bind(&owner.company.id)
+        .execute(pool.inner())
+        .await
+        .expect("insert out of stock product");
+
+        let result = get_notifications(
+            state_of::<SqlitePool>(&app),
+            state_of::<SessionState>(&app),
+        )
+        .await
+        .expect("get_notifications should succeed");
+
+        assert!(
+            result.iter().any(|n| n.notification_type == "low_stock" && n.severity == "critical" && n.title.contains("Out of stock")),
+            "a product with 0 in stock should produce a critical out of stock alert: {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn get_notifications_requires_login() {
+        let app = setup_app().await;
+        let result = get_notifications(
+            state_of::<SqlitePool>(&app),
+            state_of::<SessionState>(&app),
+        )
+        .await;
+
+        assert!(result.is_err(), "unauthenticated call should fail");
+    }
+
+    #[tokio::test]
     async fn emit_without_handle_is_safe_noop() {
         // Input: no handle ever registered (unit-test process).
         // Expected: no panic, no effect.
         emit_notifications_changed();
     }
 }
+
