@@ -478,6 +478,47 @@ pub async fn list_company_modules(
             .ok_or_else(|| AppError::internal("User has no associated company".to_string()))?,
     };
 
+    const ALL_MODULES: &[&str] = &[
+        "dashboard",
+        "inventory",
+        "invoices",
+        "customers",
+        "purchase_orders",
+        "pos",
+        "fbr",
+        "ledger",
+        "reports",
+        "settings",
+        "import",
+        "users",
+    ];
+
+    for m in ALL_MODULES {
+        let exists: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM company_modules WHERE company_id = ? AND module_key = ?",
+        )
+        .bind(&target)
+        .bind(m)
+        .fetch_one(pool.inner())
+        .await
+        .unwrap_or(0);
+
+        if exists == 0 {
+            let id = Uuid::new_v4().to_string();
+            let _ = sqlx::query(
+                r#"
+                INSERT INTO company_modules (id, company_id, module_key, is_enabled, settings)
+                VALUES (?, ?, ?, 1, '{}')
+                "#,
+            )
+            .bind(&id)
+            .bind(&target)
+            .bind(m)
+            .execute(pool.inner())
+            .await;
+        }
+    }
+
     let rows = sqlx::query_as::<_, CompanyModuleRow>(
         r#"
         SELECT id, company_id, module_key, is_enabled, settings, created_at, updated_at
@@ -509,27 +550,36 @@ pub async fn set_company_module(
     }
 
     let raw_key = module_key.trim().to_lowercase();
-    let module_key = if raw_key == "data_import" {
-        "import".to_string()
-    } else {
-        raw_key
+    let module_key = match raw_key.as_str() {
+        "app" => "dashboard".to_string(),
+        "data_import" => "import".to_string(),
+        _ => raw_key,
     };
 
     const VALID_MODULES: &[&str] = &[
+        "dashboard",
         "inventory",
+        "invoices",
+        "customers",
         "purchase_orders",
         "pos",
         "fbr",
         "ledger",
         "reports",
         "settings",
-        "invoices",
         "import",
         "users",
     ];
     if !VALID_MODULES.contains(&module_key.as_str()) {
         return Err(AppError::internal(format!("Unknown module: {module_key}")));
     }
+
+    if !is_enabled && matches!(module_key.as_str(), "inventory" | "invoices" | "settings") {
+        return Err(AppError::validation(
+            "Inventory, Invoices, and Settings are core modules and cannot be deactivated.",
+        ));
+    }
+
 
     let existing_id: Option<String> =
         sqlx::query_scalar("SELECT id FROM company_modules WHERE company_id = ? AND module_key = ?")

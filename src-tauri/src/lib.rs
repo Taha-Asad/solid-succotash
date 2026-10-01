@@ -310,6 +310,16 @@ pub async fn run() {
             commands::fbr::process_fbr_queue_now,
             commands::fbr::create_credit_note,
             commands::fbr::create_debit_note,
+            // ---- Super Admin ----
+            commands::super_admin::admin_get_system_analytics,
+            commands::super_admin::admin_list_companies,
+            commands::super_admin::admin_get_company_details,
+            commands::super_admin::admin_create_company,
+            commands::super_admin::admin_update_company_status,
+            commands::super_admin::admin_update_company_package,
+            commands::super_admin::admin_list_packages,
+            commands::super_admin::admin_toggle_feature_flag,
+            commands::super_admin::admin_bootstrap_super_admin,
         ])
         .run(tauri::generate_context!())
         .expect("Error while running Tauri application");

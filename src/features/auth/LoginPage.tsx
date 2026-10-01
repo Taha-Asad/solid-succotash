@@ -37,6 +37,7 @@ import { CorbelSquircle } from "../../components/CorbelLogo";
 
 interface LoginPageProps {
   onLogin: (user: PublicUser) => void;
+  onViewLanding?: () => void;
 }
 
 const FEATURES = [
@@ -57,7 +58,7 @@ const FEATURES = [
   },
 ];
 
-export default function LoginPage({ onLogin }: LoginPageProps) {
+export default function LoginPage({ onLogin, onViewLanding }: LoginPageProps) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -311,6 +312,18 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
                     {t("login.signIn")}
                   </Button>
                 </motion.div>
+
+                {onViewLanding && (
+                  <Button
+                    variant="subtle"
+                    color="yellow"
+                    size="xs"
+                    onClick={onViewLanding}
+                    style={{ color: "#E6C965" }}
+                  >
+                    Explore Product Showcase & Landing Page →
+                  </Button>
+                )}
               </Stack>
             </form>
           </Card>

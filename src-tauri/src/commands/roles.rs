@@ -435,26 +435,47 @@ pub async fn get_my_modules(
         .as_ref()
         .ok_or_else(|| AppError::forbidden("Super admins do not have a company"))?;
 
-    let modules: Vec<String> = if current_user.role == "owner" {
-        sqlx::query_scalar::<_, String>(
-            "SELECT module_key FROM company_modules WHERE company_id = ? AND is_enabled = 1",
-        )
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM company_modules WHERE company_id = ?")
         .bind(company_id)
-        .fetch_all(pool.inner())
+        .fetch_one(pool.inner())
         .await
-        .map_err(AppError::from)?
-    } else {
-        sqlx::query_scalar::<_, String>(
-            "SELECT module_key FROM company_modules WHERE company_id = ? AND is_enabled = 1",
-        )
-        .bind(company_id)
-        .fetch_all(pool.inner())
-        .await
-        .map_err(AppError::from)?
-    };
+        .unwrap_or(0);
+
+    if count == 0 {
+        return Ok(vec![
+            "dashboard".to_string(),
+            "inventory".to_string(),
+            "invoices".to_string(),
+            "customers".to_string(),
+            "purchase_orders".to_string(),
+            "pos".to_string(),
+            "fbr".to_string(),
+            "ledger".to_string(),
+            "reports".to_string(),
+            "settings".to_string(),
+            "import".to_string(),
+            "users".to_string(),
+        ]);
+    }
+
+    let mut modules: Vec<String> = sqlx::query_scalar::<_, String>(
+        "SELECT module_key FROM company_modules WHERE company_id = ? AND is_enabled = 1",
+    )
+    .bind(company_id)
+    .fetch_all(pool.inner())
+    .await
+    .map_err(AppError::from)?;
+
+    // Core un-deactivatable modules: inventory, invoices, settings
+    for core in ["inventory", "invoices", "settings"] {
+        if !modules.iter().any(|m| m == core) {
+            modules.push(core.to_string());
+        }
+    }
 
     Ok(modules)
 }
+
 
 /// Returns the current user's role + allowed permissions. Used by the
 /// frontend to filter navigation and disable actions.

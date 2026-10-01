@@ -112,6 +112,18 @@ const ROLE_INFO: Record<
       "Personal appearance & password management",
     ],
   },
+  super_admin: {
+    label: "Platform Super Administrator",
+    color: "grape",
+    description: "Multi-tenant SaaS root operator. Cross-tenant governance, provisioning, and platform telemetry.",
+    permissions: [
+      "Tenant provisioning, suspension & reactivation",
+      "SaaS plan & subscription tier governance",
+      "Feature flags & telemetry analytics",
+      "Cross-tenant database integrity oversight",
+      "Super administrator credential management",
+    ],
+  },
 };
 
 function getPasswordStrength(password: string): { score: number; color: string; label: string } {

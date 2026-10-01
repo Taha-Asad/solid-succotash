@@ -41,17 +41,30 @@ interface PermissionsContextValue {
   permissions: RolePermission[];
   /** Enabled module keys from company_modules table. */
   enabledModules: string[];
-  /** True if the given module key is enabled. Owner always returns true. */
+  /** True if the given module key is enabled. Core modules (inventory, invoices, settings) are always enabled. */
   isModuleEnabled: (moduleKey: string) => boolean;
+  /** Re-fetch enabled modules from the backend. */
+  refreshModules: () => Promise<void>;
 }
 
 const PermissionsCtx = createContext<PermissionsContextValue | null>(null);
+
+const CORE_UNINACTIVATABLE_MODULES = ["inventory", "invoices", "settings"];
 
 export function PermissionsProvider({ children }: { children: ReactNode }) {
   const [permissions, setPermissions] = useState<RolePermission[]>([]);
   const [role, setRole] = useState<string | null>(null);
   const [enabledModules, setEnabledModules] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
+
+  const fetchModules = useCallback(async () => {
+    try {
+      const modules = await getMyModules();
+      setEnabledModules(modules);
+    } catch {
+      // keep existing
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -91,10 +104,15 @@ export function PermissionsProvider({ children }: { children: ReactNode }) {
 
   const isModuleEnabled = useCallback(
     (moduleKey: string) => {
-      if (role === "owner") return true;
-      return enabledModules.includes(moduleKey);
+      const key = moduleKey === "app" ? "dashboard" : moduleKey;
+      // Inventory, Invoices, and Settings can NEVER be deactivated
+      if (CORE_UNINACTIVATABLE_MODULES.includes(key)) {
+        return true;
+      }
+      if (loading && enabledModules.length === 0) return true;
+      return enabledModules.includes(key);
     },
-    [role, enabledModules],
+    [enabledModules, loading],
   );
 
   const value = useMemo<PermissionsContextValue>(
@@ -107,8 +125,9 @@ export function PermissionsProvider({ children }: { children: ReactNode }) {
       permissions,
       enabledModules,
       isModuleEnabled,
+      refreshModules: fetchModules,
     }),
-    [loading, role, can, permissions, enabledModules, isModuleEnabled],
+    [loading, role, can, permissions, enabledModules, isModuleEnabled, fetchModules],
   );
 
   return (

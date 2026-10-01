@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   Alert,
+  Badge,
   Card,
   Group,
   Stack,
@@ -15,17 +16,22 @@ import {
   setCompanyModule,
 } from "../../../api/backend";
 import type { PublicCompanyModule } from "../../../types/backend";
+import { usePermissions } from "../../permissions/PermissionsProvider";
+
+const CORE_UNINACTIVATABLE_MODULES = ["inventory", "invoices", "settings"];
 
 const MODULE_DESCRIPTIONS: Record<string, { label: string; description: string }> = {
-  inventory: { label: "Inventory", description: "Products, stock management & suppliers" },
-  invoices: { label: "Invoices", description: "Create, finalize & manage customer invoices" },
-  purchase_orders: { label: "Purchasing", description: "Purchase orders from suppliers" },
+  dashboard: { label: "App Dashboard", description: "Home overview, sales analytics & performance metrics" },
+  inventory: { label: "Inventory", description: "Products, stock management & suppliers (Core)" },
+  invoices: { label: "Invoices", description: "Create, finalize & manage customer sales invoices (Core)" },
+  customers: { label: "Customers", description: "Customer directory, contact profiles & khata balance" },
+  purchase_orders: { label: "Purchasing", description: "Purchase orders & supplier receiving" },
   pos: { label: "Point of Sale", description: "Fast barcode cashier counter" },
   fbr: { label: "FBR Fiscal Invoicing", description: "Real-time FBR digital invoicing integration" },
   reports: { label: "Reports", description: "Sales, stock & profit analytics" },
-  ledger: { label: "Accounts", description: "Chart of accounts & journal entries" },
-  users: { label: "Team", description: "Manage company users & roles" },
-  settings: { label: "Settings", description: "Company profile, invoice design & backup" },
+  ledger: { label: "Accounts", description: "Chart of accounts & double-entry journal" },
+  users: { label: "Team", description: "Manage company users & permissions" },
+  settings: { label: "Settings", description: "Company profile, invoice design & backup (Core)" },
   import: { label: "Import", description: "Import products, customers & invoices from files" },
   data_import: { label: "Import", description: "Import products, customers & invoices from files" },
 };
@@ -40,6 +46,8 @@ export function ModulesTab({ companyId }: ModulesTabProps) {
   const [saving, setSaving] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+
+  const { refreshModules } = usePermissions();
 
   const loadModules = useCallback(async () => {
     try {
@@ -57,6 +65,9 @@ export function ModulesTab({ companyId }: ModulesTabProps) {
   }, [loadModules]);
 
   const handleToggle = async (moduleKey: string, currentValue: boolean) => {
+    if (CORE_UNINACTIVATABLE_MODULES.includes(moduleKey)) {
+      return;
+    }
     setSaving(moduleKey);
     setError(null);
     setSuccess(null);
@@ -67,6 +78,8 @@ export function ModulesTab({ companyId }: ModulesTabProps) {
           m.moduleKey === moduleKey ? { ...m, isEnabled: !currentValue } : m
         )
       );
+      // Immediately notify permissions system and sidebar
+      await refreshModules();
       setSuccess(
         `${MODULE_DESCRIPTIONS[moduleKey]?.label ?? moduleKey} ${!currentValue ? "enabled" : "disabled"}.`
       );
@@ -99,11 +112,11 @@ export function ModulesTab({ companyId }: ModulesTabProps) {
           >
             <Zap size={18} />
           </span>
-          <Title order={5}>Modules</Title>
+          <Title order={5}>Feature Modules</Title>
         </Group>
         <Text size="sm" c="dimmed" mb="lg">
-          Enable or disable modules for your company. Disabled modules are hidden
-          from the sidebar and their data is not accessible.
+          Configure active modules for your company. Disabled modules are immediately hidden
+          from the application sidebar. Inventory, Invoices, and Settings are essential core modules and remain active.
         </Text>
 
         {error && (
@@ -120,6 +133,7 @@ export function ModulesTab({ companyId }: ModulesTabProps) {
         <Stack gap="md">
           {modules.map((mod) => {
             const meta = MODULE_DESCRIPTIONS[mod.moduleKey];
+            const isCore = CORE_UNINACTIVATABLE_MODULES.includes(mod.moduleKey);
             return (
               <Group
                 key={mod.id}
@@ -127,33 +141,37 @@ export function ModulesTab({ companyId }: ModulesTabProps) {
                 p="md"
                 style={{
                   borderRadius: 8,
-                  border: "1px solid var(--app-border)",
-                  background: "var(--app-surface)",
+                  border: isCore ? "1px solid rgba(201, 149, 42, 0.3)" : "1px solid var(--app-border)",
+                  background: isCore ? "rgba(201, 149, 42, 0.03)" : "var(--app-surface)",
                 }}
               >
                 <Stack gap={2}>
-                  <Text fw={500} size="sm">
-                    {meta?.label ?? mod.moduleKey}
-                  </Text>
+                  <Group gap="xs">
+                    <Text fw={500} size="sm">
+                      {meta?.label ?? mod.moduleKey}
+                    </Text>
+                    {isCore && (
+                      <Badge size="xs" color="yellow" variant="light">
+                        Core (Mandatory)
+                      </Badge>
+                    )}
+                  </Group>
                   <Text size="xs" c="dimmed">
                     {meta?.description ?? mod.moduleKey}
                   </Text>
                 </Stack>
                 <Switch
-                  checked={mod.isEnabled}
+                  checked={isCore ? true : mod.isEnabled}
                   onChange={() => void handleToggle(mod.moduleKey, mod.isEnabled)}
-                  disabled={
-                    saving !== null ||
-                    mod.moduleKey === "settings" ||
-                    mod.moduleKey === "ledger"
-                  }
+                  disabled={saving !== null || isCore}
+                  color="teal"
                 />
               </Group>
             );
           })}
           {modules.length === 0 && (
             <Text c="dimmed" ta="center" py="md">
-              No modules found. Run a database migration to seed default modules.
+              No modules found.
             </Text>
           )}
         </Stack>
@@ -161,3 +179,4 @@ export function ModulesTab({ companyId }: ModulesTabProps) {
     </Stack>
   );
 }
+

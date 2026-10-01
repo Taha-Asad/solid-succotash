@@ -41,6 +41,8 @@ import LoginPage from "./features/auth/LoginPage";
 import SetupPage from "./features/auth/SetupPage";
 import ChangePasswordPage from "./features/auth/ChangePasswordPage";
 import AppShell from "./components/AppShell";
+import SuperAdminShell from "./features/super-admin/SuperAdminShell";
+import LandingPage from "./features/landing/LandingPage";
 import { CorbelSquircle } from "./components/CorbelLogo";
 
 import { OnboardingProvider } from "./onboarding/OnboardingProvider";
@@ -57,9 +59,11 @@ type AppScreen =
   | "loading" // checking database on startup
   | "setup" // no company yet → first-time setup form
   | "login" // company exists but nobody logged in
+  | "landing" // product showcase and marketing landing page
   | "change-password" // mustChangePassword = true → force password change
   | "dashboard" // logged in → main app
   | "fatal-error"; // something went very wrong
+
 
 // ==========================================
 // MAIN COMPONENT
@@ -203,10 +207,17 @@ function App() {
     );
   }
 
+  if (screen === "landing") {
+    return <LandingPage onEnterApp={() => setScreen("login")} />;
+  }
+
   if (screen === "login") {
     return (
       <OnboardingProvider screen={screen} user={null}>
-        <LoginPage onLogin={handleLogin} />
+        <LoginPage
+          onLogin={handleLogin}
+          onViewLanding={() => setScreen("landing")}
+        />
       </OnboardingProvider>
     );
   }
@@ -219,6 +230,9 @@ function App() {
 
   // screen === "dashboard"
   if (user) {
+    if (user.role === "super_admin" || user.isSuperAdmin) {
+      return <SuperAdminShell user={user} onLogout={handleLogout} />;
+    }
     return (
       <OnboardingProvider screen={screen} user={user}>
         <PermissionsProvider>

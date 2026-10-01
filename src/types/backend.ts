@@ -2,8 +2,8 @@
 // ROLE TYPES
 // ==========================================
 
-// Roles inside one company (single-tenant)
-export type UserRole = "owner" | "admin" | "employee";
+// Roles inside one company (single-tenant) or cross-tenant super_admin
+export type UserRole = "owner" | "admin" | "employee" | "super_admin";
 
 // ==========================================
 // CURRENCY TYPES (migration 018)
@@ -39,6 +39,7 @@ export type PublicUser = {
   companyId: string | null;
   isActive: boolean;
   createdAt: string;
+  isSuperAdmin?: boolean;
   mustChangePassword: boolean;
 };
 

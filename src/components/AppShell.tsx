@@ -117,6 +117,7 @@ const NAV_ITEMS: {
     description: "Overview & analytics",
     icon: <LayoutDashboard size={18} />,
     roles: ["owner", "admin", "employee"],
+    module: "dashboard",
   },
   {
     key: "inventory",
@@ -140,6 +141,7 @@ const NAV_ITEMS: {
     description: "Customer directory & accounts",
     icon: <ContactRound size={18} />,
     roles: ["owner", "admin", "employee"],
+    module: "customers",
   },
   {
     key: "purchasing",
@@ -155,6 +157,7 @@ const NAV_ITEMS: {
     description: "Import customers, products & more from Excel/CSV",
     icon: <FileSpreadsheet size={18} />,
     roles: ["owner", "admin"],
+    module: "import",
   },
   {
     key: "reports",
@@ -360,6 +363,27 @@ export default function AppShell({
       (!item.module || perms.can(item.module, "view")) &&
       (!item.module || perms.isModuleEnabled(item.module)),
   );
+
+  // Automatically fallback to core module "invoices" if the active view's module was disabled
+  useEffect(() => {
+    const viewToModule: Record<string, string> = {
+      home: "dashboard",
+      inventory: "inventory",
+      invoices: "invoices",
+      customers: "customers",
+      purchasing: "purchase_orders",
+      import: "import",
+      reports: "reports",
+      accounts: "ledger",
+      users: "users",
+      settings: "settings",
+    };
+    const mod = viewToModule[view];
+    if (mod && !perms.isModuleEnabled(mod)) {
+      setView("invoices");
+    }
+  }, [view, perms]);
+
 
   async function handleBackup() {
     setBacking(true);
