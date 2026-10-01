@@ -22,4 +22,4 @@ pub mod theme;
 pub mod updater;
 pub mod units;
 pub mod users;
-pub mod super_admin;
+pub mod saas;

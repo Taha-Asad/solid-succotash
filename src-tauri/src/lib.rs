@@ -310,16 +310,23 @@ pub async fn run() {
             commands::fbr::process_fbr_queue_now,
             commands::fbr::create_credit_note,
             commands::fbr::create_debit_note,
-            // ---- Super Admin ----
-            commands::super_admin::admin_get_system_analytics,
-            commands::super_admin::admin_list_companies,
-            commands::super_admin::admin_get_company_details,
-            commands::super_admin::admin_create_company,
-            commands::super_admin::admin_update_company_status,
-            commands::super_admin::admin_update_company_package,
-            commands::super_admin::admin_list_packages,
-            commands::super_admin::admin_toggle_feature_flag,
-            commands::super_admin::admin_bootstrap_super_admin,
+            // ---- SaaS Layer ----
+            commands::saas::list_packages,
+            commands::saas::create_package,
+            commands::saas::update_package,
+            commands::saas::delete_package,
+            commands::saas::get_current_subscription,
+            commands::saas::get_company_subscription,
+            commands::saas::assign_company_subscription,
+            commands::saas::list_feature_flags,
+            commands::saas::set_feature_flag,
+            commands::saas::list_tenant_companies,
+            commands::saas::get_tenant_company_detail,
+            commands::saas::get_platform_analytics,
+            commands::saas::register_tenant,
+            commands::saas::update_tenant_company,
+            commands::saas::archive_company,
+            commands::saas::activate_company,
         ])
         .run(tauri::generate_context!())
         .expect("Error while running Tauri application");
