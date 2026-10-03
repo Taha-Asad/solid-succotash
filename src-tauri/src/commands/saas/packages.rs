@@ -22,25 +22,42 @@ pub async fn list_packages(
 ) -> Result<Vec<PublicPackage>, AppError> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
 
-    let cloud_db = crate::db::neon::NeonCloudDb::global();
-    if cloud_db.is_connected() {
-        return cloud_db
-            .list_packages(include_inactive.unwrap_or(false) && current_user.is_super_admin)
-            .await;
-    }
-
     let sql = if include_inactive.unwrap_or(false) && current_user.is_super_admin {
         format!("{PACKAGE_SELECT} WHERE deleted_at IS NULL ORDER BY sort_order")
     } else {
         format!("{PACKAGE_SELECT} WHERE deleted_at IS NULL AND is_active = 1 ORDER BY sort_order")
     };
 
-    let rows = sqlx::query_as::<_, PackageRow>(sqlx::AssertSqlSafe(&*sql))
+    let local_rows = sqlx::query_as::<_, PackageRow>(sqlx::AssertSqlSafe(&*sql))
         .fetch_all(pool.inner())
         .await
         .map_err(|error| format!("Database error: {error}"))?;
 
-    Ok(rows.into_iter().map(|r| r.to_public()).collect())
+    let cloud_db = crate::db::neon::NeonCloudDb::global();
+    if cloud_db.is_connected() {
+        if let Ok(cloud_rows) = cloud_db
+            .list_packages(include_inactive.unwrap_or(false) && current_user.is_super_admin)
+            .await
+        {
+            use std::collections::HashSet;
+            let mut seen = HashSet::new();
+            let mut combined = Vec::new();
+            for p in cloud_rows {
+                seen.insert(p.id.clone());
+                combined.push(p);
+            }
+            for r in local_rows {
+                let p = r.to_public();
+                if !seen.contains(&p.id) {
+                    seen.insert(p.id.clone());
+                    combined.push(p);
+                }
+            }
+            return Ok(combined);
+        }
+    }
+
+    Ok(local_rows.into_iter().map(|r| r.to_public()).collect())
 }
 
 fn validate_json_arg(value: &str, field_name: &str) -> Result<serde_json::Value, AppError> {
@@ -120,6 +137,47 @@ pub async fn create_package(
         &format!("Created package {name}"),
     )
     .await;
+
+    let cloud_db = crate::db::neon::NeonCloudDb::global();
+    if cloud_db.is_connected() {
+        if let Some(pg_pool) = cloud_db.pool() {
+            let _ = sqlx::query(
+                r#"
+                INSERT INTO packages (
+                    id, name, description, price, billing_cycle, module_limits,
+                    max_users, max_branches, max_storage_mb, features, is_active, sort_order, updated_at
+                )
+                VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10::jsonb, TRUE, $11, NOW())
+                ON CONFLICT (id) DO UPDATE SET
+                    name = EXCLUDED.name,
+                    description = EXCLUDED.description,
+                    price = EXCLUDED.price,
+                    billing_cycle = EXCLUDED.billing_cycle,
+                    module_limits = EXCLUDED.module_limits,
+                    max_users = EXCLUDED.max_users,
+                    max_branches = EXCLUDED.max_branches,
+                    max_storage_mb = EXCLUDED.max_storage_mb,
+                    features = EXCLUDED.features,
+                    is_active = EXCLUDED.is_active,
+                    sort_order = EXCLUDED.sort_order,
+                    updated_at = NOW();
+                "#,
+            )
+            .bind(&package_id)
+            .bind(name)
+            .bind(&description)
+            .bind(price)
+            .bind(&billing_cycle)
+            .bind(&module_limits_json)
+            .bind(max_users)
+            .bind(max_branches)
+            .bind(max_storage_mb)
+            .bind(&features_json)
+            .bind(sort_order)
+            .execute(pg_pool)
+            .await;
+        }
+    }
 
     fetch_package(pool.inner(), &package_id).await.map(|r| r.to_public())
 }
@@ -221,6 +279,48 @@ pub async fn update_package(
     )
     .await;
 
+    let cloud_db = crate::db::neon::NeonCloudDb::global();
+    if cloud_db.is_connected() {
+        if let Some(pg_pool) = cloud_db.pool() {
+            let _ = sqlx::query(
+                r#"
+                INSERT INTO packages (
+                    id, name, description, price, billing_cycle, module_limits,
+                    max_users, max_branches, max_storage_mb, features, is_active, sort_order, updated_at
+                )
+                VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10::jsonb, $11, $12, NOW())
+                ON CONFLICT (id) DO UPDATE SET
+                    name = EXCLUDED.name,
+                    description = EXCLUDED.description,
+                    price = EXCLUDED.price,
+                    billing_cycle = EXCLUDED.billing_cycle,
+                    module_limits = EXCLUDED.module_limits,
+                    max_users = EXCLUDED.max_users,
+                    max_branches = EXCLUDED.max_branches,
+                    max_storage_mb = EXCLUDED.max_storage_mb,
+                    features = EXCLUDED.features,
+                    is_active = EXCLUDED.is_active,
+                    sort_order = EXCLUDED.sort_order,
+                    updated_at = NOW();
+                "#,
+            )
+            .bind(&package_id)
+            .bind(&current.name)
+            .bind(&current.description)
+            .bind(current.price)
+            .bind(&current.billing_cycle)
+            .bind(&current.module_limits)
+            .bind(current.max_users)
+            .bind(current.max_branches)
+            .bind(current.max_storage_mb)
+            .bind(&current.features)
+            .bind(current.is_active)
+            .bind(current.sort_order)
+            .execute(pg_pool)
+            .await;
+        }
+    }
+
     fetch_package(pool.inner(), &package_id).await.map(|r| r.to_public())
 }
 
@@ -246,6 +346,18 @@ pub async fn delete_package(
 
     if result.rows_affected() == 0 {
         return Err(AppError::internal("Package not found".to_string()));
+    }
+
+    let cloud_db = crate::db::neon::NeonCloudDb::global();
+    if cloud_db.is_connected() {
+        if let Some(pg_pool) = cloud_db.pool() {
+            let _ = sqlx::query(
+                "UPDATE packages SET deleted_at = NOW(), is_active = FALSE, updated_at = NOW() WHERE id = $1",
+            )
+            .bind(&package_id)
+            .execute(pg_pool)
+            .await;
+        }
     }
 
     audit_for(

@@ -1,11 +1,11 @@
 // ==========================================
-// RAINBOW GAUGE & STORAGE INSPECTOR
+// RAINBOW GAUGE & PLATFORM TELEMETRY INSPECTOR
 // ==========================================
-// Exact recreation of Aryo Pamungkas (SLAB Design Studio) Right Panel:
-// 1. Header: Notification bell + Hi, Adam (or user name) with avatar
-// 2. 4-Segment Semi-Circular Rainbow Arc Gauge: 42.4 GB of 50 GB capacity
-// 3. Breakdown rows: Videos (Red), Photos (Green), Documents (Yellow), Other Files (Blue)
-// 4. Promo Card: Upgrade to PRO with illustration and Upgrade Now button
+// Real ERP Platform Telemetry in Aryo Pamungkas (SLAB Design Studio) visual architecture:
+// 1. Header: Notification bell + Hi, User Profile
+// 2. 4-Segment Semi-Circular Rainbow Arc Gauge: Real Tenant Quota Capacity
+// 3. Breakdown rows: Active Tenants, Staff Accounts, Neon Cloud DB, Subscription Tiers
+// 4. Promo Card: Plan & Quota Management
 
 import {
   Avatar,
@@ -16,36 +16,49 @@ import {
 } from "@mantine/core";
 import {
   Bell,
+  Boxes,
+  Building2,
   Database,
-  FileText,
-  Image as ImageIcon,
-  ShieldCheck,
-  Video,
+  HardDrive,
+  Users,
 } from "lucide-react";
 
 import { useSaTheme } from "./saTheme";
-import type { PublicUser } from "../../types/backend";
+import type { PlatformAnalytics, PublicPackage, PublicUser, TenantCompanySummary } from "../../types/backend";
 
 interface RainbowGaugeProps {
   user?: PublicUser;
-  usedGb?: number;
-  totalGb?: number;
+  tenants?: TenantCompanySummary[];
+  packages?: PublicPackage[];
+  analytics?: PlatformAnalytics | null;
+  totalCapacity?: number;
   onRunDiagnostics?: () => void;
+  onNavigatePackages?: () => void;
 }
 
 export default function RainbowGauge({
   user,
-  usedGb = 42.4,
-  totalGb = 50,
+  tenants = [],
+  packages = [],
+  analytics,
+  totalCapacity = 50,
   onRunDiagnostics,
+  onNavigatePackages,
 }: RainbowGaugeProps) {
   const SA = useSaTheme();
+
+  const activeTenants = analytics?.activeTenants ?? tenants.filter((t) => t.isActive).length;
+  const totalTenants = analytics?.totalTenants ?? tenants.length;
+  const totalUsers =
+    analytics?.totalUsers ??
+    tenants.reduce((sum, t) => sum + (t.userCount || 1), 0);
+  const mrr = analytics?.mrr ?? 0;
 
   return (
     <Stack
       gap="lg"
       style={{
-        width: 290,
+        width: 295,
         flexShrink: 0,
         background: SA.bgSidebar,
         borderInlineStart: `1px solid ${SA.border}`,
@@ -111,7 +124,7 @@ export default function RainbowGauge({
               fill="none"
               xmlns="http://www.w3.org/2000/svg"
             >
-              {/* Segment 1: Red */}
+              {/* Segment 1: Red (Archived / Inactive) */}
               <path
                 d="M 35 115 A 85 85 0 0 1 60 55"
                 stroke="#EF4444"
@@ -120,7 +133,7 @@ export default function RainbowGauge({
                 fill="none"
               />
 
-              {/* Segment 2: Orange */}
+              {/* Segment 2: Orange (Trial / Pending) */}
               <path
                 d="M 60 55 A 85 85 0 0 1 120 30"
                 stroke="#F59E0B"
@@ -128,7 +141,7 @@ export default function RainbowGauge({
                 fill="none"
               />
 
-              {/* Segment 3: Green */}
+              {/* Segment 3: Green (Active Licensed Tenants) */}
               <path
                 d="M 120 30 A 85 85 0 0 1 189 66"
                 stroke="#10B981"
@@ -136,7 +149,7 @@ export default function RainbowGauge({
                 fill="none"
               />
 
-              {/* Segment 4: Blue */}
+              {/* Segment 4: Blue (Cloud Available Quota) */}
               <path
                 d="M 189 66 A 85 85 0 0 1 205 115"
                 stroke="#3B82F6"
@@ -168,49 +181,18 @@ export default function RainbowGauge({
                   lineHeight: 1.1,
                 }}
               >
-                {usedGb} GB
+                {activeTenants} / {totalCapacity}
               </Text>
               <Text size="11px" fw={500} style={{ color: SA.muted, marginTop: 2 }}>
-                of {totalGb} GB capacity
+                Active Tenants (Quota: {totalCapacity})
               </Text>
             </div>
           </div>
         </div>
 
-        {/* Resource Breakdown List (SLAB Design) */}
+        {/* Real Resource Breakdown List (SLAB Design) */}
         <Stack gap={10} mt="lg">
-          {/* Videos (Red) */}
-          <Group justify="space-between" align="center" wrap="nowrap">
-            <Group gap="sm" wrap="nowrap">
-              <div
-                style={{
-                  width: 32,
-                  height: 32,
-                  borderRadius: 8,
-                  background: "rgba(239, 68, 68, 0.12)",
-                  color: "#EF4444",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-              >
-                <Video size={16} />
-              </div>
-              <Stack gap={0}>
-                <Text fw={700} size="xs" style={{ color: SA.text, fontSize: 13 }}>
-                  Videos
-                </Text>
-                <Text size="11px" style={{ color: SA.muted }}>
-                  302 files
-                </Text>
-              </Stack>
-            </Group>
-            <Text fw={700} size="xs" style={{ color: SA.text, fontSize: 12 }}>
-              16.2 GB
-            </Text>
-          </Group>
-
-          {/* Photos (Green) */}
+          {/* Active Tenants (Green) */}
           <Group justify="space-between" align="center" wrap="nowrap">
             <Group gap="sm" wrap="nowrap">
               <div
@@ -225,54 +207,23 @@ export default function RainbowGauge({
                   justifyContent: "center",
                 }}
               >
-                <ImageIcon size={16} />
+                <Building2 size={16} />
               </div>
               <Stack gap={0}>
                 <Text fw={700} size="xs" style={{ color: SA.text, fontSize: 13 }}>
-                  Photos
+                  Active Tenants
                 </Text>
                 <Text size="11px" style={{ color: SA.muted }}>
-                  1872 files
+                  {totalTenants} registered organizations
                 </Text>
               </Stack>
             </Group>
             <Text fw={700} size="xs" style={{ color: SA.text, fontSize: 12 }}>
-              12.1 GB
+              PKR {mrr.toLocaleString()}
             </Text>
           </Group>
 
-          {/* Documents (Yellow) */}
-          <Group justify="space-between" align="center" wrap="nowrap">
-            <Group gap="sm" wrap="nowrap">
-              <div
-                style={{
-                  width: 32,
-                  height: 32,
-                  borderRadius: 8,
-                  background: "rgba(245, 158, 11, 0.12)",
-                  color: "#F59E0B",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-              >
-                <FileText size={16} />
-              </div>
-              <Stack gap={0}>
-                <Text fw={700} size="xs" style={{ color: SA.text, fontSize: 13 }}>
-                  Documents
-                </Text>
-                <Text size="11px" style={{ color: SA.muted }}>
-                  576 files
-                </Text>
-              </Stack>
-            </Group>
-            <Text fw={700} size="xs" style={{ color: SA.text, fontSize: 12 }}>
-              9 GB
-            </Text>
-          </Group>
-
-          {/* Other Files (Blue) */}
+          {/* Total Staff Users (Blue) */}
           <Group justify="space-between" align="center" wrap="nowrap">
             <Group gap="sm" wrap="nowrap">
               <div
@@ -287,25 +238,87 @@ export default function RainbowGauge({
                   justifyContent: "center",
                 }}
               >
-                <Database size={16} />
+                <Users size={16} />
               </div>
               <Stack gap={0}>
                 <Text fw={700} size="xs" style={{ color: SA.text, fontSize: 13 }}>
-                  Other Files
+                  ERP Personnel
                 </Text>
                 <Text size="11px" style={{ color: SA.muted }}>
-                  249 files
+                  {totalUsers} active staff accounts
                 </Text>
               </Stack>
             </Group>
             <Text fw={700} size="xs" style={{ color: SA.text, fontSize: 12 }}>
-              5.1 GB
+              Multi-Store
+            </Text>
+          </Group>
+
+          {/* Database Cluster (Amber) */}
+          <Group justify="space-between" align="center" wrap="nowrap">
+            <Group gap="sm" wrap="nowrap">
+              <div
+                style={{
+                  width: 32,
+                  height: 32,
+                  borderRadius: 8,
+                  background: "rgba(245, 158, 11, 0.12)",
+                  color: "#F59E0B",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                <Database size={16} />
+              </div>
+              <Stack gap={0}>
+                <Text fw={700} size="xs" style={{ color: SA.text, fontSize: 13 }}>
+                  Neon Cloud DB
+                </Text>
+                <Text size="11px" style={{ color: SA.muted }}>
+                  Postgres 16 AWS US-East-2
+                </Text>
+              </Stack>
+            </Group>
+            <Text fw={700} size="xs" style={{ color: "#10B981", fontSize: 12 }}>
+              Online
+            </Text>
+          </Group>
+
+          {/* Subscription Packages (Red / Violet) */}
+          <Group justify="space-between" align="center" wrap="nowrap">
+            <Group gap="sm" wrap="nowrap">
+              <div
+                style={{
+                  width: 32,
+                  height: 32,
+                  borderRadius: 8,
+                  background: "rgba(239, 68, 68, 0.12)",
+                  color: "#EF4444",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                <Boxes size={16} />
+              </div>
+              <Stack gap={0}>
+                <Text fw={700} size="xs" style={{ color: SA.text, fontSize: 13 }}>
+                  SaaS Packages
+                </Text>
+                <Text size="11px" style={{ color: SA.muted }}>
+                  {packages.length || 4} subscription tiers
+                </Text>
+              </Stack>
+            </Group>
+            <Text fw={700} size="xs" style={{ color: SA.text, fontSize: 12 }}>
+              {packages.length || 4} Plans
             </Text>
           </Group>
         </Stack>
       </div>
 
-      {/* Upgrade to PRO Card (SLAB Design) */}
+      {/* Plan & Quota Management Card (SLAB Design) */}
       <div
         style={{
           borderRadius: 18,
@@ -332,14 +345,14 @@ export default function RainbowGauge({
             marginBottom: 10,
           }}
         >
-          <ShieldCheck size={24} />
+          <HardDrive size={24} />
         </div>
 
         <Text fw={800} size="xs" style={{ color: SA.text, fontSize: 14 }}>
-          Upgrade to PRO
+          Corbel Sovereign Cloud
         </Text>
         <Text size="11px" style={{ color: SA.muted, marginTop: 4, lineHeight: 1.4 }}>
-          Get more space for your storage and access to all features
+          Multi-Tenant Neon PostgreSQL synchronization and plan quotas active
         </Text>
 
         <Button
@@ -347,7 +360,10 @@ export default function RainbowGauge({
           size="xs"
           radius="xl"
           mt="sm"
-          onClick={onRunDiagnostics}
+          onClick={() => {
+            if (onNavigatePackages) onNavigatePackages();
+            else if (onRunDiagnostics) onRunDiagnostics();
+          }}
           styles={{
             root: {
               background: SA.gradient,
@@ -360,7 +376,7 @@ export default function RainbowGauge({
             },
           }}
         >
-          Upgrade Now
+          Manage Subscription Plans
         </Button>
       </div>
     </Stack>

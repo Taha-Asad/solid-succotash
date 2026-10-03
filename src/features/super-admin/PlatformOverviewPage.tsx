@@ -1,12 +1,12 @@
 // ==========================================
 // PLATFORM OVERVIEW — Super Admin Dashboard
 // ==========================================
-// Exact recreation of Aryo Pamungkas (SLAB Design Studio) File Manager:
-// - Centered floating pill search input
-// - Quick Access cards with avatar stacks
-// - 4 Folders with green outline icons
-// - Recent Files / Tenants table with highlighted soft-mint row
-// - Right Inspector with 4-segment rainbow arc gauge & Upgrade to PRO card
+// Real ERP Platform Data in Aryo Pamungkas (SLAB Design Studio) visual architecture:
+// - Centered floating pill search input (filters real tenant workspaces)
+// - Quick Access cards with real flagship and cloud cluster telemetry
+// - Real Platform Domains (Tenants, Packages, Staff, Neon Cloud Hub)
+// - Tenant Workspaces Table with highlighted soft-mint row
+// - Right Telemetry Inspector with real tenant quota gauge
 
 import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
@@ -26,8 +26,17 @@ import {
   Search,
 } from "lucide-react";
 
-import { listTenantCompanies } from "../../api/backend";
-import type { PublicUser, TenantCompanySummary } from "../../types/backend";
+import {
+  getPlatformAnalytics,
+  listPackages,
+  listTenantCompanies,
+} from "../../api/backend";
+import type {
+  PlatformAnalytics,
+  PublicPackage,
+  PublicUser,
+  TenantCompanySummary,
+} from "../../types/backend";
 import { useSaTheme } from "./saTheme";
 import type { SaView } from "./SuperAdminShell";
 import RainbowGauge from "./RainbowGauge";
@@ -44,17 +53,22 @@ export default function PlatformOverviewPage({
 }) {
   const SA = useSaTheme();
   const [tenants, setTenants] = useState<TenantCompanySummary[]>([]);
+  const [packages, setPackages] = useState<PublicPackage[]>([]);
+  const [analytics, setAnalytics] = useState<PlatformAnalytics | null>(null);
   const [search, setSearch] = useState("");
 
   useEffect(() => {
     let cancelled = false;
-    listTenantCompanies()
-      .then((rows) => {
-        if (!cancelled) {
-          setTenants(rows);
-        }
-      })
-      .catch(() => {});
+    Promise.allSettled([
+      listTenantCompanies(),
+      listPackages(),
+      getPlatformAnalytics(),
+    ]).then(([tRes, pRes, aRes]) => {
+      if (cancelled) return;
+      if (tRes.status === "fulfilled") setTenants(tRes.value);
+      if (pRes.status === "fulfilled") setPackages(pRes.value);
+      if (aRes.status === "fulfilled") setAnalytics(aRes.value);
+    });
     return () => {
       cancelled = true;
     };
@@ -71,13 +85,12 @@ export default function PlatformOverviewPage({
     );
   }, [tenants, search]);
 
-  // File-type badges identical to Aryo Pamungkas SLAB design
+  // Modern plan badge palettes
   const badgeStyles = [
-    { bg: "#3B82F6", color: "#FFFFFF", label: "MP4" },
-    { bg: "#F59E0B", color: "#FFFFFF", label: "ZIP" },
-    { bg: "#EF4444", color: "#FFFFFF", label: "PDF" },
-    { bg: "#EF4444", color: "#FFFFFF", label: "PDF" },
-    { bg: "#10B981", color: "#FFFFFF", label: "DOC" },
+    { bg: "rgba(43, 182, 115, 0.15)", color: "#15803D" },
+    { bg: "rgba(59, 130, 246, 0.15)", color: "#2563EB" },
+    { bg: "rgba(245, 158, 11, 0.15)", color: "#D97706" },
+    { bg: "rgba(139, 92, 246, 0.15)", color: "#7C3AED" },
   ];
 
   return (
@@ -104,7 +117,7 @@ export default function PlatformOverviewPage({
         {/* Floating Pill Search Bar (SLAB Design: Search your file .....) */}
         <div style={{ padding: "20px 28px 12px", flexShrink: 0 }}>
           <TextInput
-            placeholder="Search your file ....."
+            placeholder="Search tenant workspaces, packages, or emails ....."
             size="md"
             radius="xl"
             value={search}
@@ -148,14 +161,19 @@ export default function PlatformOverviewPage({
         {/* Scrollable Center Workspace */}
         <ScrollArea flex={1}>
           <Stack gap="xl" p="28px" pt="10px">
-            {/* Quick Access & Folders */}
+            {/* Real Quick Access & Real Platform Domains */}
             <OverviewQuickAccess
               tenants={tenants}
+              packages={packages}
+              analytics={analytics}
               onOpenTenant={onOpenTenant}
               onNavigateTenants={() => onNavigate("tenants")}
+              onNavigatePackages={() => onNavigate("packages")}
+              onNavigateAnalytics={() => onNavigate("analytics")}
+              onNavigateSettings={() => onNavigate("settings")}
             />
 
-            {/* Recent Files Table Section (SLAB Design) */}
+            {/* Tenant Workspaces Table Section (SLAB Design with Real Tenants) */}
             <div style={{ marginTop: 2 }}>
               <Group justify="space-between" align="center" mb="sm">
                 <Text
@@ -167,7 +185,7 @@ export default function PlatformOverviewPage({
                     letterSpacing: -0.2,
                   }}
                 >
-                  Recent Files
+                  Active Tenant Workspaces
                 </Text>
                 <ActionIcon
                   variant="subtle"
@@ -193,7 +211,7 @@ export default function PlatformOverviewPage({
                 <div
                   style={{
                     display: "grid",
-                    gridTemplateColumns: "3fr 2fr 1.6fr 40px",
+                    gridTemplateColumns: "3.2fr 2fr 1.6fr 40px",
                     gap: 12,
                     padding: "13px 20px",
                     borderBottom: `1px solid ${SA.border}`,
@@ -202,9 +220,9 @@ export default function PlatformOverviewPage({
                     fontWeight: 600,
                   }}
                 >
-                  <div>Name</div>
-                  <div>Last modified</div>
-                  <div>Member</div>
+                  <div>Tenant Organization</div>
+                  <div>Registered Date</div>
+                  <div>Licensed Seats</div>
                   <div style={{ textAlign: "right" }}>•</div>
                 </div>
 
@@ -213,7 +231,7 @@ export default function PlatformOverviewPage({
                   <Stack align="center" gap={6} p="xl">
                     <Building2 size={32} style={{ color: SA.muted, opacity: 0.5 }} />
                     <Text size="xs" style={{ color: SA.muted }}>
-                      No files or tenants found
+                      No tenant workspaces found matching search
                     </Text>
                   </Stack>
                 ) : (
@@ -226,11 +244,17 @@ export default function PlatformOverviewPage({
                       return (
                         <motion.div
                           key={tenant.id}
-                          whileHover={{ background: isHighlighted ? (SA.panelMint === "#E8F8F0" ? "#E0F5EB" : "#134B3D") : SA.panelHover }}
+                          whileHover={{
+                            background: isHighlighted
+                              ? SA.panelMint === "#E8F8F0"
+                                ? "#E0F5EB"
+                                : "#134B3D"
+                              : SA.panelHover,
+                          }}
                           onClick={() => onOpenTenant && onOpenTenant(tenant)}
                           style={{
                             display: "grid",
-                            gridTemplateColumns: "3fr 2fr 1.6fr 40px",
+                            gridTemplateColumns: "3.2fr 2fr 1.6fr 40px",
                             gap: 12,
                             alignItems: "center",
                             padding: "12px 20px",
@@ -243,12 +267,11 @@ export default function PlatformOverviewPage({
                             transition: "background 0.15s ease",
                           }}
                         >
-                          {/* Name with Colored File Extension Badge */}
+                          {/* Organization Name with Plan Badge */}
                           <Group gap="sm" wrap="nowrap" style={{ minWidth: 0 }}>
                             <div
                               style={{
-                                width: 28,
-                                height: 28,
+                                padding: "4px 8px",
                                 borderRadius: 6,
                                 background: badge.bg,
                                 color: badge.color,
@@ -261,22 +284,34 @@ export default function PlatformOverviewPage({
                                 letterSpacing: 0.5,
                               }}
                             >
-                              {badge.label}
+                              {tenant.packageName?.slice(0, 5).toUpperCase() ||
+                                (tenant.isActive ? "ACTIVE" : "OFF")}
                             </div>
-                            <Text
-                              fw={600}
-                              size="xs"
-                              style={{
-                                color: isHighlighted ? SA.accent : SA.text,
-                                fontSize: 13,
-                              }}
-                              truncate
-                            >
-                              {tenant.name}
-                            </Text>
+                            <Stack gap={1} style={{ minWidth: 0 }}>
+                              <Text
+                                fw={700}
+                                size="xs"
+                                style={{
+                                  color: isHighlighted ? SA.accent : SA.text,
+                                  fontSize: 13,
+                                }}
+                                truncate
+                              >
+                                {tenant.name}
+                              </Text>
+                              <Text
+                                size="10px"
+                                style={{
+                                  color: isHighlighted ? SA.accent : SA.muted,
+                                }}
+                                truncate
+                              >
+                                {tenant.email || "No email on record"}
+                              </Text>
+                            </Stack>
                           </Group>
 
-                          {/* Last modified */}
+                          {/* Registered Date */}
                           <Text
                             size="xs"
                             style={{
@@ -285,23 +320,23 @@ export default function PlatformOverviewPage({
                             }}
                           >
                             {tenant.createdAt
-                              ? `${tenant.createdAt.slice(0, 10)} | ${tenant.createdAt.slice(11, 16)}`
-                              : "Nov 10, 2026 | 11:15"}
+                              ? `${tenant.createdAt.slice(0, 10)}`
+                              : "Active Platform"}
                           </Text>
 
                           {/* Member / Tier */}
                           <Text
                             size="xs"
-                            fw={500}
+                            fw={600}
                             style={{
-                              color: isHighlighted ? SA.accent : SA.muted,
+                              color: isHighlighted ? SA.accent : SA.textSoft,
                               fontSize: 12,
                             }}
                             truncate
                           >
                             {tenant.userCount > 1
-                              ? `${tenant.userCount} members`
-                              : "Only you"}
+                              ? `${tenant.userCount} Staff Members`
+                              : "1 Staff (Owner)"}
                           </Text>
 
                           {/* Action kebab */}
@@ -332,9 +367,12 @@ export default function PlatformOverviewPage({
       {/* ==================== RIGHT INSPECTOR PANEL ==================== */}
       <RainbowGauge
         user={user}
-        usedGb={42.4}
-        totalGb={50}
+        tenants={tenants}
+        packages={packages}
+        analytics={analytics}
+        totalCapacity={50}
         onRunDiagnostics={() => onNavigate("settings")}
+        onNavigatePackages={() => onNavigate("packages")}
       />
     </div>
   );
