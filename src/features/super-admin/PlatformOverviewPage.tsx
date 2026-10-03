@@ -1,21 +1,18 @@
 // ==========================================
 // PLATFORM OVERVIEW — Super Admin Dashboard
 // ==========================================
-// Designed in accordance with Aryo Pamungkas (SLAB Design Studio)
-// File Manager Dashboard design:
-// 1. Top Pill Search Field
-// 2. Featured Emerald Quick Access Cards & Avatar Stacks
-// 3. Sector & Category Folder Grid
-// 4. Recent Tenants & Activity Table with colored badges
-// 5. Right Inspector with Semi-Circular Rainbow Arc Gauge
+// Exact recreation of Aryo Pamungkas (SLAB Design Studio) File Manager:
+// - Centered floating pill search input
+// - Quick Access cards with avatar stacks
+// - 4 Folders with green outline icons
+// - Recent Files / Tenants table with highlighted soft-mint row
+// - Right Inspector with 4-segment rainbow arc gauge & Upgrade to PRO card
 
 import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 
 import {
   ActionIcon,
-  Badge,
-  Button,
   Group,
   ScrollArea,
   Stack,
@@ -29,9 +26,7 @@ import {
   Search,
 } from "lucide-react";
 
-import {
-  listTenantCompanies,
-} from "../../api/backend";
+import { listTenantCompanies } from "../../api/backend";
 import type { PublicUser, TenantCompanySummary } from "../../types/backend";
 import { useSaTheme } from "./saTheme";
 import type { SaView } from "./SuperAdminShell";
@@ -76,14 +71,13 @@ export default function PlatformOverviewPage({
     );
   }, [tenants, search]);
 
-  const recent = filteredTenants.slice(0, 6);
-
-  // File-type style color badges for the table
+  // File-type badges identical to Aryo Pamungkas SLAB design
   const badgeStyles = [
-    { bg: "rgba(59, 130, 246, 0.12)", color: "#3B82F6", label: "APP" },
-    { bg: "rgba(245, 158, 11, 0.12)", color: "#F59E0B", label: "ZIP" },
-    { bg: "rgba(239, 68, 68, 0.12)", color: "#EF4444", label: "PDF" },
-    { bg: "rgba(16, 185, 129, 0.12)", color: "#10B981", label: "DOC" },
+    { bg: "#3B82F6", color: "#FFFFFF", label: "MP4" },
+    { bg: "#F59E0B", color: "#FFFFFF", label: "ZIP" },
+    { bg: "#EF4444", color: "#FFFFFF", label: "PDF" },
+    { bg: "#EF4444", color: "#FFFFFF", label: "PDF" },
+    { bg: "#10B981", color: "#FFFFFF", label: "DOC" },
   ];
 
   return (
@@ -96,7 +90,7 @@ export default function PlatformOverviewPage({
         background: SA.bg,
       }}
     >
-      {/* ==================== CENTER WORKSPACE ==================== */}
+      {/* ==================== CENTER STAGE ==================== */}
       <div
         style={{
           flex: 1,
@@ -106,163 +100,160 @@ export default function PlatformOverviewPage({
           height: "100%",
         }}
       >
-        {/* Top Pill Search Bar (SLAB Style) */}
-        <div style={{ padding: "22px 28px 12px", flexShrink: 0 }}>
+        {/* Floating Pill Search Bar (SLAB Design: Search your file .....) */}
+        <div style={{ padding: "20px 28px 10px", flexShrink: 0 }}>
           <TextInput
-            placeholder="Search your tenants, packages, domains, or audit records..."
-            size="md"
+            placeholder="Search your file ....."
+            size="sm"
             radius="xl"
             value={search}
             onChange={(e) => setSearch(e.currentTarget.value)}
             leftSection={
               <div
                 style={{
-                  width: 28,
-                  height: 28,
+                  width: 24,
+                  height: 24,
                   borderRadius: "50%",
-                  background: "rgba(43, 182, 115, 0.12)",
+                  background: "#2BB673",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  color: SA.accent,
+                  color: "#FFFFFF",
                 }}
               >
-                <Search size={15} />
+                <Search size={13} />
               </div>
             }
             styles={{
               input: {
                 background: SA.panel,
-                border: `1px solid ${SA.border}`,
-                boxShadow: "0 2px 8px rgba(0, 0, 0, 0.02)",
+                border: "none",
+                boxShadow: "0 2px 10px rgba(0, 0, 0, 0.03)",
                 color: SA.text,
-                paddingLeft: 42,
+                paddingLeft: 38,
+                height: 42,
+                fontSize: 13,
                 fontWeight: 500,
-                fontSize: 14,
+                borderRadius: 21,
                 "&:focus": {
-                  borderColor: SA.accent,
+                  boxShadow: "0 0 0 2px rgba(43, 182, 115, 0.25)",
                 },
               },
             }}
           />
         </div>
 
-        {/* Scrollable Main Content */}
-        <ScrollArea flex={1} style={{ position: "relative" }}>
-          <Stack gap="xl" p="28px" pt="8px">
-            {/* Quick Access & Sectors Grid */}
+        {/* Scrollable Center Workspace */}
+        <ScrollArea flex={1}>
+          <Stack gap="xl" p="28px" pt="10px">
+            {/* Quick Access & Folders */}
             <OverviewQuickAccess
               tenants={tenants}
               onOpenTenant={onOpenTenant}
               onNavigateTenants={() => onNavigate("tenants")}
             />
 
-            {/* Recent Files / Tenants Table Section */}
-            <div style={{ marginTop: 4 }}>
-              <Group justify="space-between" align="center" mb="md">
+            {/* Recent Files Table Section (SLAB Design) */}
+            <div style={{ marginTop: 2 }}>
+              <Group justify="space-between" align="center" mb="sm">
                 <Text
                   fw={800}
-                  size="md"
-                  style={{ color: SA.text, letterSpacing: -0.3 }}
-                >
-                  Recent Tenants & Activity
-                </Text>
-                <Button
-                  variant="subtle"
-                  size="xs"
-                  rightSection={<ArrowRight size={15} />}
-                  onClick={() => onNavigate("tenants")}
-                  styles={{
-                    root: {
-                      color: SA.accent,
-                      "&:hover": { background: "rgba(43, 182, 115, 0.08)" },
-                    },
-                    label: { fontWeight: 700 },
+                  size="sm"
+                  style={{
+                    color: SA.text,
+                    fontSize: 15,
+                    letterSpacing: -0.2,
                   }}
                 >
-                  View All
-                </Button>
+                  Recent Files
+                </Text>
+                <ActionIcon
+                  variant="subtle"
+                  size="sm"
+                  onClick={() => onNavigate("tenants")}
+                  style={{ color: SA.accent }}
+                >
+                  <ArrowRight size={16} />
+                </ActionIcon>
               </Group>
 
               {/* Table Container */}
               <div
                 style={{
-                  borderRadius: 20,
+                  borderRadius: 18,
                   background: SA.panel,
                   border: `1px solid ${SA.border}`,
-                  boxShadow: SA.shadow,
+                  boxShadow: "0 2px 10px rgba(0, 0, 0, 0.02)",
                   overflow: "hidden",
                 }}
               >
-                {/* Table Header Row */}
+                {/* Header Row */}
                 <div
                   style={{
                     display: "grid",
-                    gridTemplateColumns: "2.4fr 1.6fr 1.8fr 1fr 40px",
+                    gridTemplateColumns: "3fr 2fr 1.6fr 40px",
                     gap: 12,
-                    padding: "14px 22px",
+                    padding: "13px 20px",
                     borderBottom: `1px solid ${SA.border}`,
                     color: SA.muted,
-                    fontSize: 11,
-                    fontWeight: 700,
-                    textTransform: "uppercase",
-                    letterSpacing: 0.8,
+                    fontSize: 12,
+                    fontWeight: 600,
                   }}
                 >
                   <div>Name</div>
-                  <div>Last Modified</div>
-                  <div>Owner / Tier</div>
-                  <div>Status</div>
+                  <div>Last modified</div>
+                  <div>Member</div>
                   <div style={{ textAlign: "right" }}>•</div>
                 </div>
 
-                {/* Table Rows */}
-                {recent.length === 0 ? (
+                {/* Rows */}
+                {filteredTenants.length === 0 ? (
                   <Stack align="center" gap={6} p="xl">
-                    <Building2 size={36} style={{ color: SA.muted, opacity: 0.5 }} />
-                    <Text size="sm" style={{ color: SA.muted }}>
-                      No tenant workspaces found matching search
+                    <Building2 size={32} style={{ color: SA.muted, opacity: 0.5 }} />
+                    <Text size="xs" style={{ color: SA.muted }}>
+                      No files or tenants found
                     </Text>
                   </Stack>
                 ) : (
                   <Stack gap={0}>
-                    {recent.map((tenant, i) => {
+                    {filteredTenants.map((tenant, i) => {
                       const badge = badgeStyles[i % badgeStyles.length];
-                      const isHighlighted = i === 0; // First item highlighted like SLAB design
+                      // Row 1 (index 1) in the SLAB mockup is highlighted with soft mint green
+                      const isHighlighted = i === 1;
 
                       return (
                         <motion.div
                           key={tenant.id}
-                          whileHover={{ background: SA.panelHover }}
+                          whileHover={{ background: isHighlighted ? "#E4F5ED" : SA.panelHover }}
                           onClick={() => onOpenTenant && onOpenTenant(tenant)}
                           style={{
                             display: "grid",
-                            gridTemplateColumns: "2.4fr 1.6fr 1.8fr 1fr 40px",
+                            gridTemplateColumns: "3fr 2fr 1.6fr 40px",
                             gap: 12,
                             alignItems: "center",
-                            padding: "13px 22px",
+                            padding: "12px 20px",
                             borderBottom:
-                              i === recent.length - 1
+                              i === filteredTenants.length - 1
                                 ? "none"
                                 : `1px solid ${SA.border}`,
-                            background: isHighlighted ? SA.panelMint : "transparent",
+                            background: isHighlighted ? "#EBF7F1" : "transparent",
                             cursor: "pointer",
                             transition: "background 0.15s ease",
                           }}
                         >
-                          {/* Name with File-Style Colored Badge */}
+                          {/* Name with Colored File Extension Badge */}
                           <Group gap="sm" wrap="nowrap" style={{ minWidth: 0 }}>
                             <div
                               style={{
-                                width: 34,
-                                height: 34,
-                                borderRadius: 8,
+                                width: 28,
+                                height: 28,
+                                borderRadius: 6,
                                 background: badge.bg,
                                 color: badge.color,
                                 display: "flex",
                                 alignItems: "center",
                                 justifyContent: "center",
-                                fontSize: 10,
+                                fontSize: 9,
                                 fontWeight: 800,
                                 flexShrink: 0,
                                 letterSpacing: 0.5,
@@ -270,65 +261,59 @@ export default function PlatformOverviewPage({
                             >
                               {badge.label}
                             </div>
-                            <Stack gap={1} style={{ minWidth: 0 }}>
-                              <Text
-                                fw={700}
-                                size="sm"
-                                style={{ color: SA.text, letterSpacing: -0.2 }}
-                                truncate
-                              >
-                                {tenant.name}
-                              </Text>
-                              <Text size="11px" style={{ color: SA.muted }} truncate>
-                                {tenant.email || "No email registered"}
-                              </Text>
-                            </Stack>
+                            <Text
+                              fw={600}
+                              size="xs"
+                              style={{
+                                color: isHighlighted ? "#15803D" : SA.text,
+                                fontSize: 13,
+                              }}
+                              truncate
+                            >
+                              {tenant.name}
+                            </Text>
                           </Group>
 
-                          {/* Last Modified */}
-                          <Text size="xs" style={{ color: SA.muted }}>
+                          {/* Last modified */}
+                          <Text
+                            size="xs"
+                            style={{
+                              color: isHighlighted ? "#15803D" : SA.muted,
+                              fontSize: 12,
+                            }}
+                          >
                             {tenant.createdAt
                               ? `${tenant.createdAt.slice(0, 10)} | ${tenant.createdAt.slice(11, 16)}`
-                              : "Recent"}
+                              : "Nov 10, 2026 | 11:15"}
                           </Text>
 
-                          {/* Owner & Package Tier */}
-                          <Text size="xs" fw={600} style={{ color: SA.text }} truncate>
-                            {tenant.userCount} users · {tenant.packageName || "Standard"}
+                          {/* Member / Tier */}
+                          <Text
+                            size="xs"
+                            fw={500}
+                            style={{
+                              color: isHighlighted ? "#15803D" : SA.muted,
+                              fontSize: 12,
+                            }}
+                            truncate
+                          >
+                            {tenant.userCount > 1
+                              ? `${tenant.userCount} members`
+                              : "Only you"}
                           </Text>
 
-                          {/* Status Badge */}
-                          <div>
-                            <Badge
-                              size="xs"
-                              radius="xl"
-                              variant="light"
-                              styles={{
-                                root: {
-                                  background: tenant.isActive
-                                    ? "rgba(16, 185, 129, 0.12)"
-                                    : "rgba(239, 68, 68, 0.12)",
-                                  color: tenant.isActive ? SA.success : SA.danger,
-                                  fontWeight: 700,
-                                },
-                              }}
-                            >
-                              {tenant.isActive ? "Active" : "Archived"}
-                            </Badge>
-                          </div>
-
-                          {/* Actions Kebab */}
+                          {/* Action kebab */}
                           <div style={{ textAlign: "right" }}>
                             <ActionIcon
                               variant="subtle"
-                              size="sm"
-                              style={{ color: SA.muted }}
+                              size="xs"
+                              style={{ color: isHighlighted ? "#15803D" : SA.muted }}
                               onClick={(e) => {
                                 e.stopPropagation();
                                 if (onOpenTenant) onOpenTenant(tenant);
                               }}
                             >
-                              <MoreVertical size={15} />
+                              <MoreVertical size={14} />
                             </ActionIcon>
                           </div>
                         </motion.div>
@@ -346,7 +331,7 @@ export default function PlatformOverviewPage({
       <RainbowGauge
         user={user}
         usedGb={42.4}
-        totalGb={100}
+        totalGb={50}
         onRunDiagnostics={() => onNavigate("settings")}
       />
     </div>

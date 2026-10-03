@@ -1,9 +1,9 @@
 // ==========================================
-// OVERVIEW QUICK ACCESS & SECTOR CARDS
+// OVERVIEW QUICK ACCESS & SECTOR FOLDERS
 // ==========================================
-// Matches Aryo Pamungkas SLAB Design Studio layout:
-// - Featured emerald green Quick Access card + white cards with avatar stacks
-// - 4 Folder Category cards with emerald folder icons and kebab menus
+// Pixel-accurate recreation of Aryo Pamungkas (SLAB Design Studio):
+// 1. Quick Access Row: 3 rounded horizontal cards with avatar stacks
+// 2. Folders Grid: 4 cards with green folder icons, bold title, file counts & sizes
 
 import { motion } from "framer-motion";
 import {
@@ -38,79 +38,86 @@ export default function OverviewQuickAccess({
 }: QuickAccessProps) {
   const SA = useSaTheme();
 
-  // Find flagship tenant if present
+  // Highlight father's flagship tenant if present
   const flagship =
     tenants.find((t) => t.name.toLowerCase().includes("ijaz")) || tenants[0];
 
   return (
     <Stack gap="xl">
-      {/* ==================== QUICK ACCESS ==================== */}
+      {/* ==================== 1. QUICK ACCESS ==================== */}
       <div>
-        <Group justify="space-between" mb="md">
-          <Text fw={800} size="md" style={{ color: SA.text, letterSpacing: -0.3 }}>
+        <Group justify="space-between" mb="sm">
+          <Text
+            fw={800}
+            size="sm"
+            style={{
+              color: SA.text,
+              fontSize: 15,
+              letterSpacing: -0.2,
+            }}
+          >
             Quick Access
           </Text>
         </Group>
 
         <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="md">
-          {/* Featured Emerald Card */}
+          {/* Card 1: Featured Emerald Green Card */}
           <motion.div
-            whileHover={{ y: -4, scale: 1.01 }}
+            whileHover={{ y: -3, scale: 1.01 }}
             transition={{ type: "spring", stiffness: 350, damping: 25 }}
             onClick={() => flagship && onOpenTenant && onOpenTenant(flagship)}
             style={{
-              borderRadius: 20,
-              padding: "22px 24px",
-              background: SA.accent,
+              borderRadius: 18,
+              padding: "18px 20px",
+              background: "#2BB673",
               color: "#FFFFFF",
               cursor: "pointer",
-              boxShadow: "0 10px 28px -6px rgba(43, 182, 115, 0.45)",
+              boxShadow: "0 8px 24px -4px rgba(43, 182, 115, 0.35)",
               display: "flex",
               flexDirection: "column",
               justifyContent: "space-between",
-              minHeight: 140,
+              minHeight: 130,
             }}
           >
             <Group justify="space-between" align="flex-start">
               <div
                 style={{
-                  width: 42,
-                  height: 42,
-                  borderRadius: 12,
+                  width: 38,
+                  height: 38,
+                  borderRadius: 10,
                   background: "rgba(255, 255, 255, 0.22)",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  backdropFilter: "blur(4px)",
                 }}
               >
-                <Folder size={20} color="#FFFFFF" />
+                <Folder size={18} color="#FFFFFF" />
               </div>
 
-              {/* Avatar Stack with +5 */}
-              <Avatar.Group spacing="sm">
+              {/* Overlapping Avatar Stack with +5 */}
+              <Avatar.Group spacing="xs">
                 <Avatar
                   radius="xl"
-                  size={30}
+                  size={26}
                   src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=60&auto=format&fit=crop&q=80"
-                  style={{ border: "2px solid #FFFFFF" }}
+                  style={{ border: "2px solid #2BB673" }}
                 />
                 <Avatar
                   radius="xl"
-                  size={30}
+                  size={26}
                   src="https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=60&auto=format&fit=crop&q=80"
-                  style={{ border: "2px solid #FFFFFF" }}
+                  style={{ border: "2px solid #2BB673" }}
                 />
                 <Avatar
                   radius="xl"
-                  size={30}
+                  size={26}
                   styles={{
                     root: {
                       background: "rgba(255, 255, 255, 0.3)",
                       color: "#FFFFFF",
-                      fontSize: 10,
+                      fontSize: 9,
                       fontWeight: 800,
-                      border: "2px solid #FFFFFF",
+                      border: "2px solid #2BB673",
                     },
                   }}
                 >
@@ -120,38 +127,38 @@ export default function OverviewQuickAccess({
             </Group>
 
             <Stack gap={2} mt="md">
-              <Text fw={800} size="md" style={{ color: "#FFFFFF", letterSpacing: -0.2 }} truncate>
-                {flagship ? flagship.name : "Flagship Workspace"}
+              <Text fw={700} size="sm" style={{ color: "#FFFFFF", letterSpacing: -0.2 }} truncate>
+                {flagship ? flagship.name : "Ijaz & Company"}
               </Text>
-              <Text size="xs" style={{ color: "rgba(255, 255, 255, 0.85)", fontWeight: 500 }}>
-                {flagship?.userCount ?? 8} active users · {flagship?.packageName ?? "Premium Tier"}
+              <Text size="xs" style={{ color: "rgba(255, 255, 255, 0.8)", fontWeight: 500 }}>
+                {flagship?.userCount ?? 8} files · Premium
               </Text>
             </Stack>
           </motion.div>
 
-          {/* White Card 2: FBR PRAL Gateway */}
+          {/* Card 2: White Card with Red PDF Icon */}
           <motion.div
-            whileHover={{ y: -4 }}
+            whileHover={{ y: -3 }}
             transition={{ type: "spring", stiffness: 350, damping: 25 }}
             style={{
-              borderRadius: 20,
-              padding: "22px 24px",
+              borderRadius: 18,
+              padding: "18px 20px",
               background: SA.panel,
               border: `1px solid ${SA.border}`,
-              boxShadow: SA.shadow,
+              boxShadow: "0 2px 10px rgba(0,0,0,0.02)",
               cursor: "pointer",
               display: "flex",
               flexDirection: "column",
               justifyContent: "space-between",
-              minHeight: 140,
+              minHeight: 130,
             }}
           >
             <Group justify="space-between" align="flex-start">
               <div
                 style={{
-                  width: 42,
-                  height: 42,
-                  borderRadius: 12,
+                  width: 38,
+                  height: 38,
+                  borderRadius: 10,
                   background: "rgba(239, 68, 68, 0.12)",
                   color: "#EF4444",
                   display: "flex",
@@ -159,31 +166,31 @@ export default function OverviewQuickAccess({
                   justifyContent: "center",
                 }}
               >
-                <FileText size={20} />
+                <FileText size={18} />
               </div>
 
               {/* Avatar Stack with +8 */}
-              <Avatar.Group spacing="sm">
+              <Avatar.Group spacing="xs">
                 <Avatar
                   radius="xl"
-                  size={30}
+                  size={26}
                   src="https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=60&auto=format&fit=crop&q=80"
                   style={{ border: `2px solid ${SA.panel}` }}
                 />
                 <Avatar
                   radius="xl"
-                  size={30}
+                  size={26}
                   src="https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=60&auto=format&fit=crop&q=80"
                   style={{ border: `2px solid ${SA.panel}` }}
                 />
                 <Avatar
                   radius="xl"
-                  size={30}
+                  size={26}
                   styles={{
                     root: {
                       background: "rgba(239, 68, 68, 0.15)",
                       color: "#EF4444",
-                      fontSize: 10,
+                      fontSize: 9,
                       fontWeight: 800,
                       border: `2px solid ${SA.panel}`,
                     },
@@ -195,38 +202,38 @@ export default function OverviewQuickAccess({
             </Group>
 
             <Stack gap={2} mt="md">
-              <Text fw={800} size="md" style={{ color: SA.text, letterSpacing: -0.2 }} truncate>
-                FBR Fiscal Invoicing
+              <Text fw={700} size="sm" style={{ color: SA.text, letterSpacing: -0.2 }} truncate>
+                FBR Fiscal Invoicing.pdf
               </Text>
               <Text size="xs" style={{ color: SA.muted, fontWeight: 500 }}>
-                PRAL Integration · 100% Tax Compliant
+                12 MB · PRAL Gateway
               </Text>
             </Stack>
           </motion.div>
 
-          {/* White Card 3: SQLite 3 WAL Engine */}
+          {/* Card 3: White Card with Blue Media Icon */}
           <motion.div
-            whileHover={{ y: -4 }}
+            whileHover={{ y: -3 }}
             transition={{ type: "spring", stiffness: 350, damping: 25 }}
             style={{
-              borderRadius: 20,
-              padding: "22px 24px",
+              borderRadius: 18,
+              padding: "18px 20px",
               background: SA.panel,
               border: `1px solid ${SA.border}`,
-              boxShadow: SA.shadow,
+              boxShadow: "0 2px 10px rgba(0,0,0,0.02)",
               cursor: "pointer",
               display: "flex",
               flexDirection: "column",
               justifyContent: "space-between",
-              minHeight: 140,
+              minHeight: 130,
             }}
           >
             <Group justify="space-between" align="flex-start">
               <div
                 style={{
-                  width: 42,
-                  height: 42,
-                  borderRadius: 12,
+                  width: 38,
+                  height: 38,
+                  borderRadius: 10,
                   background: "rgba(59, 130, 246, 0.12)",
                   color: "#3B82F6",
                   display: "flex",
@@ -234,34 +241,42 @@ export default function OverviewQuickAccess({
                   justifyContent: "center",
                 }}
               >
-                <Database size={20} />
+                <Database size={18} />
               </div>
 
               <Avatar
                 radius="xl"
-                size={30}
+                size={26}
                 src="https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=60&auto=format&fit=crop&q=80"
                 style={{ border: `2px solid ${SA.panel}` }}
               />
             </Group>
 
             <Stack gap={2} mt="md">
-              <Text fw={800} size="md" style={{ color: SA.text, letterSpacing: -0.2 }} truncate>
-                SQLite 3 Storage Engine
+              <Text fw={700} size="sm" style={{ color: SA.text, letterSpacing: -0.2 }} truncate>
+                SQLite Storage Backup.mp4
               </Text>
               <Text size="xs" style={{ color: SA.muted, fontWeight: 500 }}>
-                WAL Persistence · 42.4 MB Local Core
+                237 MB · Local Core
               </Text>
             </Stack>
           </motion.div>
         </SimpleGrid>
       </div>
 
-      {/* ==================== FOLDERS / SECTORS ==================== */}
+      {/* ==================== 2. FOLDERS GRID ==================== */}
       <div>
-        <Group justify="space-between" align="center" mb="md">
-          <Text fw={800} size="md" style={{ color: SA.text, letterSpacing: -0.3 }}>
-            Tenant Sectors & Folders
+        <Group justify="space-between" align="center" mb="sm">
+          <Text
+            fw={800}
+            size="sm"
+            style={{
+              color: SA.text,
+              fontSize: 15,
+              letterSpacing: -0.2,
+            }}
+          >
+            Folders
           </Text>
           <ActionIcon
             variant="subtle"
@@ -269,83 +284,71 @@ export default function OverviewQuickAccess({
             onClick={onNavigateTenants}
             style={{ color: SA.accent }}
           >
-            <ArrowRight size={17} />
+            <ArrowRight size={16} />
           </ActionIcon>
         </Group>
 
         <SimpleGrid cols={{ base: 2, sm: 4 }} spacing="md">
           {[
             {
-              title: "Wholesale & Traders",
+              title: "Projects",
               count: "453 files",
               size: "11 GB",
             },
             {
-              title: "Retail & POS Counters",
+              title: "Marketing",
               count: "84 files",
               size: "3.6 GB",
             },
             {
-              title: "Pharma & FIFO Batches",
+              title: "Personal",
               count: "287 files",
               size: "8.9 GB",
             },
             {
-              title: "Industrial & Manufacturing",
+              title: "Portofolio",
               count: "56 files",
-              size: "6.0 GB",
+              size: "6 GB",
             },
           ].map((folder, idx) => (
             <motion.div
               key={idx}
-              whileHover={{ y: -3 }}
+              whileHover={{ y: -3, boxShadow: "0 6px 18px rgba(0,0,0,0.04)" }}
               transition={{ type: "spring", stiffness: 350, damping: 25 }}
               onClick={onNavigateTenants}
               style={{
-                borderRadius: 18,
+                borderRadius: 16,
                 padding: "16px 18px",
                 background: SA.panel,
                 border: `1px solid ${SA.border}`,
-                boxShadow: SA.shadow,
+                boxShadow: "0 2px 8px rgba(0,0,0,0.02)",
                 cursor: "pointer",
                 display: "flex",
                 flexDirection: "column",
-                gap: 12,
+                justifyContent: "space-between",
+                minHeight: 110,
               }}
             >
               <Group justify="space-between" align="flex-start">
-                <div
-                  style={{
-                    width: 36,
-                    height: 36,
-                    borderRadius: 10,
-                    background: "rgba(43, 182, 115, 0.12)",
-                    color: SA.accent,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                >
-                  <Folder size={18} />
-                </div>
+                <Folder size={22} style={{ color: "#2BB673", fill: "rgba(43, 182, 115, 0.15)" }} />
                 <ActionIcon variant="subtle" size="xs" style={{ color: SA.muted }}>
                   <MoreVertical size={14} />
                 </ActionIcon>
               </Group>
 
-              <div>
-                <Text fw={700} size="xs" style={{ color: SA.text }} lineClamp={1}>
+              <Stack gap={4} mt="xs">
+                <Text fw={700} size="sm" style={{ color: SA.text, fontSize: 14 }}>
                   {folder.title}
                 </Text>
-                <Group justify="space-between" mt={4}>
-                  <Text size="11px" style={{ color: SA.muted }}>
+                <Group justify="space-between">
+                  <Text size="xs" style={{ color: SA.muted, fontSize: 11 }}>
                     {folder.count}
                   </Text>
-                  <Text size="11px" fw={700} style={{ color: SA.text }}>
+                  <Text size="xs" fw={700} style={{ color: SA.text, fontSize: 11 }}>
                     {folder.size}
                   </Text>
                 </Group>
-              </div>
+              </Stack>
             </motion.div>
           ))}
         </SimpleGrid>
