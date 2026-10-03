@@ -200,7 +200,10 @@ function App() {
   if (screen === "setup") {
     return (
       <OnboardingProvider screen={screen} user={null}>
-        <SetupPage onSetupComplete={handleSetupComplete} />
+        <SetupPage
+          onSetupComplete={handleSetupComplete}
+          onSwitchToLogin={() => setScreen("login")}
+        />
       </OnboardingProvider>
     );
   }
@@ -208,7 +211,10 @@ function App() {
   if (screen === "login") {
     return (
       <OnboardingProvider screen={screen} user={null}>
-        <LoginPage onLogin={handleLogin} />
+        <LoginPage
+          onLogin={handleLogin}
+          onSwitchToSetup={() => setScreen("setup")}
+        />
       </OnboardingProvider>
     );
   }

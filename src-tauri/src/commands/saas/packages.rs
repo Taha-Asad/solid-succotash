@@ -22,6 +22,13 @@ pub async fn list_packages(
 ) -> Result<Vec<PublicPackage>, AppError> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
 
+    let cloud_db = crate::db::neon::NeonCloudDb::global();
+    if cloud_db.is_connected() {
+        return cloud_db
+            .list_packages(include_inactive.unwrap_or(false) && current_user.is_super_admin)
+            .await;
+    }
+
     let sql = if include_inactive.unwrap_or(false) && current_user.is_super_admin {
         format!("{PACKAGE_SELECT} WHERE deleted_at IS NULL ORDER BY sort_order")
     } else {

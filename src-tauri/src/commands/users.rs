@@ -161,7 +161,14 @@ pub async fn create_company_user(
     )
     .await;
 
-    fetch_company_user(pool.inner(), &company_id, &user_id).await
+    let created_user = fetch_company_user(pool.inner(), &company_id, &user_id).await?;
+
+    let cloud_db = crate::db::neon::NeonCloudDb::global();
+    if cloud_db.is_connected() {
+        let _ = cloud_db.sync_user_to_cloud(&created_user, &password_hash).await;
+    }
+
+    Ok(created_user)
 }
 
 // ==========================================

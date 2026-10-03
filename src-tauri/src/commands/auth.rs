@@ -331,6 +331,75 @@ pub async fn login_user(
     let user_row = match user_row {
         Some(user) => user,
         None => {
+            // Check Neon PostgreSQL cloud for employee or multi-machine account
+            let cloud_db = crate::db::neon::NeonCloudDb::global();
+            if cloud_db.is_connected() {
+                if let Ok(Some((cloud_user, cloud_password_hash, cloud_company))) =
+                    cloud_db.find_cloud_user_by_email(&email).await
+                {
+                    let password_is_correct =
+                        verify_password(&password, &cloud_password_hash).await?;
+                    if !password_is_correct {
+                        tracker.record(&email);
+                        return Err(AppError::internal("Invalid email or password".to_string()));
+                    }
+
+                    // Sync company down into this machine's local SQLite database
+                    if let Some(ref company) = cloud_company {
+                        let _ = sqlx::query(
+                            r#"
+                            INSERT OR REPLACE INTO companies (
+                                id, name, email, phone, address, tax_number,
+                                currency_code, is_active, created_at, updated_at,
+                                ntn, strn, fbr_registered, province, version
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                            "#,
+                        )
+                        .bind(&company.id)
+                        .bind(&company.name)
+                        .bind(&company.email)
+                        .bind(&company.phone)
+                        .bind(&company.address)
+                        .bind(&company.tax_number)
+                        .bind(&company.currency_code)
+                        .bind(company.is_active)
+                        .bind(&company.created_at)
+                        .bind(&company.updated_at)
+                        .bind(&company.ntn)
+                        .bind(&company.strn)
+                        .bind(company.fbr_registered)
+                        .bind(&company.province)
+                        .execute(pool.inner())
+                        .await;
+                    }
+
+                    // Sync user down into this machine's local SQLite database
+                    let _ = sqlx::query(
+                        r#"
+                        INSERT OR REPLACE INTO users (
+                            id, email, password_hash, full_name, role, company_id,
+                            is_active, is_super_admin, must_change_password
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        "#,
+                    )
+                    .bind(&cloud_user.id)
+                    .bind(&cloud_user.email)
+                    .bind(&cloud_password_hash)
+                    .bind(&cloud_user.full_name)
+                    .bind(&cloud_user.role)
+                    .bind(&cloud_user.company_id)
+                    .bind(cloud_user.is_active)
+                    .bind(cloud_user.is_super_admin)
+                    .bind(cloud_user.must_change_password)
+                    .execute(pool.inner())
+                    .await;
+
+                    tracker.clear(&email);
+                    set_current_user(session.inner(), cloud_user.clone()).await;
+                    return Ok(cloud_user);
+                }
+            }
+
             tracker.record(&email);
             return Err(AppError::internal("Invalid email or password".to_string()));
         }

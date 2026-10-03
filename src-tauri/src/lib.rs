@@ -144,6 +144,9 @@ pub async fn run() {
         eprintln!("Automatic daily backup notice: {e}");
     }
 
+    // Initialize Neon PostgreSQL cloud connection for SaaS / Super Admin control plane
+    let _neon_pool = db::neon::init_neon_pool().await;
+
     println!("Starting Tauri application...");
 
     tauri::Builder::default()

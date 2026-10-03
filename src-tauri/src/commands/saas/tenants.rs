@@ -29,6 +29,11 @@ pub async fn list_tenant_companies(
 ) -> Result<Vec<TenantCompanySummary>, AppError> {
     require_super_admin(pool.inner(), session.inner()).await?;
 
+    let cloud_db = crate::db::neon::NeonCloudDb::global();
+    if cloud_db.is_connected() {
+        return cloud_db.list_tenant_companies().await;
+    }
+
     let rows = sqlx::query_as::<_, TenantCompanySummary>(
         r#"
         SELECT
@@ -64,6 +69,11 @@ pub async fn get_tenant_company_detail(
     company_id: String,
 ) -> Result<TenantCompanyDetail, AppError> {
     require_super_admin(pool.inner(), session.inner()).await?;
+
+    let cloud_db = crate::db::neon::NeonCloudDb::global();
+    if cloud_db.is_connected() {
+        return cloud_db.get_tenant_company_detail(&company_id).await;
+    }
 
     let company = sqlx::query_as::<_, PublicCompany>(
         r#"
@@ -167,6 +177,26 @@ pub async fn register_tenant(
 
     let package = fetch_package(pool.inner(), &package_id).await?;
     let password_hash = hash_password(&admin_password).await?;
+
+    let cloud_db = crate::db::neon::NeonCloudDb::global();
+    if cloud_db.is_connected() {
+        return cloud_db
+            .register_tenant(
+                &company_name,
+                &admin_full_name,
+                &admin_email,
+                &password_hash,
+                &package_id,
+                phone.as_deref(),
+                address.as_deref(),
+                tax_number.as_deref(),
+                &currency_code,
+                ntn.as_deref(),
+                strn.as_deref(),
+                province.as_deref(),
+            )
+            .await;
+    }
 
     let company_id = Uuid::new_v4().to_string();
     let admin_id = Uuid::new_v4().to_string();
@@ -343,6 +373,11 @@ pub async fn archive_company(
 ) -> Result<(), AppError> {
     let actor = require_super_admin(pool.inner(), session.inner()).await?;
 
+    let cloud_db = crate::db::neon::NeonCloudDb::global();
+    if cloud_db.is_connected() {
+        let _ = cloud_db.archive_company(&company_id).await;
+    }
+
     let result = sqlx::query(
         r#"
         UPDATE companies
@@ -355,15 +390,14 @@ pub async fn archive_company(
     .await
     .map_err(|error| format!("Database error: {error}"))?;
 
-    if result.rows_affected() == 0 {
+    if result.rows_affected() == 0 && !cloud_db.is_connected() {
         return Err(AppError::internal("Company not found or already archived".to_string()));
     }
 
-    sqlx::query("UPDATE users SET token_version = token_version + 1 WHERE company_id = ?")
+    let _ = sqlx::query("UPDATE users SET token_version = token_version + 1 WHERE company_id = ?")
         .bind(&company_id)
         .execute(pool.inner())
-        .await
-        .map_err(|error| format!("Database error: {error}"))?;
+        .await;
 
     audit_for(
         pool.inner(),
@@ -387,6 +421,11 @@ pub async fn activate_company(
 ) -> Result<(), AppError> {
     let actor = require_super_admin(pool.inner(), session.inner()).await?;
 
+    let cloud_db = crate::db::neon::NeonCloudDb::global();
+    if cloud_db.is_connected() {
+        let _ = cloud_db.activate_company(&company_id).await;
+    }
+
     let result = sqlx::query(
         r#"
         UPDATE companies
@@ -399,7 +438,7 @@ pub async fn activate_company(
     .await
     .map_err(|error| format!("Database error: {error}"))?;
 
-    if result.rows_affected() == 0 {
+    if result.rows_affected() == 0 && !cloud_db.is_connected() {
         return Err(AppError::internal("Company not found".to_string()));
     }
 

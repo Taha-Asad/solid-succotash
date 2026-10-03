@@ -288,6 +288,14 @@ pub async fn register_company(
     // Automatically log the owner in after initial registration.
     set_current_user(session.inner(), user.clone()).await;
 
+    // Sync to Neon PostgreSQL cloud so company shows up on Super Admin panel immediately!
+    let cloud_db = crate::db::neon::NeonCloudDb::global();
+    if cloud_db.is_connected() {
+        let _ = cloud_db
+            .sync_company_and_owner_to_cloud(&company, &user, &password_hash)
+            .await;
+    }
+
     log_audit(
         pool.inner(),
         &company_id,

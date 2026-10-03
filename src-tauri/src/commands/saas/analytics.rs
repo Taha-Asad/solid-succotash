@@ -56,6 +56,11 @@ pub async fn get_platform_analytics(
 ) -> Result<PlatformAnalytics, AppError> {
     require_super_admin(pool.inner(), &session).await?;
 
+    let cloud_db = crate::db::neon::NeonCloudDb::global();
+    if cloud_db.is_connected() {
+        return cloud_db.get_platform_analytics().await;
+    }
+
     let total_tenants: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM companies")
         .fetch_one(pool.inner())
         .await

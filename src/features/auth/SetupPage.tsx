@@ -42,6 +42,7 @@ import { CorbelSquircle } from "../../components/CorbelLogo";
 
 interface SetupPageProps {
   onSetupComplete: (user: PublicUser, result: RegisterCompanyResult) => void;
+  onSwitchToLogin?: () => void;
 }
 
 // ---- Currency options ----
@@ -58,7 +59,10 @@ const CURRENCIES = [
 
 // ---- Component ----
 
-export default function SetupPage({ onSetupComplete }: SetupPageProps) {
+export default function SetupPage({
+  onSetupComplete,
+  onSwitchToLogin,
+}: SetupPageProps) {
   const [companyName, setCompanyName] = useState("");
   const [ownerFullName, setOwnerFullName] = useState("");
   const [email, setEmail] = useState("");
@@ -256,6 +260,32 @@ export default function SetupPage({ onSetupComplete }: SetupPageProps) {
                 {t("setup.ownerNote")}
               </Text>
             </Stack>
+
+            {onSwitchToLogin && (
+              <Group
+                justify="space-between"
+                align="center"
+                p="xs"
+                mb="md"
+                style={{
+                  background: "#F8FAFC",
+                  border: "1px solid #E2E8F0",
+                  borderRadius: 8,
+                }}
+              >
+                <Text size="xs" fw={500} c="dimmed">
+                  Joining an existing company or team?
+                </Text>
+                <Button
+                  variant="subtle"
+                  size="compact-xs"
+                  color="teal"
+                  onClick={onSwitchToLogin}
+                >
+                  Log In Here →
+                </Button>
+              </Group>
+            )}
 
             <form onSubmit={handleSubmit}>
               <Stack gap="md">

@@ -37,6 +37,7 @@ import { CorbelSquircle } from "../../components/CorbelLogo";
 
 interface LoginPageProps {
   onLogin: (user: PublicUser) => void;
+  onSwitchToSetup?: () => void;
 }
 
 const FEATURES = [
@@ -57,7 +58,7 @@ const FEATURES = [
   },
 ];
 
-export default function LoginPage({ onLogin }: LoginPageProps) {
+export default function LoginPage({ onLogin, onSwitchToSetup }: LoginPageProps) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -311,6 +312,21 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
                     {t("login.signIn")}
                   </Button>
                 </motion.div>
+                {onSwitchToSetup && (
+                  <Group justify="center" mt="xs">
+                    <Text size="xs" c="dimmed">
+                      Setting up a new organization?
+                    </Text>
+                    <Button
+                      variant="subtle"
+                      size="compact-xs"
+                      color="blue"
+                      onClick={onSwitchToSetup}
+                    >
+                      Register Company →
+                    </Button>
+                  </Group>
+                )}
               </Stack>
             </form>
           </Card>
