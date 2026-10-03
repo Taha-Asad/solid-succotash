@@ -2,7 +2,7 @@ use super::types::*;
 use super::helpers::{audit_for, clean_optional_text, fetch_package, require_super_admin, PACKAGE_SELECT};
 use crate::commands::auth::{require_current_user, SessionState};
 use crate::error::AppError;
-use sqlx::SqlitePool;
+use sqlx::{Row, SqlitePool};
 use tauri::State;
 use uuid::Uuid;
 
@@ -42,9 +42,36 @@ pub async fn list_packages(
             use std::collections::HashSet;
             let mut seen = HashSet::new();
             let mut combined = Vec::new();
-            for p in cloud_rows {
+            for p in &cloud_rows {
                 seen.insert(p.id.clone());
-                combined.push(p);
+                combined.push(p.clone());
+
+                // Cache to local SQLite so offline operations and foreign keys resolve smoothly
+                let _ = sqlx::query(
+                    r#"
+                    INSERT OR REPLACE INTO packages (
+                        id, name, description, price, billing_cycle,
+                        module_limits, max_users, max_branches, max_storage_mb,
+                        features, is_active, sort_order, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    "#,
+                )
+                .bind(&p.id)
+                .bind(&p.name)
+                .bind(&p.description)
+                .bind(p.price)
+                .bind(&p.billing_cycle)
+                .bind(serde_json::to_string(&p.module_limits).unwrap_or_else(|_| "{}".to_string()))
+                .bind(p.max_users)
+                .bind(p.max_branches)
+                .bind(p.max_storage_mb)
+                .bind(serde_json::to_string(&p.features).unwrap_or_else(|_| "[]".to_string()))
+                .bind(p.is_active)
+                .bind(p.sort_order)
+                .bind(&p.created_at)
+                .bind(&p.updated_at)
+                .execute(pool.inner())
+                .await;
             }
             for r in local_rows {
                 let p = r.to_public();
@@ -201,7 +228,57 @@ pub async fn update_package(
 ) -> Result<PublicPackage, AppError> {
     let actor = require_super_admin(pool.inner(), session.inner()).await?;
 
-    let mut current = fetch_package(pool.inner(), &package_id).await?;
+    let mut current = match fetch_package(pool.inner(), &package_id).await {
+        Ok(pkg) => pkg,
+        Err(_) => {
+            // Check if it exists in Neon PostgreSQL and sync it into local SQLite first!
+            let cloud_db = crate::db::neon::NeonCloudDb::global();
+            if cloud_db.is_connected() {
+                if let Some(pg_pool) = cloud_db.pool() {
+                    let pg_row = sqlx::query(
+                        r#"
+                        SELECT id, name, description, price::float8 as price, billing_cycle,
+                               module_limits::text as module_limits, max_users, max_branches,
+                               max_storage_mb, features::text as features, is_active, sort_order,
+                               TO_CHAR(created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS created_at,
+                               TO_CHAR(updated_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS updated_at
+                        FROM packages
+                        WHERE id = $1 AND deleted_at IS NULL
+                        "#,
+                    )
+                    .bind(&package_id)
+                    .fetch_optional(pg_pool)
+                    .await
+                    .map_err(|e| AppError::database(format!("Neon DB error: {e}")))?;
+
+                    if let Some(r) = pg_row {
+                        PackageRow {
+                            id: r.get("id"),
+                            name: r.get("name"),
+                            description: r.get("description"),
+                            price: r.get("price"),
+                            billing_cycle: r.get("billing_cycle"),
+                            module_limits: r.get("module_limits"),
+                            max_users: r.get("max_users"),
+                            max_branches: r.get("max_branches"),
+                            max_storage_mb: r.get("max_storage_mb"),
+                            features: r.get("features"),
+                            is_active: r.get("is_active"),
+                            sort_order: r.get("sort_order"),
+                            created_at: r.get("created_at"),
+                            updated_at: r.get("updated_at"),
+                        }
+                    } else {
+                        return Err(AppError::internal("Package not found".to_string()));
+                    }
+                } else {
+                    return Err(AppError::internal("Package not found".to_string()));
+                }
+            } else {
+                return Err(AppError::internal("Package not found".to_string()));
+            }
+        }
+    };
 
     if let Some(name) = name {
         let name = name.trim();
@@ -245,13 +322,15 @@ pub async fn update_package(
 
     sqlx::query(
         r#"
-        UPDATE packages
-        SET name = ?, description = ?, price = ?, billing_cycle = ?,
-            module_limits = ?, max_users = ?, max_branches = ?, max_storage_mb = ?,
-            features = ?, is_active = ?, sort_order = ?, updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
+        INSERT OR REPLACE INTO packages (
+            id, name, description, price, billing_cycle,
+            module_limits, max_users, max_branches, max_storage_mb,
+            features, is_active, sort_order, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         "#,
     )
+    .bind(&package_id)
     .bind(&current.name)
     .bind(&current.description)
     .bind(current.price)
@@ -263,7 +342,7 @@ pub async fn update_package(
     .bind(&current.features)
     .bind(current.is_active)
     .bind(current.sort_order)
-    .bind(&package_id)
+    .bind(&current.created_at)
     .execute(pool.inner())
     .await
     .map_err(|error| format!("Database error: {error}"))?;
@@ -344,20 +423,24 @@ pub async fn delete_package(
     .await
     .map_err(|error| format!("Database error: {error}"))?;
 
-    if result.rows_affected() == 0 {
-        return Err(AppError::internal("Package not found".to_string()));
-    }
-
     let cloud_db = crate::db::neon::NeonCloudDb::global();
+    let mut cloud_affected = 0;
     if cloud_db.is_connected() {
         if let Some(pg_pool) = cloud_db.pool() {
-            let _ = sqlx::query(
-                "UPDATE packages SET deleted_at = NOW(), is_active = FALSE, updated_at = NOW() WHERE id = $1",
+            if let Ok(res) = sqlx::query(
+                "UPDATE packages SET deleted_at = NOW(), is_active = FALSE, updated_at = NOW() WHERE id = $1 AND deleted_at IS NULL",
             )
             .bind(&package_id)
             .execute(pg_pool)
-            .await;
+            .await
+            {
+                cloud_affected = res.rows_affected();
+            }
         }
+    }
+
+    if result.rows_affected() == 0 && cloud_affected == 0 {
+        return Err(AppError::internal("Package not found".to_string()));
     }
 
     audit_for(

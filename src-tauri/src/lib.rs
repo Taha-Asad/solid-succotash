@@ -146,6 +146,13 @@ pub async fn run() {
 
     // Initialize Neon PostgreSQL cloud connection for SaaS / Super Admin control plane
     let _neon_pool = db::neon::init_neon_pool().await;
+    if _neon_pool.is_some() {
+        let pool_clone = sqlite_pool.clone();
+        tokio::spawn(async move {
+            let cloud_db = db::neon::NeonCloudDb::global();
+            cloud_db.sync_local_state_to_cloud(&pool_clone).await;
+        });
+    }
 
     println!("Starting Tauri application...");
 

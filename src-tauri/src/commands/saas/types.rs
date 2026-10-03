@@ -11,7 +11,7 @@ use crate::commands::company::PublicCompany;
 // PUBLIC API TYPES (SERIALIZABLE FOR TAURI IPC)
 // ==========================================
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PublicPackage {
     pub id: String,

@@ -1,5 +1,5 @@
 use sqlx::postgres::PgPoolOptions;
-use sqlx::{PgPool, Row};
+use sqlx::{PgPool, Row, SqlitePool};
 use std::sync::OnceLock;
 use std::time::Duration;
 use tracing::{error, info, warn};
@@ -890,7 +890,179 @@ impl NeonCloudDb {
 
         Ok(Some((user, password_hash, company)))
     }
+
+    /// Automatically syncs local SQLite companies, users, and packages with Neon PostgreSQL
+    pub async fn sync_local_state_to_cloud(&self, sqlite_pool: &SqlitePool) {
+        let pg_pool = match self.pool() {
+            Some(p) => p,
+            None => return,
+        };
+
+        // 1. Sync all local non-deleted companies up to Neon
+        let local_companies = match sqlx::query_as::<_, PublicCompany>(
+            r#"
+            SELECT id, name, email, phone, address, tax_number,
+                   currency_code, is_active, created_at, updated_at,
+                   ntn, strn, fbr_registered, fbr_registration_date, province
+            FROM companies
+            WHERE deleted_at IS NULL
+            "#,
+        )
+        .fetch_all(sqlite_pool)
+        .await
+        {
+            Ok(c) => c,
+            Err(e) => {
+                warn!("Could not fetch local companies for cloud sync: {e}");
+                return;
+            }
+        };
+
+        for company in local_companies {
+            // Check if company already exists in Neon
+            let exists: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM companies WHERE id = $1")
+                .bind(&company.id)
+                .fetch_one(pg_pool)
+                .await
+                .unwrap_or((0,));
+
+            if exists.0 == 0 {
+                info!("Auto-syncing company '{}' to Neon PostgreSQL cloud...", company.name);
+                let _ = sqlx::query(
+                    r#"
+                    INSERT INTO companies (
+                        id, name, email, phone, address, tax_number, currency_code,
+                        ntn, strn, province, is_active, version
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 1)
+                    ON CONFLICT (id) DO UPDATE SET
+                        name = EXCLUDED.name,
+                        email = EXCLUDED.email,
+                        phone = EXCLUDED.phone,
+                        address = EXCLUDED.address,
+                        tax_number = EXCLUDED.tax_number,
+                        currency_code = EXCLUDED.currency_code,
+                        updated_at = NOW();
+                    "#,
+                )
+                .bind(&company.id)
+                .bind(&company.name)
+                .bind(&company.email)
+                .bind(&company.phone)
+                .bind(&company.address)
+                .bind(&company.tax_number)
+                .bind(&company.currency_code)
+                .bind(&company.ntn)
+                .bind(&company.strn)
+                .bind(&company.province)
+                .bind(company.is_active)
+                .execute(pg_pool)
+                .await;
+
+                // Ensure subscription exists in Neon
+                let sub_id = Uuid::new_v4().to_string();
+                let _ = sqlx::query(
+                    r#"
+                    INSERT INTO company_subscriptions (
+                        id, company_id, package_id, status, trial_ends_at,
+                        current_period_start, current_period_end, metadata
+                    ) VALUES ($1, $2, 'pkg-starter', 'active', NULL, NOW(), NOW() + INTERVAL '30 days', '{}'::jsonb)
+                    ON CONFLICT (id) DO NOTHING;
+                    "#,
+                )
+                .bind(&sub_id)
+                .bind(&company.id)
+                .execute(pg_pool)
+                .await;
+            }
+        }
+
+        // 2. Sync all local users up to Neon (including password hashes so employees can log in on any machine!)
+        let local_users = sqlx::query(
+            r#"
+            SELECT id, email, password_hash, full_name, role, company_id,
+                   is_active, is_super_admin, must_change_password
+            FROM users
+            WHERE is_active = 1
+            "#,
+        )
+        .fetch_all(sqlite_pool)
+        .await
+        .unwrap_or_default();
+
+        for u in local_users {
+            let uid: String = u.get("id");
+            let email: String = u.get("email");
+            let pw_hash: String = u.get("password_hash");
+            let full_name: String = u.get("full_name");
+            let role: String = u.get("role");
+            let company_id: Option<String> = u.get("company_id");
+            let is_active: bool = u.get::<i64, _>("is_active") == 1;
+            let is_super_admin: bool = u.get::<i64, _>("is_super_admin") == 1;
+            let must_change: bool = u.get::<i64, _>("must_change_password") == 1;
+
+            let _ = sqlx::query(
+                r#"
+                INSERT INTO users (
+                    id, email, password_hash, full_name, role, company_id,
+                    is_active, is_super_admin, must_change_password
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                ON CONFLICT (email) DO UPDATE SET
+                    full_name = EXCLUDED.full_name,
+                    password_hash = EXCLUDED.password_hash,
+                    role = EXCLUDED.role,
+                    company_id = EXCLUDED.company_id,
+                    is_active = EXCLUDED.is_active,
+                    updated_at = NOW();
+                "#,
+            )
+            .bind(&uid)
+            .bind(&email)
+            .bind(&pw_hash)
+            .bind(&full_name)
+            .bind(&role)
+            .bind(&company_id)
+            .bind(is_active)
+            .bind(is_super_admin)
+            .bind(must_change)
+            .execute(pg_pool)
+            .await;
+        }
+
+        // 3. Sync packages from Neon down into local SQLite so offline & local checks work smoothly
+        if let Ok(cloud_pkgs) = self.list_packages(true).await {
+            for p in cloud_pkgs {
+                let _ = sqlx::query(
+                    r#"
+                    INSERT OR REPLACE INTO packages (
+                        id, name, description, price, billing_cycle,
+                        module_limits, max_users, max_branches, max_storage_mb,
+                        features, is_active, sort_order, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    "#,
+                )
+                .bind(&p.id)
+                .bind(&p.name)
+                .bind(&p.description)
+                .bind(p.price)
+                .bind(&p.billing_cycle)
+                .bind(serde_json::to_string(&p.module_limits).unwrap_or_else(|_| "{}".to_string()))
+                .bind(p.max_users)
+                .bind(p.max_branches)
+                .bind(p.max_storage_mb)
+                .bind(serde_json::to_string(&p.features).unwrap_or_else(|_| "[]".to_string()))
+                .bind(p.is_active)
+                .bind(p.sort_order)
+                .bind(&p.created_at)
+                .bind(&p.updated_at)
+                .execute(sqlite_pool)
+                .await;
+            }
+        }
+    }
 }
+
+pub const DEFAULT_NEON_DATABASE_URL: &str =
+    "postgresql://neondb_owner:npg_kCdPHpZ30hut@ep-restless-surf-ayvdfezf-pooler.c-5.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require";
 
 /// Initializes the connection to Neon PostgreSQL and runs cloud hub schema migrations.
 pub async fn init_neon_pool() -> Option<PgPool> {
@@ -898,10 +1070,10 @@ pub async fn init_neon_pool() -> Option<PgPool> {
 
     let database_url = match std::env::var("DATABASE_URL") {
         Ok(url) if !url.trim().is_empty() => url,
-        _ => {
-            warn!("DATABASE_URL not set; running in decoupled local-only mode");
-            return None;
-        }
+        _ => match option_env!("DATABASE_URL") {
+            Some(url) if !url.trim().is_empty() => url.to_string(),
+            _ => DEFAULT_NEON_DATABASE_URL.to_string(),
+        },
     };
 
     info!("Connecting to Neon PostgreSQL...");

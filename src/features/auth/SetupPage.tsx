@@ -262,29 +262,43 @@ export default function SetupPage({
             </Stack>
 
             {onSwitchToLogin && (
-              <Group
-                justify="space-between"
-                align="center"
-                p="xs"
-                mb="md"
+              <div
                 style={{
-                  background: "#F8FAFC",
-                  border: "1px solid #E2E8F0",
-                  borderRadius: 8,
+                  background: "linear-gradient(135deg, rgba(2, 132, 199, 0.08), rgba(16, 185, 129, 0.08))",
+                  border: "1px solid rgba(2, 132, 199, 0.2)",
+                  borderRadius: 12,
+                  padding: "12px 16px",
+                  marginBottom: 18,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 12,
                 }}
               >
-                <Text size="xs" fw={500} c="dimmed">
-                  Joining an existing company or team?
-                </Text>
+                <div>
+                  <Text size="xs" fw={700} style={{ color: "#0F172A" }}>
+                    Joining an existing company or team?
+                  </Text>
+                  <Text size="xs" style={{ color: "#64748B" }}>
+                    Sign in with your staff or owner account.
+                  </Text>
+                </div>
                 <Button
-                  variant="subtle"
-                  size="compact-xs"
+                  variant="filled"
+                  size="xs"
+                  radius="md"
                   color="teal"
                   onClick={onSwitchToLogin}
+                  styles={{
+                    root: {
+                      fontWeight: 700,
+                      flexShrink: 0,
+                    },
+                  }}
                 >
-                  Log In Here →
+                  Sign In →
                 </Button>
-              </Group>
+              </div>
             )}
 
             <form onSubmit={handleSubmit}>

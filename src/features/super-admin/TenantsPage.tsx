@@ -249,21 +249,21 @@ export default function TenantsPage() {
                       initial={{ opacity: 0, y: 14 }}
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ delay: Math.min(i * 0.03, 0.3), duration: 0.25 }}
-                      whileHover={{ y: -2 }}
+                      whileHover={{ y: -3 }}
                       onClick={() => setSelected(tenant)}
                       style={{
                         display: "flex",
                         alignItems: "center",
-                        gap: 16,
-                        padding: "16px 20px",
-                        borderRadius: 16,
+                        gap: 20,
+                        padding: "20px 24px",
+                        borderRadius: 20,
                         background: isSelected ? SA.panelStrong : SA.panel,
                         border: `1px solid ${isSelected ? SA.accent : SA.border}`,
                         cursor: "pointer",
                         transition: "all 0.2s ease",
                         boxShadow: isSelected
-                          ? `0 0 0 1px ${SA.accent}, 0 12px 28px -10px rgba(0,0,0,0.5)`
-                          : "0 2px 8px rgba(0,0,0,0.2)",
+                          ? `0 0 0 1px ${SA.accent}, 0 16px 36px -12px rgba(2,132,199,0.3)`
+                          : "0 2px 10px rgba(0,0,0,0.06)",
                       }}
                       onMouseEnter={(e) => {
                         if (!isSelected) e.currentTarget.style.borderColor = SA.borderStrong;
