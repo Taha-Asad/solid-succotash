@@ -29,12 +29,7 @@ pub async fn list_tenant_companies(
 ) -> Result<Vec<TenantCompanySummary>, AppError> {
     require_super_admin(pool.inner(), session.inner()).await?;
 
-    let cloud_db = crate::db::neon::NeonCloudDb::global();
-    if cloud_db.is_connected() {
-        return cloud_db.list_tenant_companies().await;
-    }
-
-    let rows = sqlx::query_as::<_, TenantCompanySummary>(
+    let local_rows = sqlx::query_as::<_, TenantCompanySummary>(
         r#"
         SELECT
             c.id,
@@ -57,9 +52,32 @@ pub async fn list_tenant_companies(
     )
     .fetch_all(pool.inner())
     .await
-    .map_err(|error| format!("Database error: {error}"))?;
+    .unwrap_or_default();
 
-    Ok(rows)
+    let cloud_db = crate::db::neon::NeonCloudDb::global();
+    if cloud_db.is_connected() {
+        if let Ok(cloud_rows) = cloud_db.list_tenant_companies().await {
+            use std::collections::HashSet;
+            let mut seen_ids = HashSet::new();
+            let mut combined = Vec::new();
+
+            for row in cloud_rows {
+                seen_ids.insert(row.id.clone());
+                combined.push(row);
+            }
+
+            for row in local_rows {
+                if !seen_ids.contains(&row.id) {
+                    seen_ids.insert(row.id.clone());
+                    combined.push(row);
+                }
+            }
+
+            return Ok(combined);
+        }
+    }
+
+    Ok(local_rows)
 }
 
 #[tauri::command]
@@ -72,7 +90,9 @@ pub async fn get_tenant_company_detail(
 
     let cloud_db = crate::db::neon::NeonCloudDb::global();
     if cloud_db.is_connected() {
-        return cloud_db.get_tenant_company_detail(&company_id).await;
+        if let Ok(detail) = cloud_db.get_tenant_company_detail(&company_id).await {
+            return Ok(detail);
+        }
     }
 
     let company = sqlx::query_as::<_, PublicCompany>(

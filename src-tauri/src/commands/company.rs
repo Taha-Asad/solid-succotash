@@ -553,8 +553,15 @@ pub async fn set_company_module(
 ) -> Result<PublicCompanyModule, AppError> {
     let actor = require_current_user(pool.inner(), session.inner()).await?;
 
-    if actor.company_id.as_deref() != Some(&company_id) || !matches!(actor.role.as_str(), "owner" | "admin") {
-        return Err(AppError::internal("Only company owners or admins can change modules".to_string()));
+    let is_authorized = actor.is_super_admin
+        || actor.role == "super_admin"
+        || (actor.company_id.as_deref() == Some(&company_id)
+            && matches!(actor.role.as_str(), "owner" | "admin"));
+
+    if !is_authorized {
+        return Err(AppError::internal(
+            "Only company owners/admins or a super admin can change modules".to_string(),
+        ));
     }
 
     let raw_key = module_key.trim().to_lowercase();
@@ -651,6 +658,28 @@ pub async fn set_company_module(
     .fetch_one(pool.inner())
     .await
     .map_err(|error| format!("Database error: {error}"))?;
+
+    let cloud_db = crate::db::neon::NeonCloudDb::global();
+    if cloud_db.is_connected() {
+        if let Some(pg_pool) = cloud_db.pool() {
+            let mod_id = Uuid::new_v4().to_string();
+            let _ = sqlx::query(
+                r#"
+                INSERT INTO company_modules (id, company_id, module_key, is_enabled, settings)
+                VALUES ($1, $2, $3, $4, '{}'::jsonb)
+                ON CONFLICT (company_id, module_key) DO UPDATE SET
+                    is_enabled = EXCLUDED.is_enabled,
+                    updated_at = NOW();
+                "#,
+            )
+            .bind(&mod_id)
+            .bind(&company_id)
+            .bind(&module_key)
+            .bind(is_enabled)
+            .execute(pg_pool)
+            .await;
+        }
+    }
 
     Ok(row.to_public())
 }

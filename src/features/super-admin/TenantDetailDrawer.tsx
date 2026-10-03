@@ -407,9 +407,9 @@ export default function TenantDetailDrawer({
                               variant="filled"
                               styles={{
                                 root: {
-                                  background: "#1E293B",
-                                  color: "#94A3B8",
-                                  border: "1px solid #334155",
+                                  background: SA.panelStrong,
+                                  color: SA.muted,
+                                  border: `1px solid ${SA.border}`,
                                 },
                               }}
                               leftSection={<Lock size={9} />}
@@ -428,7 +428,13 @@ export default function TenantDetailDrawer({
                         checked={isCore ? true : mod.isEnabled}
                         disabled={isCore}
                         onChange={(e) => toggleModule(mod.moduleKey, e.currentTarget.checked)}
-                        color="cyan"
+                        styles={{
+                          track: {
+                            backgroundColor: (isCore ? true : mod.isEnabled) ? "#2BB673" : SA.borderStrong,
+                            borderColor: "transparent",
+                            cursor: isCore ? "not-allowed" : "pointer",
+                          },
+                        }}
                       />
                     </div>
                   );
@@ -468,9 +474,9 @@ export default function TenantDetailDrawer({
                         variant="filled"
                         styles={{
                           root: {
-                            background: flag.isEnabled ? "#064E3B" : "#1E293B",
-                            color: flag.isEnabled ? "#6EE7B7" : "#94A3B8",
-                            border: `1px solid ${flag.isEnabled ? "#059669" : "#475569"}`,
+                            background: flag.isEnabled ? "rgba(43, 182, 115, 0.12)" : SA.panelStrong,
+                            color: flag.isEnabled ? SA.accent : SA.muted,
+                            border: `1px solid ${flag.isEnabled ? "rgba(43, 182, 115, 0.3)" : SA.border}`,
                             fontWeight: 700,
                           },
                         }}

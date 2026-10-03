@@ -87,7 +87,7 @@ export default function PlatformOverviewPage({
         height: "100%",
         width: "100%",
         overflow: "hidden",
-        background: SA.bg,
+        background: SA.panel,
       }}
     >
       {/* ==================== CENTER STAGE ==================== */}
@@ -98,22 +98,23 @@ export default function PlatformOverviewPage({
           display: "flex",
           flexDirection: "column",
           height: "100%",
+          background: SA.panel,
         }}
       >
         {/* Floating Pill Search Bar (SLAB Design: Search your file .....) */}
-        <div style={{ padding: "20px 28px 10px", flexShrink: 0 }}>
+        <div style={{ padding: "20px 28px 12px", flexShrink: 0 }}>
           <TextInput
             placeholder="Search your file ....."
-            size="sm"
+            size="md"
             radius="xl"
             value={search}
             onChange={(e) => setSearch(e.currentTarget.value)}
             leftSection={
               <div
                 style={{
-                  width: 24,
-                  height: 24,
-                  borderRadius: "50%",
+                  width: 28,
+                  height: 28,
+                  borderRadius: 8,
                   background: "#2BB673",
                   display: "flex",
                   alignItems: "center",
@@ -121,22 +122,23 @@ export default function PlatformOverviewPage({
                   color: "#FFFFFF",
                 }}
               >
-                <Search size={13} />
+                <Search size={14} />
               </div>
             }
             styles={{
               input: {
-                background: SA.panel,
-                border: "none",
-                boxShadow: "0 2px 10px rgba(0, 0, 0, 0.03)",
+                background: SA.panelStrong,
+                border: `1px solid ${SA.border}`,
+                boxShadow: "0 2px 8px rgba(0, 0, 0, 0.02)",
                 color: SA.text,
-                paddingLeft: 38,
-                height: 42,
+                paddingLeft: 46,
+                height: 44,
                 fontSize: 13,
                 fontWeight: 500,
-                borderRadius: 21,
+                borderRadius: 22,
                 "&:focus": {
                   boxShadow: "0 0 0 2px rgba(43, 182, 115, 0.25)",
+                  borderColor: "#2BB673",
                 },
               },
             }}
@@ -224,7 +226,7 @@ export default function PlatformOverviewPage({
                       return (
                         <motion.div
                           key={tenant.id}
-                          whileHover={{ background: isHighlighted ? "#E4F5ED" : SA.panelHover }}
+                          whileHover={{ background: isHighlighted ? (SA.panelMint === "#E8F8F0" ? "#E0F5EB" : "#134B3D") : SA.panelHover }}
                           onClick={() => onOpenTenant && onOpenTenant(tenant)}
                           style={{
                             display: "grid",
@@ -236,7 +238,7 @@ export default function PlatformOverviewPage({
                               i === filteredTenants.length - 1
                                 ? "none"
                                 : `1px solid ${SA.border}`,
-                            background: isHighlighted ? "#EBF7F1" : "transparent",
+                            background: isHighlighted ? SA.panelMint : "transparent",
                             cursor: "pointer",
                             transition: "background 0.15s ease",
                           }}
@@ -265,7 +267,7 @@ export default function PlatformOverviewPage({
                               fw={600}
                               size="xs"
                               style={{
-                                color: isHighlighted ? "#15803D" : SA.text,
+                                color: isHighlighted ? SA.accent : SA.text,
                                 fontSize: 13,
                               }}
                               truncate
@@ -278,7 +280,7 @@ export default function PlatformOverviewPage({
                           <Text
                             size="xs"
                             style={{
-                              color: isHighlighted ? "#15803D" : SA.muted,
+                              color: isHighlighted ? SA.accent : SA.muted,
                               fontSize: 12,
                             }}
                           >
@@ -292,7 +294,7 @@ export default function PlatformOverviewPage({
                             size="xs"
                             fw={500}
                             style={{
-                              color: isHighlighted ? "#15803D" : SA.muted,
+                              color: isHighlighted ? SA.accent : SA.muted,
                               fontSize: 12,
                             }}
                             truncate
@@ -307,7 +309,7 @@ export default function PlatformOverviewPage({
                             <ActionIcon
                               variant="subtle"
                               size="xs"
-                              style={{ color: isHighlighted ? "#15803D" : SA.muted }}
+                              style={{ color: isHighlighted ? SA.accent : SA.muted }}
                               onClick={(e) => {
                                 e.stopPropagation();
                                 if (onOpenTenant) onOpenTenant(tenant);

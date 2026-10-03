@@ -309,8 +309,8 @@ export default function RainbowGauge({
       <div
         style={{
           borderRadius: 18,
-          background: "#F0FAF5",
-          border: "1px solid #DDF2E8",
+          background: SA.panelMint,
+          border: `1px solid ${SA.border}`,
           padding: "18px 16px",
           display: "flex",
           flexDirection: "column",
@@ -323,22 +323,22 @@ export default function RainbowGauge({
             width: 44,
             height: 44,
             borderRadius: 14,
-            background: "#FFFFFF",
+            background: SA.panel,
             boxShadow: "0 4px 14px rgba(43, 182, 115, 0.2)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            color: "#2BB673",
+            color: SA.accent,
             marginBottom: 10,
           }}
         >
           <ShieldCheck size={24} />
         </div>
 
-        <Text fw={800} size="xs" style={{ color: "#162D24", fontSize: 14 }}>
+        <Text fw={800} size="xs" style={{ color: SA.text, fontSize: 14 }}>
           Upgrade to PRO
         </Text>
-        <Text size="11px" style={{ color: "#64748B", marginTop: 4, lineHeight: 1.4 }}>
+        <Text size="11px" style={{ color: SA.muted, marginTop: 4, lineHeight: 1.4 }}>
           Get more space for your storage and access to all features
         </Text>
 
@@ -350,13 +350,13 @@ export default function RainbowGauge({
           onClick={onRunDiagnostics}
           styles={{
             root: {
-              background: "#2BB673",
+              background: SA.gradient,
               color: "#FFFFFF",
               fontWeight: 700,
               fontSize: 12,
-              height: 34,
-              boxShadow: "0 4px 12px rgba(43, 182, 115, 0.35)",
-              "&:hover": { background: "#249e63" },
+              height: 36,
+              boxShadow: "0 4px 14px rgba(43, 182, 115, 0.35)",
+              "&:hover": { filter: "brightness(1.06)" },
             },
           }}
         >

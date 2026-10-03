@@ -29,15 +29,14 @@ import {
   ChartPie,
   Check,
   ChevronDown,
+  Cloud,
   Folder,
-  Gauge,
+  Home,
   Languages,
   LogOut,
   Moon,
   Plus,
   Settings,
-  ShieldCheck,
-  Sparkles,
   Sun,
 } from "lucide-react";
 
@@ -61,10 +60,9 @@ export type SaView = "overview" | "tenants" | "packages" | "analytics" | "settin
 
 const DOCK_ITEMS: {
   id: SaView;
-  icon: typeof Gauge;
+  icon: typeof Building2;
   labelKey: string;
 }[] = [
-  { id: "overview", icon: Gauge, labelKey: "sa.nav.overview" },
   { id: "tenants", icon: Building2, labelKey: "sa.nav.tenants" },
   { id: "packages", icon: Boxes, labelKey: "sa.nav.packages" },
   { id: "analytics", icon: ChartPie, labelKey: "sa.nav.analytics" },
@@ -194,160 +192,217 @@ function PlatformShell({
         background: SA.bg,
         color: SA.text,
         overflow: "hidden",
+        padding: "14px 18px",
+        boxSizing: "border-box",
       }}
     >
-      {/* ======================================================== */}
-      {/* 1. FAR-LEFT SLIM EMERALD DOCK RAIL (SLAB STYLE)           */}
-      {/* ======================================================== */}
-      <aside
+      {/* Floating Enclosed Master Canvas (Aryo Pamungkas SLAB Design Studio) */}
+      <div
         style={{
-          width: 70,
-          flexShrink: 0,
-          background: SA.bgDock,
           display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "space-between",
-          paddingBlock: 24,
-          zIndex: 10,
-        }}
-      >
-        {/* Top App Icon */}
-        <Stack align="center" gap="xl">
-          <div
-            style={{
-              width: 44,
-              height: 44,
-              borderRadius: 14,
-              background: "rgba(255, 255, 255, 0.22)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              color: "#FFFFFF",
-              cursor: "pointer",
-            }}
-            onClick={() => setView("overview")}
-          >
-            <ShieldCheck size={24} />
-          </div>
-
-          {/* Navigation Icons Stack */}
-          <Stack align="center" gap="sm">
-            {DOCK_ITEMS.map((item) => {
-              const Icon = item.icon;
-              const active = view === item.id;
-              return (
-                <Tooltip
-                  key={item.id}
-                  label={t(item.labelKey)}
-                  position="right"
-                  offset={14}
-                  withinPortal
-                >
-                  <UnstyledButton
-                    onClick={() => setView(item.id)}
-                    style={{
-                      width: 44,
-                      height: 44,
-                      borderRadius: 14,
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      background: active ? SA.dockActiveBg : "transparent",
-                      color: active ? SA.dockActiveColor : SA.dockInactiveColor,
-                      boxShadow: active ? "0 4px 14px rgba(0, 0, 0, 0.12)" : "none",
-                      transition: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
-                    }}
-                    onMouseEnter={(e) => {
-                      if (!active) e.currentTarget.style.color = "#FFFFFF";
-                    }}
-                    onMouseLeave={(e) => {
-                      if (!active) e.currentTarget.style.color = SA.dockInactiveColor;
-                    }}
-                  >
-                    <Icon size={20} />
-                  </UnstyledButton>
-                </Tooltip>
-              );
-            })}
-          </Stack>
-        </Stack>
-
-        {/* Bottom Logout Button */}
-        <Tooltip label={t("sa.logout")} position="right" offset={14} withinPortal>
-          <UnstyledButton
-            onClick={onLogout}
-            style={{
-              width: 44,
-              height: 44,
-              borderRadius: 14,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              color: SA.dockInactiveColor,
-              transition: "all 0.2s ease",
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.color = "#FFFFFF";
-              e.currentTarget.style.background = "rgba(255, 255, 255, 0.15)";
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.color = SA.dockInactiveColor;
-              e.currentTarget.style.background = "transparent";
-            }}
-          >
-            <LogOut size={20} />
-          </UnstyledButton>
-        </Tooltip>
-      </aside>
-
-      {/* ======================================================== */}
-      {/* 2. SECONDARY CLEAN WHITE SIDEBAR (SLAB DIRECTORY)        */}
-      {/* ======================================================== */}
-      <aside
-        style={{
-          width: 230,
-          flexShrink: 0,
+          flex: 1,
+          height: "100%",
+          width: "100%",
+          borderRadius: 28,
+          overflow: "hidden",
           background: SA.bgSidebar,
-          borderInlineEnd: `1px solid ${SA.border}`,
-          display: "flex",
-          flexDirection: "column",
-          justifyContent: "space-between",
-          padding: "24px 18px",
-          overflowY: "auto",
+          boxShadow: SA.shadow,
+          border: `1px solid ${SA.border}`,
         }}
       >
-        <Stack gap="lg">
-          {/* Brand Header */}
-          <Group gap="sm" wrap="nowrap">
-            <div
-              style={{
-                width: 36,
-                height: 36,
-                borderRadius: 10,
-                background: "rgba(43, 182, 115, 0.15)",
-                color: SA.accent,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                fontWeight: 800,
-              }}
-            >
-              <Sparkles size={18} />
-            </div>
-            <Stack gap={0} style={{ minWidth: 0 }}>
-              <Text fw={800} size="sm" style={{ color: SA.text, letterSpacing: -0.2 }} truncate>
-                The Foolish Crow
-              </Text>
-              <Text size="10px" fw={700} style={{ color: SA.accent, letterSpacing: 0.8 }} tt="uppercase">
-                Sovereign Deck
-              </Text>
-            </Stack>
-          </Group>
+        {/* ======================================================== */}
+        {/* 1. FAR-LEFT SLIM EMERALD DOCK RAIL (SLAB STYLE)           */}
+        {/* ======================================================== */}
+        <aside
+          style={{
+            width: 74,
+            flexShrink: 0,
+            background: SA.bgDock,
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "space-between",
+            paddingBlock: 24,
+            zIndex: 10,
+          }}
+        >
+          {/* Top Home App Icon (Active White Squircle in SLAB) */}
+          <Stack align="center" gap="xl">
+            <Tooltip label={t("sa.nav.overview")} position="right" offset={14} withinPortal>
+              <UnstyledButton
+                onClick={() => setView("overview")}
+                style={{
+                  width: 44,
+                  height: 44,
+                  borderRadius: 14,
+                  background: view === "overview" ? SA.dockActiveBg : "rgba(255, 255, 255, 0.22)",
+                  color: view === "overview" ? SA.dockActiveColor : "#FFFFFF",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  cursor: "pointer",
+                  boxShadow: view === "overview" ? "0 4px 14px rgba(0, 0, 0, 0.15)" : "none",
+                  transition: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
+                }}
+                onMouseEnter={(e) => {
+                  if (view !== "overview") e.currentTarget.style.background = "rgba(255, 255, 255, 0.32)";
+                }}
+                onMouseLeave={(e) => {
+                  if (view !== "overview") e.currentTarget.style.background = "rgba(255, 255, 255, 0.22)";
+                }}
+              >
+                <Home size={22} />
+              </UnstyledButton>
+            </Tooltip>
 
-          {/* Prominent "+ Create New" Pill Button (SLAB Style) */}
-          <Button
-            fullWidth
+            {/* Navigation Icons Stack */}
+            <Stack align="center" gap="sm">
+              {DOCK_ITEMS.map((item) => {
+                const Icon = item.icon;
+                const active = view === item.id;
+                return (
+                  <Tooltip
+                    key={item.id}
+                    label={t(item.labelKey)}
+                    position="right"
+                    offset={14}
+                    withinPortal
+                  >
+                    <UnstyledButton
+                      onClick={() => setView(item.id)}
+                      style={{
+                        width: 44,
+                        height: 44,
+                        borderRadius: 14,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        background: active ? SA.dockActiveBg : "transparent",
+                        color: active ? SA.dockActiveColor : SA.dockInactiveColor,
+                        boxShadow: active ? "0 4px 14px rgba(0, 0, 0, 0.12)" : "none",
+                        transition: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
+                      }}
+                      onMouseEnter={(e) => {
+                        if (!active) e.currentTarget.style.color = "#FFFFFF";
+                      }}
+                      onMouseLeave={(e) => {
+                        if (!active) e.currentTarget.style.color = SA.dockInactiveColor;
+                      }}
+                    >
+                      <Icon size={20} />
+                    </UnstyledButton>
+                  </Tooltip>
+                );
+              })}
+            </Stack>
+          </Stack>
+
+          {/* Bottom Controls: Language, Theme & Logout */}
+          <Stack align="center" gap="xs">
+            <PlatformLanguageMenu />
+
+            <Tooltip label={t("sa.settings.theme")} position="right" offset={14} withinPortal>
+              <UnstyledButton
+                onClick={() => setScheme(scheme === "dark" ? "light" : "dark")}
+                style={{
+                  width: 44,
+                  height: 44,
+                  borderRadius: 14,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  color: SA.dockInactiveColor,
+                  transition: "all 0.2s ease",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.color = "#FFFFFF";
+                  e.currentTarget.style.background = "rgba(255, 255, 255, 0.15)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.color = SA.dockInactiveColor;
+                  e.currentTarget.style.background = "transparent";
+                }}
+              >
+                {scheme === "dark" ? <Sun size={19} /> : <Moon size={19} />}
+              </UnstyledButton>
+            </Tooltip>
+
+            <Tooltip label={t("sa.logout")} position="right" offset={14} withinPortal>
+              <UnstyledButton
+                onClick={onLogout}
+                style={{
+                  width: 44,
+                  height: 44,
+                  borderRadius: 14,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  color: SA.dockInactiveColor,
+                  transition: "all 0.2s ease",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.color = "#FFFFFF";
+                  e.currentTarget.style.background = "rgba(255, 255, 255, 0.15)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.color = SA.dockInactiveColor;
+                  e.currentTarget.style.background = "transparent";
+                }}
+              >
+                <LogOut size={19} />
+              </UnstyledButton>
+            </Tooltip>
+          </Stack>
+        </aside>
+
+        {/* ======================================================== */}
+        {/* 2. SECONDARY CLEAN WHITE SIDEBAR (SLAB DIRECTORY)        */}
+        {/* ======================================================== */}
+        <aside
+          style={{
+            width: 236,
+            flexShrink: 0,
+            background: SA.bgSidebar,
+            borderInlineEnd: `1px solid ${SA.border}`,
+            display: "flex",
+            flexDirection: "column",
+            justifyContent: "space-between",
+            padding: "24px 18px",
+            overflowY: "auto",
+          }}
+        >
+          <Stack gap="lg">
+            {/* Brand Header */}
+            <Group gap="sm" wrap="nowrap">
+              <div
+                style={{
+                  width: 38,
+                  height: 38,
+                  borderRadius: 12,
+                  background: "rgba(43, 182, 115, 0.12)",
+                  color: SA.accent,
+                  border: "1px solid rgba(43, 182, 115, 0.25)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontWeight: 800,
+                }}
+              >
+                <Cloud size={20} />
+              </div>
+              <Stack gap={0} style={{ minWidth: 0 }}>
+                <Text fw={800} size="sm" style={{ color: SA.text, letterSpacing: -0.2 }} truncate>
+                  Corbel Cloud
+                </Text>
+                <Text size="10px" fw={700} style={{ color: SA.accent, letterSpacing: 0.8 }} tt="uppercase">
+                  Super Admin
+                </Text>
+              </Stack>
+            </Group>
+
+            {/* Prominent "+ Create New" Pill Button (SLAB Style) */}
+            <Button
+              fullWidth
             radius="xl"
             size="md"
             leftSection={<Plus size={16} />}
@@ -582,6 +637,7 @@ function PlatformShell({
           </AnimatePresence>
         </div>
       </main>
+      </div>
 
       {/* Global Modals & Drawers */}
       <RegisterTenantModal
