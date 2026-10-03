@@ -1,418 +1,354 @@
 // ==========================================
-// PLATFORM OVERVIEW — Super Admin landing
+// PLATFORM OVERVIEW — Super Admin Dashboard
 // ==========================================
+// Designed in accordance with Aryo Pamungkas (SLAB Design Studio)
+// File Manager Dashboard design:
+// 1. Top Pill Search Field
+// 2. Featured Emerald Quick Access Cards & Avatar Stacks
+// 3. Sector & Category Folder Grid
+// 4. Recent Tenants & Activity Table with colored badges
+// 5. Right Inspector with Semi-Circular Rainbow Arc Gauge
 
 import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 
 import {
+  ActionIcon,
   Badge,
   Button,
   Group,
   ScrollArea,
   Stack,
   Text,
+  TextInput,
 } from "@mantine/core";
 import {
-  ArrowUpRight,
+  ArrowRight,
   Building2,
-  Layers,
-  Plus,
-  Users,
-  Activity,
+  MoreVertical,
+  Search,
 } from "lucide-react";
 
 import {
-  getErrorMessage,
-  listPackages,
   listTenantCompanies,
 } from "../../api/backend";
-import type { TenantCompanySummary } from "../../types/backend";
-import { useI18n } from "../../i18n/I18nProvider";
-import LottieAnimation from "../../components/LottieAnimation";
-import platformPulse from "../../assets/lottie/platform-pulse.json";
-import { useSaTheme } from "./saTheme.tsx";
+import type { PublicUser, TenantCompanySummary } from "../../types/backend";
+import { useSaTheme } from "./saTheme";
 import type { SaView } from "./SuperAdminShell";
-
-const container = {
-  hidden: { opacity: 0 },
-  show: {
-    opacity: 1,
-    transition: { staggerChildren: 0.08, delayChildren: 0.05 },
-  },
-};
-
-const item = {
-  hidden: { opacity: 0, y: 24 },
-  show: {
-    opacity: 1,
-    y: 0,
-    transition: { type: "spring" as const, stiffness: 220, damping: 24 },
-  },
-};
-
-function StatCard({
-  label,
-  value,
-  icon,
-  tint,
-  delay,
-}: {
-  label: string;
-  value: number | string;
-  icon: React.ReactNode;
-  tint: string;
-  delay: number;
-}) {
-  const SA = useSaTheme();
-  return (
-    <motion.div
-      variants={item}
-      custom={delay}
-      whileHover={{ y: -4 }}
-      style={{
-        borderRadius: 16,
-        padding: "18px 20px",
-        background: SA.panel,
-        border: `1px solid ${SA.border}`,
-        boxShadow: "0 2px 8px rgba(0, 0, 0, 0.2)",
-      }}
-    >
-      <Group justify="space-between" wrap="nowrap">
-        <Stack gap={4}>
-          <Text size="xs" fw={700} style={{ color: SA.muted, letterSpacing: 0.5, textTransform: "uppercase" }}>
-            {label}
-          </Text>
-          <motion.div
-            key={value}
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ type: "spring", stiffness: 300, damping: 20, delay }}
-          >
-            <Text fw={800} size="xl" style={{ color: SA.text, letterSpacing: -0.5 }}>
-              {value}
-            </Text>
-          </motion.div>
-        </Stack>
-        <div
-          style={{
-            width: 44,
-            height: 44,
-            borderRadius: 12,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            background: tint,
-            color: "#06121F",
-            fontWeight: 800,
-          }}
-        >
-          {icon}
-        </div>
-      </Group>
-    </motion.div>
-  );
-}
+import RainbowGauge from "./RainbowGauge";
+import OverviewQuickAccess from "./OverviewQuickAccess";
 
 export default function PlatformOverviewPage({
   onNavigate,
+  user,
+  onOpenTenant,
 }: {
   onNavigate: (v: SaView) => void;
+  user?: PublicUser;
+  onOpenTenant?: (tenant: TenantCompanySummary) => void;
 }) {
-  const { t } = useI18n();
   const SA = useSaTheme();
   const [tenants, setTenants] = useState<TenantCompanySummary[]>([]);
-  const [packageCount, setPackageCount] = useState(0);
-  const [error, setError] = useState("");
+  const [search, setSearch] = useState("");
 
   useEffect(() => {
     let cancelled = false;
     listTenantCompanies()
-      .then((rows) => !cancelled && setTenants(rows))
-      .catch((err) => !cancelled && setError(getErrorMessage(err)));
-    listPackages(true)
-      .then((rows) => !cancelled && setPackageCount(rows.length))
+      .then((rows) => {
+        if (!cancelled) {
+          setTenants(rows);
+        }
+      })
       .catch(() => {});
     return () => {
       cancelled = true;
     };
   }, []);
 
-  const stats = useMemo(() => {
-    const active = tenants.filter((t) => t.isActive).length;
-    const users = tenants.reduce((sum, t) => sum + t.userCount, 0);
-    return {
-      total: tenants.length,
-      active,
-      users,
-      packages: packageCount,
-    };
-  }, [tenants, packageCount]);
+  const filteredTenants = useMemo(() => {
+    if (!search.trim()) return tenants;
+    const q = search.toLowerCase();
+    return tenants.filter(
+      (t) =>
+        t.name.toLowerCase().includes(q) ||
+        (t.email && t.email.toLowerCase().includes(q)) ||
+        (t.packageName && t.packageName.toLowerCase().includes(q)),
+    );
+  }, [tenants, search]);
 
-  const recent = tenants.slice(0, 5);
+  const recent = filteredTenants.slice(0, 6);
+
+  // File-type style color badges for the table
+  const badgeStyles = [
+    { bg: "rgba(59, 130, 246, 0.12)", color: "#3B82F6", label: "APP" },
+    { bg: "rgba(245, 158, 11, 0.12)", color: "#F59E0B", label: "ZIP" },
+    { bg: "rgba(239, 68, 68, 0.12)", color: "#EF4444", label: "PDF" },
+    { bg: "rgba(16, 185, 129, 0.12)", color: "#10B981", label: "DOC" },
+  ];
 
   return (
-    <ScrollArea h="100%">
-      <Stack gap="lg" p={28} maw={1180} mx="auto">
-        {/* ==================== HERO ==================== */}
-        <motion.div
-          variants={container}
-          initial="hidden"
-          animate="show"
-          style={{
-            position: "relative",
-            overflow: "hidden",
-            borderRadius: 20,
-            padding: "32px 34px",
-            background: SA.panelStrong,
-            border: `1px solid ${SA.borderStrong}`,
-            boxShadow: "0 4px 16px rgba(0,0,0,0.3)",
-          }}
-        >
-          <Stack gap={6} style={{ position: "relative", zIndex: 1 }}>
-            <motion.div variants={item}>
-              <Badge
-                variant="light"
-                styles={{
-                  root: {
-                    background: "rgba(56,189,248,0.12)",
-                    color: SA.cyan,
-                    border: "1px solid rgba(56,189,248,0.3)",
-                  },
-                  label: { fontWeight: 700, letterSpacing: 1 },
-                }}
-              >
-                PLATFORM
-              </Badge>
-            </motion.div>
-            <motion.div variants={item}>
-              <Text
-                fw={800}
-                fz={30}
+    <div
+      style={{
+        display: "flex",
+        height: "100%",
+        width: "100%",
+        overflow: "hidden",
+        background: SA.bg,
+      }}
+    >
+      {/* ==================== CENTER WORKSPACE ==================== */}
+      <div
+        style={{
+          flex: 1,
+          minWidth: 0,
+          display: "flex",
+          flexDirection: "column",
+          height: "100%",
+        }}
+      >
+        {/* Top Pill Search Bar (SLAB Style) */}
+        <div style={{ padding: "22px 28px 12px", flexShrink: 0 }}>
+          <TextInput
+            placeholder="Search your tenants, packages, domains, or audit records..."
+            size="md"
+            radius="xl"
+            value={search}
+            onChange={(e) => setSearch(e.currentTarget.value)}
+            leftSection={
+              <div
                 style={{
-                  letterSpacing: -0.8,
-                  background: SA.gradientText,
-                  WebkitBackgroundClip: "text",
-                  backgroundClip: "text",
-                  color: "transparent",
+                  width: 28,
+                  height: 28,
+                  borderRadius: "50%",
+                  background: "rgba(43, 182, 115, 0.12)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  color: SA.accent,
                 }}
               >
-                {t("sa.overview.heroTitle")}
-              </Text>
-            </motion.div>
-            <motion.div variants={item}>
-              <Text size="sm" style={{ color: SA.textSoft, maxWidth: 560 }}>
-                {t("sa.overview.heroSubtitle")}
-              </Text>
-            </motion.div>
-            <motion.div variants={item}>
-              <Group gap="sm" mt="xs">
+                <Search size={15} />
+              </div>
+            }
+            styles={{
+              input: {
+                background: SA.panel,
+                border: `1px solid ${SA.border}`,
+                boxShadow: "0 2px 8px rgba(0, 0, 0, 0.02)",
+                color: SA.text,
+                paddingLeft: 42,
+                fontWeight: 500,
+                fontSize: 14,
+                "&:focus": {
+                  borderColor: SA.accent,
+                },
+              },
+            }}
+          />
+        </div>
+
+        {/* Scrollable Main Content */}
+        <ScrollArea flex={1} style={{ position: "relative" }}>
+          <Stack gap="xl" p="28px" pt="8px">
+            {/* Quick Access & Sectors Grid */}
+            <OverviewQuickAccess
+              tenants={tenants}
+              onOpenTenant={onOpenTenant}
+              onNavigateTenants={() => onNavigate("tenants")}
+            />
+
+            {/* Recent Files / Tenants Table Section */}
+            <div style={{ marginTop: 4 }}>
+              <Group justify="space-between" align="center" mb="md">
+                <Text
+                  fw={800}
+                  size="md"
+                  style={{ color: SA.text, letterSpacing: -0.3 }}
+                >
+                  Recent Tenants & Activity
+                </Text>
                 <Button
-                  size="sm"
-                  leftSection={<Plus size={15} />}
+                  variant="subtle"
+                  size="xs"
+                  rightSection={<ArrowRight size={15} />}
                   onClick={() => onNavigate("tenants")}
                   styles={{
                     root: {
-                      background: SA.gradient,
-                      color: "#06121F",
-                      fontWeight: 700,
-                      boxShadow: "0 10px 26px -10px rgba(56,189,248,0.7)",
-                      "&:hover": { filter: "brightness(1.08)" },
+                      color: SA.accent,
+                      "&:hover": { background: "rgba(43, 182, 115, 0.08)" },
                     },
+                    label: { fontWeight: 700 },
                   }}
                 >
-                  {t("sa.overview.newTenant")}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="light"
-                  onClick={() => onNavigate("packages")}
-                  styles={{
-                    root: {
-                      background: "rgba(255,255,255,0.06)",
-                      color: SA.text,
-                      border: `1px solid ${SA.border}`,
-                      "&:hover": { background: SA.panelHover },
-                    },
-                  }}
-                >
-                  {t("sa.overview.managePackages")}
+                  View All
                 </Button>
               </Group>
-            </motion.div>
-          </Stack>
 
-          {/* Lottie pulse animation */}
-          <motion.div
-            variants={item}
-            aria-hidden
-            style={{
-              position: "absolute",
-              insetInlineEnd: 40,
-              top: "50%",
-              transform: "translateY(-50%)",
-              width: 220,
-              height: 220,
-              opacity: 0.9,
-            }}
-          >
-            <LottieAnimation animationData={platformPulse} size="100%" />
-          </motion.div>
-        </motion.div>
-
-        {error && (
-          <Text size="sm" style={{ color: SA.danger }}>
-            {error}
-          </Text>
-        )}
-
-        {/* ==================== STATS ==================== */}
-        <motion.div
-          variants={container}
-          initial="hidden"
-          animate="show"
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))",
-            gap: 14,
-          }}
-        >
-          <StatCard
-            label={t("sa.overview.stat.tenants")}
-            value={stats.total}
-            icon={<Building2 size={20} />}
-            tint="rgba(56,189,248,0.35)"
-            delay={0.1}
-          />
-          <StatCard
-            label={t("sa.overview.stat.active")}
-            value={stats.active}
-            icon={<Activity size={20} />}
-            tint="rgba(52,211,153,0.35)"
-            delay={0.18}
-          />
-          <StatCard
-            label={t("sa.overview.stat.users")}
-            value={stats.users}
-            icon={<Users size={20} />}
-            tint="rgba(129,140,248,0.35)"
-            delay={0.26}
-          />
-          <StatCard
-            label={t("sa.overview.stat.packages")}
-            value={stats.packages}
-            icon={<Layers size={20} />}
-            tint="rgba(251,191,36,0.35)"
-            delay={0.34}
-          />
-        </motion.div>
-
-        {/* ==================== RECENT TENANTS ==================== */}
-        <motion.div
-          variants={container}
-          initial="hidden"
-          animate="show"
-          style={{
-            borderRadius: 18,
-            background: SA.panel,
-            border: `1px solid ${SA.border}`,
-            overflow: "hidden",
-          }}
-        >
-          <Group justify="space-between" px="lg" py="md" style={{ borderBottom: `1px solid ${SA.border}` }}>
-            <Text fw={700} size="sm" style={{ color: SA.text }}>
-              {t("sa.overview.recent")}
-            </Text>
-            <Button
-              variant="subtle"
-              size="xs"
-              rightSection={<ArrowUpRight size={14} />}
-              onClick={() => onNavigate("tenants")}
-              styles={{
-                root: { color: SA.accent, "&:hover": { background: "rgba(56,189,248,0.1)" } },
-                label: { fontWeight: 700 },
-              }}
-            >
-              {t("sa.overview.viewAll")}
-            </Button>
-          </Group>
-
-          {recent.length === 0 ? (
-            <Stack align="center" gap={6} p="xl">
-              <LottieAnimation
-                animationData={platformPulse}
-                size={96}
-                style={{ opacity: 0.8 }}
-              />
-              <Text size="sm" style={{ color: SA.muted }}>
-                {t("sa.overview.empty")}
-              </Text>
-            </Stack>
-          ) : (
-            <Stack gap={0}>
-              {recent.map((tenant, i) => (
-                <motion.div
-                  key={tenant.id}
-                  variants={item}
-                  whileHover={{ background: SA.panelHover }}
+              {/* Table Container */}
+              <div
+                style={{
+                  borderRadius: 20,
+                  background: SA.panel,
+                  border: `1px solid ${SA.border}`,
+                  boxShadow: SA.shadow,
+                  overflow: "hidden",
+                }}
+              >
+                {/* Table Header Row */}
+                <div
                   style={{
-                    display: "flex",
-                    alignItems: "center",
+                    display: "grid",
+                    gridTemplateColumns: "2.4fr 1.6fr 1.8fr 1fr 40px",
                     gap: 12,
-                    padding: "12px 20px",
-                    borderBottom:
-                      i === recent.length - 1 ? "none" : `1px solid ${SA.border}`,
-                    cursor: "pointer",
-                    borderRadius: 0,
+                    padding: "14px 22px",
+                    borderBottom: `1px solid ${SA.border}`,
+                    color: SA.muted,
+                    fontSize: 11,
+                    fontWeight: 700,
+                    textTransform: "uppercase",
+                    letterSpacing: 0.8,
                   }}
-                  onClick={() => onNavigate("tenants")}
                 >
-                  <div
-                    style={{
-                      width: 38,
-                      height: 38,
-                      borderRadius: 11,
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      background: "rgba(255,255,255,0.05)",
-                      border: `1px solid ${SA.border}`,
-                      color: SA.textSoft,
-                    }}
-                  >
-                    <Building2 size={17} />
-                  </div>
-                  <Stack gap={0} style={{ flex: 1, minWidth: 0 }}>
-                    <Text fw={600} size="sm" truncate style={{ color: SA.text }}>
-                      {tenant.name}
-                    </Text>
-                    <Text size="xs" style={{ color: SA.muted }} truncate>
-                      {tenant.packageName ?? "—"} · {tenant.userCount}{" "}
-                      {t("sa.overview.usersShort")}
+                  <div>Name</div>
+                  <div>Last Modified</div>
+                  <div>Owner / Tier</div>
+                  <div>Status</div>
+                  <div style={{ textAlign: "right" }}>•</div>
+                </div>
+
+                {/* Table Rows */}
+                {recent.length === 0 ? (
+                  <Stack align="center" gap={6} p="xl">
+                    <Building2 size={36} style={{ color: SA.muted, opacity: 0.5 }} />
+                    <Text size="sm" style={{ color: SA.muted }}>
+                      No tenant workspaces found matching search
                     </Text>
                   </Stack>
-                  <Badge
-                    size="sm"
-                    variant="light"
-                    styles={{
-                      root: {
-                        background: tenant.isActive
-                          ? "rgba(52,211,153,0.12)"
-                          : "rgba(248,113,113,0.12)",
-                        color: tenant.isActive ? SA.success : SA.danger,
-                        border: `1px solid ${tenant.isActive ? "rgba(52,211,153,0.3)" : "rgba(248,113,113,0.3)"}`,
-                      },
-                      label: { fontWeight: 700, fontSize: 11 },
-                    }}
-                  >
-                    {t(tenant.isActive ? "sa.status.active" : "sa.status.archived")}
-                  </Badge>
-                </motion.div>
-              ))}
-            </Stack>
-          )}
-        </motion.div>
-      </Stack>
-    </ScrollArea>
+                ) : (
+                  <Stack gap={0}>
+                    {recent.map((tenant, i) => {
+                      const badge = badgeStyles[i % badgeStyles.length];
+                      const isHighlighted = i === 0; // First item highlighted like SLAB design
+
+                      return (
+                        <motion.div
+                          key={tenant.id}
+                          whileHover={{ background: SA.panelHover }}
+                          onClick={() => onOpenTenant && onOpenTenant(tenant)}
+                          style={{
+                            display: "grid",
+                            gridTemplateColumns: "2.4fr 1.6fr 1.8fr 1fr 40px",
+                            gap: 12,
+                            alignItems: "center",
+                            padding: "13px 22px",
+                            borderBottom:
+                              i === recent.length - 1
+                                ? "none"
+                                : `1px solid ${SA.border}`,
+                            background: isHighlighted ? SA.panelMint : "transparent",
+                            cursor: "pointer",
+                            transition: "background 0.15s ease",
+                          }}
+                        >
+                          {/* Name with File-Style Colored Badge */}
+                          <Group gap="sm" wrap="nowrap" style={{ minWidth: 0 }}>
+                            <div
+                              style={{
+                                width: 34,
+                                height: 34,
+                                borderRadius: 8,
+                                background: badge.bg,
+                                color: badge.color,
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                fontSize: 10,
+                                fontWeight: 800,
+                                flexShrink: 0,
+                                letterSpacing: 0.5,
+                              }}
+                            >
+                              {badge.label}
+                            </div>
+                            <Stack gap={1} style={{ minWidth: 0 }}>
+                              <Text
+                                fw={700}
+                                size="sm"
+                                style={{ color: SA.text, letterSpacing: -0.2 }}
+                                truncate
+                              >
+                                {tenant.name}
+                              </Text>
+                              <Text size="11px" style={{ color: SA.muted }} truncate>
+                                {tenant.email || "No email registered"}
+                              </Text>
+                            </Stack>
+                          </Group>
+
+                          {/* Last Modified */}
+                          <Text size="xs" style={{ color: SA.muted }}>
+                            {tenant.createdAt
+                              ? `${tenant.createdAt.slice(0, 10)} | ${tenant.createdAt.slice(11, 16)}`
+                              : "Recent"}
+                          </Text>
+
+                          {/* Owner & Package Tier */}
+                          <Text size="xs" fw={600} style={{ color: SA.text }} truncate>
+                            {tenant.userCount} users · {tenant.packageName || "Standard"}
+                          </Text>
+
+                          {/* Status Badge */}
+                          <div>
+                            <Badge
+                              size="xs"
+                              radius="xl"
+                              variant="light"
+                              styles={{
+                                root: {
+                                  background: tenant.isActive
+                                    ? "rgba(16, 185, 129, 0.12)"
+                                    : "rgba(239, 68, 68, 0.12)",
+                                  color: tenant.isActive ? SA.success : SA.danger,
+                                  fontWeight: 700,
+                                },
+                              }}
+                            >
+                              {tenant.isActive ? "Active" : "Archived"}
+                            </Badge>
+                          </div>
+
+                          {/* Actions Kebab */}
+                          <div style={{ textAlign: "right" }}>
+                            <ActionIcon
+                              variant="subtle"
+                              size="sm"
+                              style={{ color: SA.muted }}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (onOpenTenant) onOpenTenant(tenant);
+                              }}
+                            >
+                              <MoreVertical size={15} />
+                            </ActionIcon>
+                          </div>
+                        </motion.div>
+                      );
+                    })}
+                  </Stack>
+                )}
+              </div>
+            </div>
+          </Stack>
+        </ScrollArea>
+      </div>
+
+      {/* ==================== RIGHT INSPECTOR PANEL ==================== */}
+      <RainbowGauge
+        user={user}
+        usedGb={42.4}
+        totalGb={100}
+        onRunDiagnostics={() => onNavigate("settings")}
+      />
+    </div>
   );
 }

@@ -25,10 +25,15 @@ export const SA_THEME_KEY = "sa-platform-theme";
 export type SaTokens = {
   bg: string;
   bgSidebar: string;
+  bgDock: string;
+  dockActiveBg: string;
+  dockActiveColor: string;
+  dockInactiveColor: string;
   topbar: string;
   panel: string;
   panelStrong: string;
   panelHover: string;
+  panelMint: string;
   border: string;
   borderStrong: string;
   text: string;
@@ -49,55 +54,65 @@ export type SaTokens = {
 };
 
 const dark: SaTokens = {
-  bg: "#0B111E",
-  bgSidebar: "#101726",
-  topbar: "#101726",
-  panel: "#162035",
-  panelStrong: "#1F2D4A",
-  panelHover: "#27385B",
-  border: "#2E4066",
-  borderStrong: "#3D5485",
-  text: "#FFFFFF",
-  textSoft: "#E2E8F0",
-  muted: "#94A3B8",
-  accent: "#38BDF8",
-  accent2: "#818CF8",
-  accent3: "#0284C7",
-  cyan: "#38BDF8",
+  bg: "#0B1411",
+  bgSidebar: "#121E19",
+  bgDock: "#19382B",
+  dockActiveBg: "#2BB673",
+  dockActiveColor: "#FFFFFF",
+  dockInactiveColor: "#6EE7B7",
+  topbar: "#121E19",
+  panel: "#162720",
+  panelStrong: "#1C3229",
+  panelHover: "#233E33",
+  panelMint: "#1F382E",
+  border: "#244236",
+  borderStrong: "#335E4D",
+  text: "#F0FDF4",
+  textSoft: "#BBF7D0",
+  muted: "#86EFAC",
+  accent: "#34D399",
+  accent2: "#60A5FA",
+  accent3: "#10B981",
+  cyan: "#34D399",
   violet: "#818CF8",
-  gradient: "linear-gradient(135deg, #0284C7 0%, #2563EB 100%)",
-  gradientText: "linear-gradient(135deg, #38BDF8 0%, #818CF8 100%)",
+  gradient: "linear-gradient(135deg, #34D399 0%, #059669 100%)",
+  gradientText: "linear-gradient(135deg, #F0FDF4 0%, #34D399 100%)",
   success: "#34D399",
   danger: "#F87171",
   warning: "#FBBF24",
-  gold: "#EAB308",
+  gold: "#FBBF24",
   shadow: "0 20px 50px -15px rgba(0, 0, 0, 0.7)",
 };
 
 const light: SaTokens = {
-  bg: "#F8FAFC",
+  bg: "#F4F7F6",
   bgSidebar: "#FFFFFF",
+  bgDock: "#2BB673",
+  dockActiveBg: "#FFFFFF",
+  dockActiveColor: "#2BB673",
+  dockInactiveColor: "#E2FBEF",
   topbar: "#FFFFFF",
   panel: "#FFFFFF",
-  panelStrong: "#F1F5F9",
-  panelHover: "#E2E8F0",
-  border: "#E2E8F0",
-  borderStrong: "#CBD5E1",
-  text: "#0F172A",
-  textSoft: "#334155",
-  muted: "#64748B",
-  accent: "#0284C7",
-  accent2: "#4F46E5",
-  accent3: "#0369A1",
-  cyan: "#0284C7",
-  violet: "#4F46E5",
-  gradient: "linear-gradient(135deg, #0284C7 0%, #2563EB 100%)",
-  gradientText: "linear-gradient(135deg, #0369A1 0%, #1D4ED8 100%)",
-  success: "#059669",
-  danger: "#DC2626",
-  warning: "#D97706",
-  gold: "#CA8A04",
-  shadow: "0 16px 40px -16px rgba(15, 23, 42, 0.12)",
+  panelStrong: "#F8FAF9",
+  panelHover: "#F0F7F4",
+  panelMint: "#EAF7F1",
+  border: "#E8EEEC",
+  borderStrong: "#D1DCD6",
+  text: "#162D24",
+  textSoft: "#3D5249",
+  muted: "#7E938A",
+  accent: "#2BB673",
+  accent2: "#3B82F6",
+  accent3: "#059669",
+  cyan: "#2BB673",
+  violet: "#6366F1",
+  gradient: "linear-gradient(135deg, #2BB673 0%, #15803D 100%)",
+  gradientText: "linear-gradient(135deg, #162D24 0%, #2BB673 100%)",
+  success: "#2BB673",
+  danger: "#EF4444",
+  warning: "#F59E0B",
+  gold: "#F59E0B",
+  shadow: "0 8px 30px -10px rgba(0, 0, 0, 0.06)",
 };
 
 export function getSaTheme(scheme: SaScheme): SaTokens {
@@ -106,12 +121,18 @@ export function getSaTheme(scheme: SaScheme): SaTokens {
 
 export function loadSaScheme(): SaScheme {
   try {
+    const migrated = localStorage.getItem("sa-theme-migrated-slab-v1");
+    if (!migrated) {
+      localStorage.setItem("sa-theme-migrated-slab-v1", "true");
+      localStorage.setItem(SA_THEME_KEY, "light");
+      return "light";
+    }
     const stored = localStorage.getItem(SA_THEME_KEY);
     if (stored === "light" || stored === "dark") return stored;
   } catch {
-    // localStorage unavailable — default to dark
+    // localStorage unavailable — default to light
   }
-  return "dark";
+  return "light";
 }
 
 type SaThemeContextValue = {
