@@ -3,7 +3,6 @@ use crate::commands::audit::log_audit;
 use crate::commands::auth::{require_current_user, PublicUser, SessionState};
 use crate::error::AppError;
 use sqlx::SqlitePool;
-use std::collections::HashSet;
 use uuid::Uuid;
 
 // ==========================================
@@ -160,10 +159,8 @@ pub async fn fetch_modules_for_company(
     .await
     .map_err(|error| format!("Database error: {error}"))?;
 
-    let existing_keys: HashSet<String> = rows.iter().map(|r| r.module_key.clone()).collect();
-    let mut inserted_any = false;
-    for &(mod_key, default_enabled) in STANDARD_MODULES {
-        if !existing_keys.contains(mod_key) {
+    if rows.is_empty() {
+        for &(mod_key, default_enabled) in STANDARD_MODULES {
             let id = Uuid::new_v4().to_string();
             let _ = sqlx::query(
                 "INSERT INTO company_modules (id, company_id, module_key, is_enabled, settings) VALUES (?, ?, ?, ?, '{}')"
@@ -174,11 +171,8 @@ pub async fn fetch_modules_for_company(
             .bind(default_enabled)
             .execute(pool)
             .await;
-            inserted_any = true;
         }
-    }
 
-    if inserted_any {
         let fresh_rows = sqlx::query_as::<_, CompanyModuleRow>(
             r#"
             SELECT id, company_id, module_key, is_enabled, settings, created_at, updated_at
