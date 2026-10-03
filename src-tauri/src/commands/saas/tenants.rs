@@ -42,7 +42,9 @@ pub async fn list_tenant_companies(
             p.name AS package_name,
             (SELECT COUNT(*) FROM users u WHERE u.company_id = c.id) AS user_count
         FROM companies AS c
-        LEFT JOIN company_subscriptions AS s ON s.company_id = c.id
+        LEFT JOIN company_subscriptions AS s ON s.id = (
+            SELECT cs.id FROM company_subscriptions cs WHERE cs.company_id = c.id ORDER BY cs.created_at DESC LIMIT 1
+        )
         LEFT JOIN packages AS p ON p.id = s.package_id
         WHERE c.deleted_at IS NULL
         ORDER BY c.created_at DESC

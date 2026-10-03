@@ -3,6 +3,8 @@ use crate::commands::audit::log_audit;
 use crate::commands::auth::{require_current_user, PublicUser, SessionState};
 use crate::error::AppError;
 use sqlx::SqlitePool;
+use std::collections::HashSet;
+use uuid::Uuid;
 
 // ==========================================
 // SAAS HELPERS
@@ -53,14 +55,21 @@ pub fn validate_module_key(module_key: &str) -> Result<String, AppError> {
     const MODULES: &[&str] = &[
         "dashboard",
         "inventory",
+        "invoices",
+        "customers",
+        "purchase_orders",
+        "pos",
+        "fbr",
+        "reports",
+        "ledger",
+        "users",
+        "settings",
+        "import",
+        "data_import",
         "sales",
         "purchases",
-        "import",
-        "reports",
         "employees",
         "branches",
-        "invoices",
-        "data_import",
         "leads",
         "discussions",
         "ai_insights",
@@ -123,6 +132,21 @@ pub async fn fetch_modules_for_company(
     pool: &SqlitePool,
     company_id: &str,
 ) -> Result<Vec<PublicCompanyModule>, AppError> {
+    const STANDARD_MODULES: &[(&str, bool)] = &[
+        ("dashboard", true),
+        ("inventory", true),
+        ("invoices", true),
+        ("customers", true),
+        ("purchase_orders", true),
+        ("pos", false),
+        ("fbr", false),
+        ("reports", true),
+        ("ledger", true),
+        ("users", true),
+        ("settings", true),
+        ("import", true),
+    ];
+
     let rows = sqlx::query_as::<_, CompanyModuleRow>(
         r#"
         SELECT id, company_id, module_key, is_enabled, settings, created_at, updated_at
@@ -136,6 +160,40 @@ pub async fn fetch_modules_for_company(
     .await
     .map_err(|error| format!("Database error: {error}"))?;
 
+    let existing_keys: HashSet<String> = rows.iter().map(|r| r.module_key.clone()).collect();
+    let mut inserted_any = false;
+    for &(mod_key, default_enabled) in STANDARD_MODULES {
+        if !existing_keys.contains(mod_key) {
+            let id = Uuid::new_v4().to_string();
+            let _ = sqlx::query(
+                "INSERT INTO company_modules (id, company_id, module_key, is_enabled, settings) VALUES (?, ?, ?, ?, '{}')"
+            )
+            .bind(&id)
+            .bind(company_id)
+            .bind(mod_key)
+            .bind(default_enabled)
+            .execute(pool)
+            .await;
+            inserted_any = true;
+        }
+    }
+
+    if inserted_any {
+        let fresh_rows = sqlx::query_as::<_, CompanyModuleRow>(
+            r#"
+            SELECT id, company_id, module_key, is_enabled, settings, created_at, updated_at
+            FROM company_modules
+            WHERE company_id = ?
+            ORDER BY module_key
+            "#,
+        )
+        .bind(company_id)
+        .fetch_all(pool)
+        .await
+        .map_err(|error| format!("Database error: {error}"))?;
+        return Ok(fresh_rows.into_iter().map(|r| r.to_public()).collect());
+    }
+
     Ok(rows.into_iter().map(|r| r.to_public()).collect())
 }
 
@@ -145,13 +203,16 @@ pub fn default_modules_from_package(module_limits_json: &str) -> Vec<String> {
     const CORE: &[&str] = &[
         "dashboard",
         "inventory",
-        "sales",
-        "purchases",
-        "import",
-        "reports",
-        "employees",
-        "branches",
         "invoices",
+        "customers",
+        "purchase_orders",
+        "pos",
+        "fbr",
+        "reports",
+        "ledger",
+        "users",
+        "settings",
+        "import",
     ];
 
     let parsed = serde_json::from_str::<serde_json::Value>(module_limits_json);

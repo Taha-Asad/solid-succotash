@@ -41,6 +41,10 @@ pub async fn set_company_module(
 
     let module_key = validate_module_key(&module_key)?;
 
+    if ["inventory", "invoices", "settings"].contains(&module_key.as_str()) && !is_enabled {
+        return Err(AppError::internal("Core system modules (Inventory, Invoices, Settings) cannot be disabled".to_string()));
+    }
+
     let existing_id: Option<String> =
         sqlx::query_scalar("SELECT id FROM company_modules WHERE company_id = ? AND module_key = ?")
             .bind(&company_id)

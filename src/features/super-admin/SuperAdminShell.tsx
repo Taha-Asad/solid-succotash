@@ -15,13 +15,13 @@ import {
   Avatar,
   Badge,
   Group,
-  MantineProvider,
   Menu,
   ScrollArea,
   Stack,
   Text,
   Tooltip,
   UnstyledButton,
+  useMantineColorScheme,
 } from "@mantine/core";
 import {
   Boxes,
@@ -45,7 +45,6 @@ import {
   type Lang,
 } from "../../i18n/translations";
 import type { PublicUser } from "../../types/backend";
-import { theme } from "../../theme";
 import { SaThemeProvider, useSaScheme, useSaTheme } from "./saTheme.tsx";
 import PlatformOverviewPage from "./PlatformOverviewPage";
 import PlatformAnalyticsPage from "./PlatformAnalyticsPage";
@@ -168,6 +167,11 @@ function PlatformShell({
   const { t, dir } = useI18n();
   const SA = useSaTheme();
   const { scheme, setScheme } = useSaScheme();
+  const { setColorScheme: mantineSetColorScheme } = useMantineColorScheme();
+
+  useEffect(() => {
+    mantineSetColorScheme(scheme);
+  }, [scheme, mantineSetColorScheme]);
 
   // Mirror the active platform scheme on <html> so that portal-rendered
   // Mantine modals/drawers (which mount on document.body) pick up the same
@@ -200,7 +204,6 @@ function PlatformShell({
   );
 
   return (
-    <MantineProvider theme={theme} forceColorScheme={scheme}>
     <Stack
       gap={0}
       style={{
@@ -436,6 +439,5 @@ function PlatformShell({
         </div>
       </div>
     </Stack>
-    </MantineProvider>
   );
 }

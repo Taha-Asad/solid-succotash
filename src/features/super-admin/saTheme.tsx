@@ -12,6 +12,7 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useState,
   type ReactNode,
@@ -48,15 +49,15 @@ export type SaTokens = {
 };
 
 const dark: SaTokens = {
-  bg: "#080B11",
-  bgSidebar: "#0D111A",
-  topbar: "#0D111A",
-  panel: "#121722",
-  panelStrong: "#182030",
-  panelHover: "#1E273A",
-  border: "#202A3C",
-  borderStrong: "#2E3B54",
-  text: "#F8FAFC",
+  bg: "#0B111E",
+  bgSidebar: "#101726",
+  topbar: "#101726",
+  panel: "#162035",
+  panelStrong: "#1F2D4A",
+  panelHover: "#27385B",
+  border: "#2E4066",
+  borderStrong: "#3D5485",
+  text: "#FFFFFF",
   textSoft: "#E2E8F0",
   muted: "#94A3B8",
   accent: "#38BDF8",
@@ -136,10 +137,19 @@ export function SaThemeProvider({
     setSchemeState(next);
     try {
       localStorage.setItem(SA_THEME_KEY, next);
+      if (typeof document !== "undefined") {
+        document.documentElement.setAttribute("data-mantine-color-scheme", next);
+      }
     } catch {
       // non-persistable environment
     }
   }, []);
+
+  useEffect(() => {
+    if (typeof document !== "undefined") {
+      document.documentElement.setAttribute("data-mantine-color-scheme", scheme);
+    }
+  }, [scheme]);
 
   const value = useMemo<SaThemeContextValue>(
     () => ({ scheme, tokens: getSaTheme(scheme), setScheme }),
