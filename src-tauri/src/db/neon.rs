@@ -488,6 +488,7 @@ impl NeonCloudDb {
                    TO_CHAR(created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS created_at,
                    TO_CHAR(updated_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS updated_at
             FROM packages
+            WHERE deleted_at IS NULL
             ORDER BY sort_order
             "#
         } else {
@@ -498,7 +499,7 @@ impl NeonCloudDb {
                    TO_CHAR(created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS created_at,
                    TO_CHAR(updated_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS updated_at
             FROM packages
-            WHERE is_active = TRUE
+            WHERE is_active = TRUE AND deleted_at IS NULL
             ORDER BY sort_order
             "#
         };
@@ -1175,8 +1176,10 @@ pub async fn run_neon_migrations(pool: &PgPool) -> Result<(), sqlx::Error> {
             is_active BOOLEAN NOT NULL DEFAULT TRUE,
             sort_order BIGINT NOT NULL DEFAULT 0,
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            deleted_at TIMESTAMPTZ
         );
+        ALTER TABLE packages ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
         "#,
     )
     .execute(pool)

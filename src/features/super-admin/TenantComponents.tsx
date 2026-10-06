@@ -14,12 +14,12 @@ export const SUB_STATUS_COLOR: Record<
   }
 > = {
   active: {
-    bgDark: "#064E3B",
-    fgDark: "#6EE7B7",
-    borderDark: "#059669",
-    bgLight: "#ECFDF5",
-    fgLight: "#065F46",
-    borderLight: "#A7F3D0",
+    bgDark: "rgba(224, 114, 95, 0.15)",
+    fgDark: "#F29F91",
+    borderDark: "rgba(224, 114, 95, 0.35)",
+    bgLight: "#FBF3F0",
+    fgLight: "#C75745",
+    borderLight: "#F0C8C1",
   },
   trial: {
     bgDark: "#0C4A6E",

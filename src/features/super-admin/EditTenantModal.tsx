@@ -188,7 +188,7 @@ export default function EditTenantModal({
               styles={{
                 root: {
                   background: SA.gradient,
-                  color: "#06121F",
+                  color: SA.dockActiveColor,
                   fontWeight: 700,
                   "&:hover": { filter: "brightness(1.08)" },
                 },

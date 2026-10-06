@@ -168,13 +168,13 @@ pub async fn create_package(
     let cloud_db = crate::db::neon::NeonCloudDb::global();
     if cloud_db.is_connected() {
         if let Some(pg_pool) = cloud_db.pool() {
-            let _ = sqlx::query(
+            if let Err(e) = sqlx::query(
                 r#"
                 INSERT INTO packages (
                     id, name, description, price, billing_cycle, module_limits,
                     max_users, max_branches, max_storage_mb, features, is_active, sort_order, updated_at
                 )
-                VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10::jsonb, TRUE, $11, NOW())
+                VALUES ($1, $2, $3, $4::float8::numeric, $5, $6::jsonb, $7, $8, $9, $10::jsonb, TRUE, $11, NOW())
                 ON CONFLICT (id) DO UPDATE SET
                     name = EXCLUDED.name,
                     description = EXCLUDED.description,
@@ -202,7 +202,10 @@ pub async fn create_package(
             .bind(&features_json)
             .bind(sort_order)
             .execute(pg_pool)
-            .await;
+            .await
+            {
+                eprintln!("[NEON CLOUD SYNC] Error creating package in Neon DB: {e}");
+            }
         }
     }
 
@@ -243,7 +246,7 @@ pub async fn update_package(
                                TO_CHAR(created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS created_at,
                                TO_CHAR(updated_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS updated_at
                         FROM packages
-                        WHERE id = $1 AND deleted_at IS NULL
+                        WHERE id = $1
                         "#,
                     )
                     .bind(&package_id)
@@ -361,13 +364,13 @@ pub async fn update_package(
     let cloud_db = crate::db::neon::NeonCloudDb::global();
     if cloud_db.is_connected() {
         if let Some(pg_pool) = cloud_db.pool() {
-            let _ = sqlx::query(
+            if let Err(e) = sqlx::query(
                 r#"
                 INSERT INTO packages (
                     id, name, description, price, billing_cycle, module_limits,
                     max_users, max_branches, max_storage_mb, features, is_active, sort_order, updated_at
                 )
-                VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10::jsonb, $11, $12, NOW())
+                VALUES ($1, $2, $3, $4::float8::numeric, $5, $6::jsonb, $7, $8, $9, $10::jsonb, $11, $12, NOW())
                 ON CONFLICT (id) DO UPDATE SET
                     name = EXCLUDED.name,
                     description = EXCLUDED.description,
@@ -396,7 +399,10 @@ pub async fn update_package(
             .bind(current.is_active)
             .bind(current.sort_order)
             .execute(pg_pool)
-            .await;
+            .await
+            {
+                eprintln!("[NEON CLOUD SYNC] Error updating package in Neon DB: {e}");
+            }
         }
     }
 

@@ -3,11 +3,9 @@
 // ==========================================
 
 import { useCallback, useEffect, useState } from "react";
-import { AnimatePresence, motion } from "framer-motion";
 
 import {
   Alert,
-  Badge,
   Button,
   Checkbox,
   Collapse,
@@ -207,30 +205,41 @@ function PackageEditorModal({
       onClose={onClose}
       title={
         <Group gap="xs">
-          <ThemeIcon size={32} radius="md" styles={{ root: { background: SA.gradient, color: "#06121F" } }}>
+          <div
+            style={{
+              width: 32,
+              height: 32,
+              borderRadius: 10,
+              background: SA.panelMint,
+              color: SA.accent,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
             <Sparkles size={16} />
-          </ThemeIcon>
-          <Text fw={800} size="md" style={{ color: SA.text, letterSpacing: -0.3 }}>
+          </div>
+          <Text fw={600} size="md" style={{ color: SA.text, letterSpacing: -0.3 }}>
             {editing ? t("sa.packages.edit") : t("sa.packages.create")}
           </Text>
         </Group>
       }
       size="lg"
       centered
-      radius="xl"
-      overlayProps={{ blur: 5, backgroundOpacity: 0.6 }}
+      radius={28}
+      overlayProps={{ blur: 6, backgroundOpacity: 0.35 }}
       styles={{
         content: {
           background: SA.panel,
-          border: `1px solid ${SA.border}`,
-          boxShadow: "0 24px 60px -15px rgba(0,0,0,0.4)",
+          boxShadow: "none",
+          borderRadius: 8,
         },
         header: {
           background: SA.panel,
           borderBottom: `1px solid ${SA.border}`,
-          padding: "18px 24px",
+          padding: "20px 26px",
         },
-        body: { padding: "24px" },
+        body: { padding: "26px" },
       }}
     >
       <LoadingOverlay visible={loading} />
@@ -391,7 +400,7 @@ function PackageEditorModal({
         </div>
 
         {error && (
-          <Alert color="red" icon={<Info size={16} />} radius="md" styles={{ root: { color: "#F87171" } }}>
+          <Alert color="red" icon={<Info size={16} />} radius="md" styles={{ root: { color: SA.danger } }}>
             {error}
           </Alert>
         )}
@@ -399,20 +408,35 @@ function PackageEditorModal({
         <Divider style={{ borderColor: SA.border }} />
 
         <Group justify="flex-end" gap="sm">
-          <Button variant="subtle" color="gray" onClick={onClose} radius="md">
+          <Button
+            variant="subtle"
+            onClick={onClose}
+            styles={{
+              root: {
+                borderRadius: 8,
+                color: SA.muted,
+                fontWeight: 700,
+                height: 40,
+                paddingInline: 18,
+                "&:hover": { background: SA.panelStrong, color: SA.text },
+              },
+            }}
+          >
             {t("sa.common.cancel")}
           </Button>
           <Button
             onClick={handleSave}
             loading={loading}
-            radius="md"
             styles={{
               root: {
-                background: SA.gradient,
-                color: "#06121F",
-                fontWeight: 800,
-                padding: "0 24px",
-                "&:hover": { filter: "brightness(1.08)" },
+                background: SA.accent,
+                color: SA.dockActiveColor,
+                fontWeight: 600,
+                borderRadius: 8,
+                height: 40,
+                paddingInline: 24,
+                boxShadow: "none",
+                "&:hover": { filter: "brightness(1.06)" },
               },
             }}
           >
@@ -470,45 +494,44 @@ export default function PackagesPage() {
   }
 
   return (
-    <div style={{ height: "100%", position: "relative", display: "flex", flexDirection: "column" }}>
-      <LoadingOverlay visible={loading} />
-
-      {/* Top Command Toolbar */}
+    <div style={{ height: "100%", position: "relative", display: "flex", flexDirection: "column", background: "transparent" }}>
+      {/* Top Command Toolbar (Single, Airy, Anti-Slop) */}
       <div
         style={{
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
           gap: 16,
-          padding: "20px 32px",
-          background: SA.bgSidebar,
-          borderBottom: `1px solid ${SA.border}`,
+          padding: "28px 36px 12px",
+          background: "transparent",
           flexWrap: "wrap",
         }}
       >
         <div>
-          <Text fw={800} size="lg" style={{ color: SA.text, letterSpacing: -0.3 }}>
+          <Text fw={600} size="lg" style={{ color: SA.text, fontSize: 22, letterSpacing: -0.4 }}>
             Subscription Plans & Quotas
           </Text>
-          <Text size="xs" mt={2} style={{ color: SA.textSoft }}>
+          <Text size="xs" mt={3} style={{ color: SA.muted, fontSize: 13 }}>
             Configure commercial pricing tiers, module access limits, and storage quotas for all ERP tenants.
           </Text>
         </div>
 
         <Group gap="sm">
           <Button
-            variant="light"
+            variant="subtle"
             size="sm"
+            loading={loading}
             leftSection={<RefreshCw size={14} />}
             onClick={load}
-            radius="md"
             styles={{
               root: {
-                background: SA.panel,
+                background: SA.panelStrong,
                 color: SA.text,
-                border: `1px solid ${SA.border}`,
-                fontWeight: 600,
-                "&:hover": { background: SA.panelHover },
+                fontWeight: 700,
+                borderRadius: 8,
+                height: 40,
+                paddingInline: 18,
+                "&:hover": { background: SA.panelHover, color: SA.accent },
               },
             }}
           >
@@ -517,7 +540,6 @@ export default function PackagesPage() {
 
           <Button
             size="sm"
-            radius="md"
             leftSection={<Plus size={15} />}
             onClick={() => {
               setEditing(null);
@@ -525,11 +547,14 @@ export default function PackagesPage() {
             }}
             styles={{
               root: {
-                background: SA.gradient,
-                color: "#06121F",
-                fontWeight: 800,
-                boxShadow: "0 6px 20px -6px rgba(2,132,199,0.5)",
-                "&:hover": { filter: "brightness(1.08)" },
+                background: SA.accent,
+                color: SA.dockActiveColor,
+                fontWeight: 600,
+                borderRadius: 8,
+                height: 40,
+                paddingInline: 20,
+                boxShadow: "none",
+                "&:hover": { filter: "brightness(1.06)" },
               },
             }}
           >
@@ -539,49 +564,47 @@ export default function PackagesPage() {
       </div>
 
       {error && (
-        <Alert color="red" mx={32} mt="md" icon={<Info size={16} />} radius="md">
+        <Alert color="red" mx={36} mt="xs" icon={<Info size={16} />} radius="md">
           {error}
         </Alert>
       )}
 
       {/* Package Grid Canvas */}
-      <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "28px 32px" }}>
-        <div style={{ maxWidth: 1280, margin: "0 auto" }}>
+      <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "16px 36px 36px" }}>
+        <div style={{ maxWidth: 1320, margin: "0 auto" }}>
           {packages.length === 0 ? (
             <div
               style={{
-                borderRadius: 22,
+                borderRadius: 8,
                 border: `1px dashed ${SA.borderStrong}`,
-                padding: "60px 24px",
+                padding: "80px 32px",
                 textAlign: "center",
                 background: SA.panel,
               }}
             >
               <ThemeIcon
-                size={52}
+                size={60}
                 radius="xl"
                 styles={{
                   root: {
                     background: SA.panelStrong,
                     color: SA.muted,
-                    margin: "0 auto 16px",
-                    border: `1px solid ${SA.border}`,
+                    margin: "0 auto 18px",
                   },
                 }}
               >
-                <Boxes size={24} />
+                <Boxes size={28} />
               </ThemeIcon>
-              <Text fw={700} size="md" style={{ color: SA.text }}>
+              <Text fw={600} size="lg" style={{ color: SA.text }}>
                 {t("sa.packages.empty")}
               </Text>
-              <Text size="sm" mt={4} style={{ color: SA.muted }}>
+              <Text size="sm" mt={6} style={{ color: SA.muted }}>
                 Click &quot;New Plan&quot; above to create your first pricing tier.
               </Text>
             </div>
           ) : (
-            <SimpleGrid cols={{ base: 1, md: 2, lg: 3 }} spacing={24}>
-              <AnimatePresence>
-                {packages.map((pkg, i) => {
+            <SimpleGrid cols={{ base: 1, md: 2, lg: 3 }} spacing={28}>
+              {packages.map((pkg) => {
                   // Resolve features list
                   let featureList: string[] = [];
                   if (Array.isArray(pkg.features)) {
@@ -594,84 +617,77 @@ export default function PackagesPage() {
                   const isPro = pkg.name.toLowerCase().includes("pro");
 
                   return (
-                    <motion.div
+                    <div
                       key={pkg.id}
-                      layout
-                      initial={{ opacity: 0, y: 18 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, scale: 0.95 }}
-                      transition={{ delay: Math.min(i * 0.05, 0.3), duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
-                      whileHover={{ y: -6, boxShadow: "0 20px 40px -15px rgba(2,132,199,0.2)" }}
                       style={{
                         position: "relative",
                         overflow: "hidden",
-                        borderRadius: 22,
+                        borderRadius: 8,
                         background: SA.panel,
-                        border: `1px solid ${pkg.isActive ? SA.border : SA.borderStrong}`,
-                        padding: "26px 28px",
+                        border: pkg.isActive
+                          ? `1px solid ${SA.borderStrong}`
+                          : `1px solid ${SA.border}`,
+                        padding: "34px 30px",
                         display: "flex",
                         flexDirection: "column",
                         justifyContent: "space-between",
-                        boxShadow: "0 4px 18px rgba(0,0,0,0.06)",
-                        transition: "border-color 0.2s ease, box-shadow 0.2s ease",
+                        boxShadow: "none",
+                        transition: "all 0.25s ease",
                       }}
                     >
                       {/* Top Header */}
                       <div>
-                        <Group justify="space-between" align="flex-start" wrap="nowrap" mb={14}>
-                          <Group gap="sm" wrap="nowrap">
+                        <Group justify="space-between" align="flex-start" wrap="nowrap" mb={16}>
+                          <Group gap="md" wrap="nowrap">
                             <div
                               style={{
-                                width: 48,
-                                height: 48,
-                                borderRadius: 14,
+                                width: 52,
+                                height: 52,
+                                borderRadius: 16,
                                 display: "flex",
                                 alignItems: "center",
                                 justifyContent: "center",
-                                background: isEnterprise
-                                  ? "linear-gradient(135deg, #10B981, #059669)"
-                                  : isPro
-                                  ? "linear-gradient(135deg, #0284C7, #2563EB)"
-                                  : SA.gradient,
-                                color: isEnterprise || isPro ? "#FFFFFF" : "#06121F",
-                                boxShadow: "0 8px 20px -6px rgba(2,132,199,0.4)",
+                                background: SA.accent,
+                                color: SA.dockActiveColor,
+                                boxShadow: "none",
                                 flexShrink: 0,
                               }}
                             >
-                              {isEnterprise ? <Zap size={22} /> : isPro ? <Cpu size={22} /> : <Boxes size={22} />}
+                              {isEnterprise ? <Zap size={24} /> : isPro ? <Cpu size={24} /> : <Boxes size={24} />}
                             </div>
 
-                            <Stack gap={2}>
-                              <Group gap={6} wrap="nowrap">
-                                <Text fw={800} size="md" style={{ color: SA.text, letterSpacing: -0.3 }}>
-                                  {pkg.name}
-                                </Text>
-                                <Badge
-                                  size="xs"
-                                  variant="filled"
-                                  styles={{
-                                    root: {
-                                      background: pkg.isActive ? "rgba(16,185,129,0.15)" : SA.panelStrong,
-                                      color: pkg.isActive ? "#10B981" : SA.muted,
-                                      border: `1px solid ${pkg.isActive ? "rgba(16,185,129,0.3)" : SA.border}`,
-                                      fontWeight: 800,
-                                      textTransform: "uppercase",
-                                    },
+                            <Stack gap={4}>
+                              <Text fw={650} size="lg" style={{ color: SA.text, fontSize: 20, letterSpacing: -0.4 }} truncate>
+                                {pkg.name}
+                              </Text>
+
+                              <Group gap={6}>
+                                <div
+                                  style={{
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    padding: "3px 10px",
+                                    borderRadius: 8,
+                                    background: pkg.isActive ? SA.panelMint : "rgba(0,0,0,0.06)",
+                                    color: pkg.isActive ? SA.success : SA.muted,
+                                    fontSize: 11,
+                                    fontWeight: 600,
+                                    textTransform: "uppercase",
+                                    letterSpacing: 0.4,
                                   }}
                                 >
                                   {pkg.isActive ? "Active" : "Draft"}
-                                </Badge>
+                                </div>
+                                <Text size="xs" fw={700} style={{ color: SA.muted, textTransform: "uppercase", letterSpacing: 0.5, fontSize: 11 }}>
+                                  · {pkg.billingCycle}
+                                </Text>
                               </Group>
-
-                              <Text size="xs" fw={600} style={{ color: SA.muted }}>
-                                {pkg.billingCycle.toUpperCase()}
-                              </Text>
                             </Stack>
                           </Group>
 
                           <Tooltip label={pkg.isActive ? "Deactivate plan" : "Activate plan"}>
                             <Switch
-                              size="sm"
+                              size="md"
                               checked={pkg.isActive}
                               onChange={() => toggleActive(pkg)}
                               color="teal"
@@ -680,46 +696,37 @@ export default function PackagesPage() {
                         </Group>
 
                         {/* Description */}
-                        <Text size="xs" style={{ color: SA.textSoft, lineHeight: 1.6, minHeight: 40, marginBottom: 16 }}>
+                        <Text size="xs" style={{ color: SA.textSoft, fontSize: 13, lineHeight: 1.6, minHeight: 40, marginBlock: "12px 18px" }}>
                           {pkg.description || "Comprehensive ERP suite with point of sale and reporting."}
                         </Text>
 
-                        {/* Price Hero Section */}
-                        <div
-                          style={{
-                            background: SA.panelStrong,
-                            borderRadius: 14,
-                            padding: "14px 18px",
-                            border: `1px solid ${SA.border}`,
-                            marginBottom: 16,
-                          }}
-                        >
-                          <Text size="xs" fw={700} style={{ color: SA.accent, textTransform: "uppercase", letterSpacing: 0.8 }}>
-                            Subscription Pricing
+                        {/* Price Hero Section (Direct Typographic Hero — No AI Gray Box) */}
+                        <div style={{ marginBottom: 20 }}>
+                          <Text size="10px" fw={600} style={{ color: SA.muted, textTransform: "uppercase", letterSpacing: 0.8 }}>
+                            Subscription Rate
                           </Text>
-                          <Group align="baseline" gap={6} mt={2}>
-                            <Text style={{ fontSize: 28, fontWeight: 900, color: SA.text, letterSpacing: -0.8 }}>
+                          <Group align="baseline" gap={8} mt={4}>
+                            <Text style={{ fontSize: 34, fontWeight: 650, color: SA.text, letterSpacing: -1, fontVariantNumeric: "tabular-nums" }}>
                               PKR {pkg.price.toLocaleString()}
                             </Text>
-                            <Text size="xs" style={{ color: SA.muted, fontWeight: 600 }}>
+                            <Text size="xs" style={{ color: SA.muted, fontWeight: 600, fontSize: 13 }}>
                               / {pkg.billingCycle}
                             </Text>
                           </Group>
                         </div>
 
                         {/* Resource Quota Pills */}
-                        <Group gap={8} wrap="wrap" mb={16}>
+                        <Group gap={8} wrap="wrap" mb={20}>
                           <div
                             style={{
                               display: "inline-flex",
                               alignItems: "center",
                               gap: 6,
-                              padding: "6px 12px",
-                              borderRadius: 10,
+                              padding: "6px 14px",
+                              borderRadius: 8,
                               background: SA.panelStrong,
-                              border: `1px solid ${SA.border}`,
                               fontSize: 12,
-                              fontWeight: 600,
+                              fontWeight: 700,
                               color: SA.text,
                             }}
                           >
@@ -732,12 +739,11 @@ export default function PackagesPage() {
                               display: "inline-flex",
                               alignItems: "center",
                               gap: 6,
-                              padding: "6px 12px",
-                              borderRadius: 10,
+                              padding: "6px 14px",
+                              borderRadius: 8,
                               background: SA.panelStrong,
-                              border: `1px solid ${SA.border}`,
                               fontSize: 12,
-                              fontWeight: 600,
+                              fontWeight: 700,
                               color: SA.text,
                             }}
                           >
@@ -750,12 +756,11 @@ export default function PackagesPage() {
                               display: "inline-flex",
                               alignItems: "center",
                               gap: 6,
-                              padding: "6px 12px",
-                              borderRadius: 10,
+                              padding: "6px 14px",
+                              borderRadius: 8,
                               background: SA.panelStrong,
-                              border: `1px solid ${SA.border}`,
                               fontSize: 12,
-                              fontWeight: 600,
+                              fontWeight: 700,
                               color: SA.text,
                             }}
                           >
@@ -770,16 +775,28 @@ export default function PackagesPage() {
 
                         {/* Capabilities Checklist */}
                         {featureList.length > 0 && (
-                          <Stack gap={8} style={{ borderTop: `1px solid ${SA.border}`, paddingTop: 14, marginBottom: 18 }}>
-                            <Text size="xs" fw={700} style={{ color: SA.muted, textTransform: "uppercase", letterSpacing: 0.8 }}>
-                              Key Capabilities
+                          <Stack gap={10} style={{ borderTop: `1px solid ${SA.border}`, paddingTop: 18, marginBottom: 22 }}>
+                            <Text size="10px" fw={600} style={{ color: SA.muted, textTransform: "uppercase", letterSpacing: 0.8 }}>
+                              Included Modules & Features
                             </Text>
-                            {featureList.slice(0, 4).map((feat, idx) => (
-                              <Group key={idx} gap={8} wrap="nowrap" align="center">
-                                <ThemeIcon size={18} radius="xl" variant="light" color="teal">
+                            {featureList.slice(0, 5).map((feat, idx) => (
+                              <Group key={idx} gap={10} wrap="nowrap" align="center">
+                                <div
+                                  style={{
+                                    width: 20,
+                                    height: 20,
+                                    borderRadius: "50%",
+                                    background: SA.panelMint,
+                                    color: SA.accent,
+                                    display: "flex",
+                                    alignItems: "center",
+                                    justifyContent: "center",
+                                    flexShrink: 0,
+                                  }}
+                                >
                                   <Check size={11} strokeWidth={3} />
-                                </ThemeIcon>
-                                <Text size="xs" fw={500} style={{ color: SA.textSoft }} truncate>
+                                </div>
+                                <Text size="xs" fw={600} style={{ color: SA.text, fontSize: 13 }} truncate>
                                   {feat}
                                 </Text>
                               </Group>
@@ -788,13 +805,13 @@ export default function PackagesPage() {
                         )}
                       </div>
 
-                      {/* Action Footer Buttons */}
-                      <Group gap="sm" style={{ borderTop: `1px solid ${SA.border}`, paddingTop: 16 }}>
+                      {/* Action Footer Buttons (Continuous Pill afffordances) */}
+                      <Group gap="sm" style={{ borderTop: `1px solid ${SA.border}`, paddingTop: 18 }}>
                         <Button
                           fullWidth
-                          variant="light"
-                          size="sm"
-                          leftSection={<Pencil size={14} />}
+                          variant="subtle"
+                          size="md"
+                          leftSection={<Pencil size={15} />}
                           onClick={() => {
                             setEditing(pkg);
                             setEditorOpen(true);
@@ -803,11 +820,12 @@ export default function PackagesPage() {
                             root: {
                               background: SA.panelStrong,
                               color: SA.text,
-                              border: `1px solid ${SA.border}`,
                               fontWeight: 700,
-                              borderRadius: 12,
+                              fontSize: 13,
+                              borderRadius: 8,
+                              height: 42,
                               flex: 1,
-                              "&:hover": { background: SA.panelHover, borderColor: SA.accent },
+                              "&:hover": { background: SA.panelHover, color: SA.accent },
                             },
                           }}
                         >
@@ -817,24 +835,27 @@ export default function PackagesPage() {
                           <Button
                             variant="subtle"
                             color="red"
-                            size="sm"
+                            size="md"
                             onClick={() => handleDelete(pkg)}
                             styles={{
                               root: {
-                                borderRadius: 12,
-                                padding: "0 12px",
-                                "&:hover": { background: "rgba(239,68,68,0.12)" },
+                                borderRadius: 8,
+                                height: 42,
+                                width: 42,
+                                padding: 0,
+                                background: "rgba(239,68,68,0.08)",
+                                color: SA.danger,
+                                "&:hover": { background: "rgba(239,68,68,0.16)" },
                               },
                             }}
                           >
-                            <Trash2 size={15} />
+                            <Trash2 size={16} />
                           </Button>
                         </Tooltip>
                       </Group>
-                    </motion.div>
+                    </div>
                   );
                 })}
-              </AnimatePresence>
             </SimpleGrid>
           )}
         </div>

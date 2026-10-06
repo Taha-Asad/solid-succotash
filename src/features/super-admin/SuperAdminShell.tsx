@@ -1,81 +1,72 @@
-// ==========================================
-// SUPER ADMIN SHELL — Platform Command Center
-// ==========================================
-// Layout Architecture inspired by Aryo Pamungkas (SLAB Design Studio):
-// 1. Far-left Slim Emerald Dock Rail (Home, Tenants, Packages, Analytics, Settings, Logout)
-// 2. Secondary Clean White Sidebar (+ Create New button, Workspaces Tree, Filters)
-// 3. Central Application Canvas (Overview Dashboard, Tenants, Packages, Analytics, Settings)
-// 4. Right Storage & Health Inspector Panel (inside Overview)
-
-import { useEffect, useState } from "react";
-import { AnimatePresence, motion } from "framer-motion";
-
-import {
-  ActionIcon,
-  Avatar,
-  Badge,
-  Button,
-  Group,
-  Menu,
-  Stack,
-  Text,
-  Tooltip,
-  UnstyledButton,
-  useMantineColorScheme,
-} from "@mantine/core";
+import { useEffect, useState, type CSSProperties } from "react";
+import { ActionIcon, Avatar, Button, Group, Menu, Text, Tooltip, UnstyledButton, useMantineColorScheme } from "@mantine/core";
 import {
   Boxes,
   Building2,
   ChartPie,
   Check,
-  ChevronDown,
-  Cloud,
-  Folder,
+  Download,
+  Feather,
   Home,
   Languages,
   LogOut,
   Moon,
   Plus,
+  Search,
   Settings,
   Sun,
 } from "lucide-react";
-
 import { useI18n } from "../../i18n/I18nProvider";
-import {
-  LANGUAGES,
-  LANGUAGE_ORDER,
-  type Lang,
-} from "../../i18n/translations";
-import type { PublicUser, TenantCompanySummary } from "../../types/backend";
+import { LANGUAGES, LANGUAGE_ORDER, type Lang } from "../../i18n/translations";
+import type { PublicUser, PublicCompany, TenantCompanySummary } from "../../types/backend";
 import { SaThemeProvider, useSaScheme, useSaTheme } from "./saTheme";
 import PlatformOverviewPage from "./PlatformOverviewPage";
 import PlatformAnalyticsPage from "./PlatformAnalyticsPage";
 import TenantsPage from "./TenantsPage";
 import PackagesPage from "./PackagesPage";
 import PlatformSettingsPage from "./PlatformSettingsPage";
-import RegisterTenantModal from "./RegisterTenantModal";
+import RegisterTenantDrawer from "./RegisterTenantDrawer";
 import TenantDetailDrawer from "./TenantDetailDrawer";
+import EditTenantModal from "./EditTenantModal";
+import DevProfileDrawer from "./DevProfileDrawer";
+import "./admin.css";
 
 export type SaView = "overview" | "tenants" | "packages" | "analytics" | "settings";
 
-const DOCK_ITEMS: {
+interface NavItem {
   id: SaView;
-  icon: typeof Building2;
-  labelKey: string;
-}[] = [
-  { id: "tenants", icon: Building2, labelKey: "sa.nav.tenants" },
-  { id: "packages", icon: Boxes, labelKey: "sa.nav.packages" },
-  { id: "analytics", icon: ChartPie, labelKey: "sa.nav.analytics" },
-  { id: "settings", icon: Settings, labelKey: "sa.nav.settings" },
-];
+  icon: typeof Home;
+  label: string;
+  badge?: string;
+}
 
-const PAGE_TITLE: Record<SaView, string> = {
-  overview: "sa.title.overview",
-  tenants: "sa.title.tenants",
-  packages: "sa.title.packages",
-  analytics: "sa.title.analytics",
-  settings: "sa.title.settings",
-};
+interface NavSection {
+  title: string;
+  items: NavItem[];
+}
+
+const navSections: NavSection[] = [
+  {
+    title: "Fleet Operations",
+    items: [
+      { id: "overview", icon: Home, label: "sa.nav.overview" },
+      { id: "tenants", icon: Building2, label: "sa.nav.tenants", badge: "6 Nodes" },
+    ],
+  },
+  {
+    title: "Commercial & Plans",
+    items: [
+      { id: "packages", icon: Boxes, label: "sa.nav.packages" },
+      { id: "analytics", icon: ChartPie, label: "sa.nav.analytics" },
+    ],
+  },
+  {
+    title: "System Governance",
+    items: [
+      { id: "settings", icon: Settings, label: "sa.nav.settings" },
+    ],
+  },
+];
 
 function PlatformLanguageMenu() {
   const { lang, setLang, t } = useI18n();
@@ -87,7 +78,7 @@ function PlatformLanguageMenu() {
           <ActionIcon
             variant="subtle"
             size="lg"
-            radius="md"
+            radius="xl"
             aria-label={t("topbar.language")}
             style={{
               color: SA.text,
@@ -142,519 +133,330 @@ function PlatformShell({
   user: PublicUser;
   onLogout: () => void;
 }) {
+  const [currentUser, setCurrentUser] = useState<PublicUser>(user);
+  const [devDrawerOpen, setDevDrawerOpen] = useState(false);
+  const [avatarUrl, setAvatarUrl] = useState(() => localStorage.getItem("corbel_dev_avatar") || "");
+
+  useEffect(() => {
+    const onAvatarChange = () => setAvatarUrl(localStorage.getItem("corbel_dev_avatar") || "");
+    window.addEventListener("corbel_avatar_updated", onAvatarChange);
+    return () => window.removeEventListener("corbel_avatar_updated", onAvatarChange);
+  }, []);
+
   const [view, setView] = useState<SaView>("overview");
   const [registerOpen, setRegisterOpen] = useState(false);
   const [selectedTenant, setSelectedTenant] = useState<TenantCompanySummary | null>(null);
+  const [editCompany, setEditCompany] = useState<PublicCompany | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
 
-  const { t } = useI18n();
+  const { t, dir } = useI18n();
   const SA = useSaTheme();
   const { scheme, setScheme } = useSaScheme();
-  const { setColorScheme: mantineSetColorScheme } = useMantineColorScheme();
+  const { setColorScheme } = useMantineColorScheme();
 
   useEffect(() => {
-    mantineSetColorScheme(scheme);
-  }, [scheme, mantineSetColorScheme]);
+    setColorScheme(scheme);
+  }, [scheme, setColorScheme]);
 
-  useEffect(() => {
-    const root = document.documentElement;
-    const prev = root.dataset.mantineColorScheme;
-    root.dataset.mantineColorScheme = scheme;
-    return () => {
-      if (prev === undefined) delete root.dataset.mantineColorScheme;
-      else root.dataset.mantineColorScheme = prev;
-    };
-  }, [scheme]);
+  const variables = Object.fromEntries(
+    Object.entries(SA).map(([key, value]) => [`--sa-${key}`, value]),
+  ) as CSSProperties;
 
-  const themeToggle = (
-    <ActionIcon
-      variant="subtle"
-      size="lg"
-      radius="md"
-      aria-label={t("sa.settings.theme")}
-      onClick={() => setScheme(scheme === "dark" ? "light" : "dark")}
-      style={{
-        color: SA.text,
-        border: `1px solid ${SA.border}`,
-        background: SA.panel,
-      }}
-    >
-      {scheme === "dark" ? <Sun size={17} /> : <Moon size={17} />}
-    </ActionIcon>
-  );
+  const refresh = () => setRefreshKey((k) => k + 1);
+
+  // Find active item label for breadcrumbs
+  const activeItem = navSections
+    .flatMap((s) => s.items)
+    .find((item) => item.id === view);
 
   return (
-    <div
-      style={{
-        display: "flex",
-        height: "100vh",
-        width: "100vw",
-        background: SA.bg,
-        color: SA.text,
-        overflow: "hidden",
-        padding: "14px 18px",
-        boxSizing: "border-box",
-      }}
-    >
-      {/* Floating Enclosed Master Canvas (Aryo Pamungkas SLAB Design Studio) */}
-      <div
-        style={{
-          display: "flex",
-          flex: 1,
-          height: "100%",
-          width: "100%",
-          borderRadius: 28,
-          overflow: "hidden",
-          background: SA.bgSidebar,
-          boxShadow: SA.shadow,
-          border: `1px solid ${SA.border}`,
-        }}
-      >
-        {/* ======================================================== */}
-        {/* 1. FAR-LEFT SLIM EMERALD DOCK RAIL (SLAB STYLE)           */}
-        {/* ======================================================== */}
-        <aside
-          style={{
-            width: 74,
-            flexShrink: 0,
-            background: SA.bgDock,
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "space-between",
-            paddingBlock: 24,
-            zIndex: 10,
-          }}
-        >
-          {/* Top Home App Icon (Active White Squircle in SLAB) */}
-          <Stack align="center" gap="xl">
-            <Tooltip label={t("sa.nav.overview")} position="right" offset={14} withinPortal>
-              <UnstyledButton
-                onClick={() => setView("overview")}
-                style={{
-                  width: 44,
-                  height: 44,
-                  borderRadius: 14,
-                  background: view === "overview" ? SA.dockActiveBg : "rgba(255, 255, 255, 0.22)",
-                  color: view === "overview" ? SA.dockActiveColor : "#FFFFFF",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  cursor: "pointer",
-                  boxShadow: view === "overview" ? "0 4px 14px rgba(0, 0, 0, 0.15)" : "none",
-                  transition: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
-                }}
-                onMouseEnter={(e) => {
-                  if (view !== "overview") e.currentTarget.style.background = "rgba(255, 255, 255, 0.32)";
-                }}
-                onMouseLeave={(e) => {
-                  if (view !== "overview") e.currentTarget.style.background = "rgba(255, 255, 255, 0.22)";
-                }}
-              >
-                <Home size={22} />
-              </UnstyledButton>
-            </Tooltip>
+    <div className="sa-console" style={variables} dir={dir} data-scheme={scheme}>
+      <a className="sa-skip" href="#platform-content">
+        Skip to content
+      </a>
 
-            {/* Navigation Icons Stack */}
-            <Stack align="center" gap="sm">
-              {DOCK_ITEMS.map((item) => {
-                const Icon = item.icon;
-                const active = view === item.id;
-                return (
-                  <Tooltip
-                    key={item.id}
-                    label={t(item.labelKey)}
-                    position="right"
-                    offset={14}
-                    withinPortal
-                  >
-                    <UnstyledButton
-                      onClick={() => setView(item.id)}
-                      style={{
-                        width: 44,
-                        height: 44,
-                        borderRadius: 14,
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        background: active ? SA.dockActiveBg : "transparent",
-                        color: active ? SA.dockActiveColor : SA.dockInactiveColor,
-                        boxShadow: active ? "0 4px 14px rgba(0, 0, 0, 0.12)" : "none",
-                        transition: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
-                      }}
-                      onMouseEnter={(e) => {
-                        if (!active) e.currentTarget.style.color = "#FFFFFF";
-                      }}
-                      onMouseLeave={(e) => {
-                        if (!active) e.currentTarget.style.color = SA.dockInactiveColor;
-                      }}
-                    >
-                      <Icon size={20} />
-                    </UnstyledButton>
-                  </Tooltip>
-                );
-              })}
-            </Stack>
-          </Stack>
+      {/* Modern Hierarchical Sidebar */}
+      <aside className="sa-sidebar">
+        {/* Brand Lockup */}
+        <div className="sa-brand">
+          <img src="/corbel_icon.svg" alt="Corbel ERP" />
+          <div>
+            <strong>Corbel</strong>
+            <span>by The Foolish Crow</span>
+          </div>
+        </div>
 
-          {/* Bottom Controls: Language, Theme & Logout */}
-          <Stack align="center" gap="xs">
-            <PlatformLanguageMenu />
+        {/* Live Cluster Context Card */}
+        <div className="sa-cluster-card">
+          <div className="sa-cluster-info">
+            <strong>Neon PostgreSQL Hub</strong>
+            <span>ep-restless-surf · Live</span>
+          </div>
+          <div className="sa-status-beacon" />
+        </div>
 
-            <Tooltip label={t("sa.settings.theme")} position="right" offset={14} withinPortal>
-              <UnstyledButton
-                onClick={() => setScheme(scheme === "dark" ? "light" : "dark")}
-                style={{
-                  width: 44,
-                  height: 44,
-                  borderRadius: 14,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  color: SA.dockInactiveColor,
-                  transition: "all 0.2s ease",
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.color = "#FFFFFF";
-                  e.currentTarget.style.background = "rgba(255, 255, 255, 0.15)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.color = SA.dockInactiveColor;
-                  e.currentTarget.style.background = "transparent";
-                }}
-              >
-                {scheme === "dark" ? <Sun size={19} /> : <Moon size={19} />}
-              </UnstyledButton>
-            </Tooltip>
+        {/* Categorized Navigation */}
+        <nav aria-label="Platform navigation">
+          {navSections.map((section) => (
+            <div key={section.title} className="sa-nav-section">
+              <div className="sa-nav-label">{section.title}</div>
+              {section.items.map(({ id, icon: Icon, label, badge }) => (
+                <button
+                  key={id}
+                  className="sa-nav-item"
+                  aria-current={view === id ? "page" : undefined}
+                  onClick={() => setView(id)}
+                >
+                  <Icon size={17} />
+                  <span>{t(label)}</span>
+                  {badge && <span className="sa-nav-badge">{badge}</span>}
+                </button>
+              ))}
+            </div>
+          ))}
+        </nav>
 
-            <Tooltip label={t("sa.logout")} position="right" offset={14} withinPortal>
-              <UnstyledButton
-                onClick={onLogout}
-                style={{
-                  width: 44,
-                  height: 44,
-                  borderRadius: 14,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  color: SA.dockInactiveColor,
-                  transition: "all 0.2s ease",
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.color = "#FFFFFF";
-                  e.currentTarget.style.background = "rgba(255, 255, 255, 0.15)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.color = SA.dockInactiveColor;
-                  e.currentTarget.style.background = "transparent";
-                }}
-              >
-                <LogOut size={19} />
-              </UnstyledButton>
-            </Tooltip>
-          </Stack>
-        </aside>
-
-        {/* ======================================================== */}
-        {/* 2. SECONDARY CLEAN WHITE SIDEBAR (SLAB DIRECTORY)        */}
-        {/* ======================================================== */}
-        <aside
-          style={{
-            width: 236,
-            flexShrink: 0,
-            background: SA.bgSidebar,
-            borderInlineEnd: `1px solid ${SA.border}`,
-            display: "flex",
-            flexDirection: "column",
-            justifyContent: "space-between",
-            padding: "24px 18px",
-            overflowY: "auto",
-          }}
-        >
-          <Stack gap="lg">
-            {/* Brand Header */}
-            <Group gap="sm" wrap="nowrap">
-              <div
-                style={{
-                  width: 38,
-                  height: 38,
-                  borderRadius: 12,
-                  background: "rgba(43, 182, 115, 0.12)",
-                  color: SA.accent,
-                  border: "1px solid rgba(43, 182, 115, 0.25)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontWeight: 800,
-                }}
-              >
-                <Cloud size={20} />
-              </div>
-              <Stack gap={0} style={{ minWidth: 0 }}>
-                <Text fw={800} size="sm" style={{ color: SA.text, letterSpacing: -0.2 }} truncate>
-                  Corbel Cloud
-                </Text>
-                <Text size="10px" fw={700} style={{ color: SA.accent, letterSpacing: 0.8 }} tt="uppercase">
-                  Super Admin
-                </Text>
-              </Stack>
-            </Group>
-
-            {/* Prominent "+ Create New" Pill Button (SLAB Style) */}
-            <Button
-              fullWidth
-            radius="xl"
-            size="md"
-            leftSection={<Plus size={16} />}
-            onClick={() => setRegisterOpen(true)}
-            styles={{
-              root: {
-                background: SA.gradient,
-                color: "#FFFFFF",
-                fontWeight: 700,
-                fontSize: 13,
-                boxShadow: "0 6px 18px -4px rgba(43, 182, 115, 0.5)",
-                "&:hover": { filter: "brightness(1.06)" },
-              },
+        {/* Sidebar Footer & User Profile */}
+        <div className="sa-sidebar-bottom">
+          {/* Cozy Mascot Companion (Homage to reference image bottom-left sidebar) */}
+          <div
+            style={{
+              padding: "10px 14px",
+              marginBottom: 10,
+              borderRadius: 14,
+              background: SA.panelStrong,
+              border: `1px solid ${SA.border}`,
+              display: "flex",
+              alignItems: "center",
+              gap: 12,
             }}
           >
-            Create New
-          </Button>
-
-          {/* Directory Navigation Tree */}
-          <Stack gap={6} mt="xs">
-            {/* Workspaces Group */}
-            <Group justify="space-between" align="center" px={8} py={4}>
-              <Group gap={6}>
-                <ChevronDown size={14} style={{ color: SA.muted }} />
-                <Text size="11px" fw={800} style={{ color: SA.muted, letterSpacing: 0.8 }} tt="uppercase">
-                  Workspaces
-                </Text>
-              </Group>
-            </Group>
-
-            <Stack gap={2} pl={12}>
-              {[
-                { label: "All Tenants", view: "tenants" as SaView },
-                { label: "Enterprise Tiers", view: "tenants" as SaView },
-                { label: "Wholesale & POS", view: "tenants" as SaView },
-                { label: "Standard Plans", view: "tenants" as SaView },
-              ].map((item, idx) => (
-                <UnstyledButton
-                  key={idx}
-                  onClick={() => setView(item.view)}
-                  style={{
-                    padding: "7px 10px",
-                    borderRadius: 8,
-                    fontSize: 13,
-                    fontWeight: 600,
-                    color: SA.textSoft,
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    transition: "all 0.15s ease",
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.background = SA.panelHover;
-                    e.currentTarget.style.color = SA.text;
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.background = "transparent";
-                    e.currentTarget.style.color = SA.textSoft;
-                  }}
-                >
-                  <Folder size={14} style={{ color: SA.accent }} />
-                  {item.label}
-                </UnstyledButton>
-              ))}
-            </Stack>
-
-            {/* Platform Management Group */}
-            <Group justify="space-between" align="center" px={8} py={4} mt="sm">
-              <Text size="11px" fw={800} style={{ color: SA.muted, letterSpacing: 0.8 }} tt="uppercase">
-                Platform Core
+            <div
+              style={{
+                width: 38,
+                height: 38,
+                borderRadius: 10,
+                background: `${SA.accent}18`,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                color: SA.accent,
+                flexShrink: 0,
+              }}
+            >
+              <Feather size={18} />
+            </div>
+            <div>
+              <Text fw={750} size="xs" style={{ color: SA.text, fontSize: 12, lineHeight: 1.2 }}>
+                Sovereign Familiar
               </Text>
-            </Group>
-
-            <Stack gap={2} pl={12}>
-              <UnstyledButton
-                onClick={() => setView("analytics")}
-                style={{
-                  padding: "7px 10px",
-                  borderRadius: 8,
-                  fontSize: 13,
-                  fontWeight: 600,
-                  color: view === "analytics" ? SA.accent : SA.textSoft,
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                }}
-              >
-                <ChartPie size={14} />
-                Analytics & MRR
-              </UnstyledButton>
-
-              <UnstyledButton
-                onClick={() => setView("packages")}
-                style={{
-                  padding: "7px 10px",
-                  borderRadius: 8,
-                  fontSize: 13,
-                  fontWeight: 600,
-                  color: view === "packages" ? SA.accent : SA.textSoft,
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                }}
-              >
-                <Boxes size={14} />
-                Subscription Plans
-              </UnstyledButton>
-
-              <UnstyledButton
-                onClick={() => setView("settings")}
-                style={{
-                  padding: "7px 10px",
-                  borderRadius: 8,
-                  fontSize: 13,
-                  fontWeight: 600,
-                  color: view === "settings" ? SA.accent : SA.textSoft,
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                }}
-              >
-                <Settings size={14} />
-                Security & Passwords
-              </UnstyledButton>
-            </Stack>
-          </Stack>
-        </Stack>
-
-        {/* Bottom User Card */}
-        <div
-          style={{
-            padding: "12px 14px",
-            borderRadius: 14,
-            background: SA.panelStrong,
-            border: `1px solid ${SA.border}`,
-          }}
-        >
-          <Group gap="sm" wrap="nowrap">
-            <Avatar radius="xl" size={32} style={{ background: SA.gradient, color: "#FFFFFF" }}>
-              {user.fullName.slice(0, 1).toUpperCase()}
-            </Avatar>
-            <Stack gap={0} style={{ minWidth: 0, flex: 1 }}>
-              <Text fw={700} size="xs" truncate style={{ color: SA.text }}>
-                {user.fullName}
+              <Text size="xs" style={{ color: SA.muted, fontSize: 10 }}>
+                Level 14 · Corbel Root
               </Text>
-              <Text size="10px" style={{ color: SA.muted }} truncate>
-                {user.email}
-              </Text>
-            </Stack>
-          </Group>
+            </div>
+          </div>
+
+          <div className="sa-studio">
+            THE FOOLISH CROW
+            <span>Observe. Build. Verify.</span>
+          </div>
+
+          <div
+            className="sa-account-box"
+            onClick={() => setDevDrawerOpen(true)}
+            style={{ cursor: "pointer" }}
+            title="Click to open Developer Profile & Updater"
+          >
+            {avatarUrl ? (
+              <Avatar
+                src={avatarUrl}
+                size={34}
+                radius="xl"
+                styles={{ root: { border: `1.5px solid ${SA.accent}` } }}
+              />
+            ) : (
+              <span className="sa-avatar">{currentUser.fullName.slice(0, 1).toUpperCase()}</span>
+            )}
+            <div className="sa-account-info">
+              <strong>{currentUser.fullName}</strong>
+              <span>Super administrator</span>
+            </div>
+            <Tooltip label={t("sa.logout")}>
+              <ActionIcon
+                variant="subtle"
+                size="sm"
+                color={SA.muted}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onLogout();
+                }}
+                aria-label={t("sa.logout")}
+              >
+                <LogOut size={16} />
+              </ActionIcon>
+            </Tooltip>
+          </div>
         </div>
       </aside>
 
-      {/* ======================================================== */}
-      {/* 3. MAIN APPLICATION WORKSPACE CANVAS                     */}
-      {/* ======================================================== */}
-      <main
-        style={{
-          flex: 1,
-          minWidth: 0,
-          display: "flex",
-          flexDirection: "column",
-          height: "100%",
-          overflow: "hidden",
-        }}
-      >
-        {/* Top Bar for non-overview pages */}
-        {view !== "overview" && (
-          <header
-            style={{
-              height: 64,
-              flexShrink: 0,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              paddingInline: 28,
-              borderBottom: `1px solid ${SA.border}`,
-              background: SA.topbar,
-            }}
-          >
-            <Group gap="xs">
-              <Text fw={800} size="lg" style={{ letterSpacing: -0.3 }}>
-                {t(PAGE_TITLE[view])}
-              </Text>
-            </Group>
+      {/* Main Workspace */}
+      <div className="sa-workspace">
+        {/* Unified Command Topbar */}
+        <header className="sa-topbar">
+          <div className="sa-breadcrumb">
+            Platform <span>/</span> <strong>{activeItem ? t(activeItem.label) : "Overview"}</strong>
+          </div>
 
-            <Group gap="sm">
-              <Badge
-                variant="light"
+          {/* Quick Search Bar Trigger */}
+          <div className="sa-search-trigger" onClick={() => setView("tenants")}>
+            <Search size={14} />
+            <span>Quick search tenants, plans...</span>
+            <span className="sa-kbd">⌘K</span>
+          </div>
+
+          {/* Topbar Actions */}
+          <Group gap="xs">
+            <ActionIcon
+              className="sa-mobile-logout"
+              variant="subtle"
+              size="lg"
+              color={SA.textSoft}
+              aria-label={t("sa.logout")}
+              onClick={onLogout}
+            >
+              <LogOut size={18} />
+            </ActionIcon>
+
+            <div className="sa-telemetry-badge">
+              <span className="sa-status-beacon" />
+              <span>1 Cloud · 5 Desktop Nodes</span>
+            </div>
+
+            <PlatformLanguageMenu />
+
+            <Tooltip label={`Switch to ${scheme === "dark" ? "light" : "dark"} theme`}>
+              <ActionIcon
+                variant="subtle"
                 size="lg"
-                radius="md"
+                color={SA.textSoft}
+                radius="xl"
+                aria-label={`Switch to ${scheme === "dark" ? "light" : "dark"} theme`}
+                onClick={() => setScheme(scheme === "dark" ? "light" : "dark")}
+              >
+                {scheme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
+              </ActionIcon>
+            </Tooltip>
+
+            {/* Developer App Update Trigger */}
+            <Tooltip label="Check for software updates & release notes">
+              <Button
+                size="xs"
+                variant="subtle"
+                leftSection={<Download size={14} />}
+                onClick={() => setDevDrawerOpen(true)}
                 styles={{
                   root: {
-                    background: "rgba(43, 182, 115, 0.12)",
-                    color: SA.accent,
-                    border: `1px solid rgba(43, 182, 115, 0.3)`,
+                    borderRadius: 999,
+                    border: `1px solid ${SA.border}`,
+                    background: SA.panel,
+                    color: SA.text,
+                    fontWeight: 750,
+                    height: 32,
+                    paddingInline: 12,
+                    fontSize: 12,
+                    "&:hover": { color: SA.accent, borderColor: SA.accent },
                   },
-                  label: { fontWeight: 700, letterSpacing: 0.5 },
                 }}
               >
-                SUPER ADMIN
-              </Badge>
-              <PlatformLanguageMenu />
-              {themeToggle}
-            </Group>
-          </header>
-        )}
+                v1.3.1 · Update
+              </Button>
+            </Tooltip>
 
-        {/* View Switcher Container */}
-        <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={view}
-              initial={{ opacity: 0, y: 12 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -12 }}
-              transition={{ duration: 0.2 }}
-              style={{ height: "100%" }}
-            >
-              {view === "overview" && (
-                <PlatformOverviewPage
-                  onNavigate={setView}
-                  user={user}
-                  onOpenTenant={(tenant) => setSelectedTenant(tenant)}
-                />
-              )}
-              {view === "analytics" && <PlatformAnalyticsPage />}
-              {view === "tenants" && <TenantsPage />}
-              {view === "packages" && <PackagesPage />}
-              {view === "settings" && <PlatformSettingsPage />}
-            </motion.div>
-          </AnimatePresence>
-        </div>
-      </main>
+            {/* Developer Avatar Trigger */}
+            <Tooltip label="Open Developer Profile & Cockpit">
+              <UnstyledButton
+                onClick={() => setDevDrawerOpen(true)}
+                style={{ display: "flex", alignItems: "center", cursor: "pointer" }}
+              >
+                <Avatar
+                  src={avatarUrl || undefined}
+                  size={32}
+                  radius="xl"
+                  styles={{
+                    root: {
+                      border: `1.5px solid ${SA.accent}`,
+                      background: `${SA.accent}22`,
+                      color: SA.accent,
+                      fontWeight: 800,
+                      fontSize: 13,
+                    },
+                  }}
+                >
+                  {!avatarUrl && currentUser.fullName.slice(0, 1).toUpperCase()}
+                </Avatar>
+              </UnstyledButton>
+            </Tooltip>
+
+            <button className="sa-primary" onClick={() => setRegisterOpen(true)}>
+              <Plus size={16} />
+              <span>Register tenant</span>
+            </button>
+          </Group>
+        </header>
+
+        {/* Content Viewport */}
+        <main id="platform-content" tabIndex={-1} className="sa-content">
+          {view === "overview" && (
+            <PlatformOverviewPage
+              user={currentUser}
+              refreshKey={refreshKey}
+              onNavigate={setView}
+              onOpenTenant={setSelectedTenant}
+            />
+          )}
+          {view === "tenants" && <TenantsPage key={refreshKey} />}
+          {view === "packages" && <PackagesPage />}
+          {view === "analytics" && <PlatformAnalyticsPage />}
+          {view === "settings" && (
+            <PlatformSettingsPage
+              user={currentUser}
+              onUserUpdated={setCurrentUser}
+              onOpenTenant={setSelectedTenant}
+            />
+          )}
+        </main>
       </div>
 
       {/* Global Modals & Drawers */}
-      <RegisterTenantModal
+      <RegisterTenantDrawer
         opened={registerOpen}
         onClose={() => setRegisterOpen(false)}
         onCreated={() => {
           setRegisterOpen(false);
-          setRefreshKey((k) => k + 1);
+          refresh();
         }}
       />
-
       <TenantDetailDrawer
         tenant={selectedTenant}
         onClose={() => setSelectedTenant(null)}
-        onChanged={() => setRefreshKey((k) => k + 1)}
-        onEdit={() => {}}
+        onChanged={refresh}
+        onEdit={setEditCompany}
         refreshKey={refreshKey}
+      />
+      <EditTenantModal
+        company={editCompany}
+        opened={editCompany !== null}
+        onClose={() => setEditCompany(null)}
+        onSaved={() => {
+          setEditCompany(null);
+          refresh();
+        }}
+      />
+      <DevProfileDrawer
+        opened={devDrawerOpen}
+        onClose={() => setDevDrawerOpen(false)}
+        user={currentUser}
+        onUserUpdated={setCurrentUser}
       />
     </div>
   );

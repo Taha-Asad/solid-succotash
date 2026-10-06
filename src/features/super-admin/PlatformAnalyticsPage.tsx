@@ -49,17 +49,6 @@ const item = {
   },
 };
 
-const STATUS_COLORS: Record<string, string> = {
-  active: "#34D399",
-  trial: "#38BDF8",
-  past_due: "#FBBF24",
-  suspended: "#F87171",
-  cancelled: "#94A3B8",
-  ended: "#94A3B8",
-};
-
-const PKG_COLORS = ["#38BDF8", "#818CF8", "#22D3EE", "#34D399", "#FBBF24", "#F87171"];
-
 function KpiCard({
   label,
   value,
@@ -79,24 +68,23 @@ function KpiCard({
       variants={item}
       whileHover={{ y: -3 }}
       style={{
-        borderRadius: 16,
-        padding: "18px 20px",
+        borderRadius: 22,
+        padding: "22px 24px",
         background: SA.panel,
+        boxShadow: "0 6px 20px -2px rgba(0,0,0,0.03)",
         border: `1px solid ${SA.border}`,
-        boxShadow: "0 2px 8px rgba(0,0,0,0.2)",
       }}
     >
       <Group gap={14} wrap="nowrap" align="center">
         <div
           style={{
-            width: 44,
-            height: 44,
-            borderRadius: 12,
+            width: 46,
+            height: 46,
+            borderRadius: 14,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            background: `${tint}1f`,
-            border: `1px solid ${tint}44`,
+            background: `${tint}1a`,
             color: tint,
             flexShrink: 0,
           }}
@@ -104,15 +92,15 @@ function KpiCard({
           {icon}
         </div>
         <Stack gap={2}>
-          <Text size="xs" fw={700} style={{ color: SA.muted, textTransform: "uppercase", letterSpacing: 0.6 }}>
+          <Text size="xs" fw={700} style={{ color: SA.muted, textTransform: "uppercase", letterSpacing: 0.6, fontSize: 11 }}>
             {label}
           </Text>
           <Group gap={6} align="baseline">
-            <Text fw={800} size="xl" style={{ color: SA.text, letterSpacing: -0.5 }}>
+            <Text fw={900} size="xl" style={{ color: SA.text, letterSpacing: -0.5, fontSize: 22, fontVariantNumeric: "tabular-nums" }}>
               {value}
             </Text>
             {suffix ? (
-              <Text component="span" size="xs" fw={700} style={{ color: SA.accent }}>
+              <Text component="span" size="xs" fw={800} style={{ color: SA.accent }}>
                 {suffix}
               </Text>
             ) : null}
@@ -135,13 +123,14 @@ function ChartCard({
     <motion.div
       variants={item}
       style={{
-        borderRadius: 18,
-        padding: "18px 20px",
+        borderRadius: 26,
+        padding: "24px 26px",
         background: SA.panel,
+        boxShadow: "0 8px 30px rgba(0,0,0,0.03)",
         border: `1px solid ${SA.border}`,
       }}
     >
-      <Text size="sm" fw={800} style={{ color: SA.text }}>
+      <Text size="sm" fw={800} style={{ color: SA.text, fontSize: 15, letterSpacing: -0.2, marginBottom: 16 }}>
         {title}
       </Text>
       {children}
@@ -152,6 +141,8 @@ function ChartCard({
 export default function PlatformAnalyticsPage() {
   const { t } = useI18n();
   const SA = useSaTheme();
+  const STATUS_COLORS: Record<string, string> = { active: SA.success, trial: SA.accent2, past_due: SA.warning, suspended: SA.danger, cancelled: SA.muted, ended: SA.muted };
+  const PKG_COLORS = [SA.accent, SA.accent2, SA.accent3, SA.violet, SA.cyan, SA.muted];
   const [data, setData] = useState<PlatformAnalytics | null>(null);
   const [error, setError] = useState("");
 
@@ -179,9 +170,9 @@ export default function PlatformAnalyticsPage() {
       data?.subscriptionsByStatus.map((s) => ({
         name: t(`sa.sub.${s.status}`),
         value: s.count,
-        color: STATUS_COLORS[s.status] ?? "#94A3B8",
+        color: STATUS_COLORS[s.status] ?? SA.muted,
       })) ?? [],
-    [data, t],
+    [data, t, SA],
   );
 
   const pkgData = useMemo(
@@ -230,7 +221,7 @@ export default function PlatformAnalyticsPage() {
       style={{ padding: "26px 28px" }}
     >
       <motion.div variants={item}>
-        <Text fw={800} size="xl" style={{ color: SA.text, letterSpacing: -0.3 }}>
+        <Text fw={650} size="xl" style={{ color: SA.text, letterSpacing: -0.3 }}>
           {t("sa.title.analytics")}
         </Text>
         <Text size="sm" mt={2} style={{ color: SA.muted }}>
@@ -348,14 +339,14 @@ export default function PlatformAnalyticsPage() {
       <motion.div
         variants={item}
         style={{
-          borderRadius: 18,
+          borderRadius: 8,
           padding: "18px 20px",
           background: SA.panel,
           border: `1px solid ${SA.border}`,
           marginTop: "md",
         }}
       >
-        <Text size="sm" fw={800} style={{ color: SA.text }}>
+        <Text size="sm" fw={650} style={{ color: SA.text }}>
           {t("sa.analytics.byPackage")}
         </Text>
         {pkgData.length === 0 ? (

@@ -128,7 +128,7 @@ export default function TenantDetailDrawer({
       title={
         <Group gap="xs">
           <Sparkles size={16} style={{ color: SA.accent }} />
-          <Text fw={800} size="sm" style={{ letterSpacing: -0.2 }}>
+          <Text fw={650} size="sm" style={{ letterSpacing: -0.2 }}>
             Workspace Inspector
           </Text>
         </Group>
@@ -155,7 +155,7 @@ export default function TenantDetailDrawer({
                       styles={{
                         root: {
                           background: SA.gradient,
-                          color: "#06121F",
+                          color: SA.dockActiveColor,
                           fontWeight: 800,
                           fontSize: 20,
                           boxShadow: "0 8px 24px -6px rgba(2,132,199,0.5)",
@@ -166,7 +166,7 @@ export default function TenantDetailDrawer({
                       {detail.company.name.slice(0, 1).toUpperCase()}
                     </ThemeIcon>
                     <Stack gap={2} style={{ flex: 1, minWidth: 0 }}>
-                      <Text fw={800} size="lg" style={{ color: SA.text, letterSpacing: -0.3 }} truncate>
+                      <Text fw={650} size="lg" style={{ color: SA.text, letterSpacing: -0.3 }} truncate>
                         {detail.company.name}
                       </Text>
                       <Text size="xs" style={{ color: SA.muted }}>
@@ -230,9 +230,9 @@ export default function TenantDetailDrawer({
                       variant="filled"
                       styles={{
                         root: {
-                          background: tenant.isActive ? "#064E3B" : "#1E293B",
-                          color: tenant.isActive ? "#6EE7B7" : "#94A3B8",
-                          border: `1px solid ${tenant.isActive ? "#059669" : "#475569"}`,
+                          background: tenant.isActive ? SA.panelMint : SA.panelStrong,
+                          color: tenant.isActive ? SA.success : SA.muted,
+                          border: `1px solid ${SA.borderStrong}`,
                           fontWeight: 700,
                         },
                       }}
@@ -296,7 +296,7 @@ export default function TenantDetailDrawer({
 
             {/* Subscription & Tier Plan */}
             <div style={{ padding: "20px 24px", borderBottom: `1px solid ${SA.border}` }}>
-              <Text size="xs" fw={800} style={{ color: SA.accent, textTransform: "uppercase", letterSpacing: 1 }}>
+              <Text size="xs" fw={650} style={{ color: SA.accent, textTransform: "uppercase", letterSpacing: 1 }}>
                 {t("sa.tenants.detail.subscription")} & Quotas
               </Text>
               <div
@@ -367,7 +367,7 @@ export default function TenantDetailDrawer({
             {/* Master Module Controls */}
             <div style={{ padding: "20px 24px", borderBottom: `1px solid ${SA.border}` }}>
               <Group justify="space-between" mb={12}>
-                <Text size="xs" fw={800} style={{ color: SA.accent, textTransform: "uppercase", letterSpacing: 1 }}>
+                <Text size="xs" fw={650} style={{ color: SA.accent, textTransform: "uppercase", letterSpacing: 1 }}>
                   {t("sa.tenants.detail.modules")}
                 </Text>
                 <Text size="11px" style={{ color: SA.muted }}>
@@ -430,7 +430,7 @@ export default function TenantDetailDrawer({
                         onChange={(e) => toggleModule(mod.moduleKey, e.currentTarget.checked)}
                         styles={{
                           track: {
-                            backgroundColor: (isCore ? true : mod.isEnabled) ? "#2BB673" : SA.borderStrong,
+                            backgroundColor: (isCore ? true : mod.isEnabled) ? SA.accent : SA.borderStrong,
                             borderColor: "transparent",
                             cursor: isCore ? "not-allowed" : "pointer",
                           },
@@ -444,7 +444,7 @@ export default function TenantDetailDrawer({
 
             {/* Feature Flags */}
             <div style={{ padding: "20px 24px 32px" }}>
-              <Text size="xs" fw={800} style={{ color: SA.accent, textTransform: "uppercase", letterSpacing: 1 }}>
+              <Text size="xs" fw={650} style={{ color: SA.accent, textTransform: "uppercase", letterSpacing: 1 }}>
                 {t("sa.tenants.detail.featureFlags")}
               </Text>
               {detail.featureFlags.length === 0 ? (
@@ -474,9 +474,9 @@ export default function TenantDetailDrawer({
                         variant="filled"
                         styles={{
                           root: {
-                            background: flag.isEnabled ? "rgba(43, 182, 115, 0.12)" : SA.panelStrong,
+                            background: flag.isEnabled ? `${SA.accent}20` : SA.panelStrong,
                             color: flag.isEnabled ? SA.accent : SA.muted,
-                            border: `1px solid ${flag.isEnabled ? "rgba(43, 182, 115, 0.3)" : SA.border}`,
+                            border: `1px solid ${flag.isEnabled ? `${SA.accent}50` : SA.border}`,
                             fontWeight: 700,
                           },
                         }}

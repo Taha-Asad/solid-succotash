@@ -7,16 +7,13 @@ import { AnimatePresence, motion } from "framer-motion";
 
 import {
   Alert,
-  Badge,
   Button,
   Group,
-  LoadingOverlay,
   Select,
   Stack,
   Text,
   TextInput,
   ThemeIcon,
-  Tooltip,
 } from "@mantine/core";
 import {
   Building2,
@@ -41,7 +38,7 @@ import type {
 import { useI18n } from "../../i18n/I18nProvider";
 import { useSaTheme } from "./saTheme.tsx";
 import { SubBadge } from "./TenantComponents";
-import RegisterTenantModal from "./RegisterTenantModal";
+import RegisterTenantDrawer from "./RegisterTenantDrawer";
 import EditTenantModal from "./EditTenantModal";
 import TenantDetailDrawer from "./TenantDetailDrawer";
 
@@ -86,94 +83,90 @@ export default function TenantsPage() {
   });
 
   return (
-    <div style={{ height: "100%", display: "flex", flexDirection: "column", position: "relative" }}>
-      <LoadingOverlay visible={loading} />
-
-      {/* Command Toolbar */}
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", position: "relative", background: "transparent" }}>
+      {/* Top Command Toolbar (Single, Airy, Anti-Slop) */}
       <div
         style={{
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
           gap: 16,
-          padding: "20px 28px",
-          background: SA.bgSidebar,
-          borderBottom: `1px solid ${SA.border}`,
+          padding: "28px 36px 12px",
+          background: "transparent",
           flexWrap: "wrap",
         }}
       >
-        <Group gap="md">
+        <div>
+          <Text fw={600} size="lg" style={{ color: SA.text, fontSize: 22, letterSpacing: -0.4 }}>
+            Tenant Workspaces
+          </Text>
+          <Text size="xs" mt={3} style={{ color: SA.muted, fontSize: 13 }}>
+            Sovereign commercial organizations, client nodes & cloud database fleet.
+          </Text>
+        </div>
+
+        <Group gap="sm">
           <TextInput
             placeholder={t("sa.tenants.searchPh")}
             value={query}
             onChange={(e) => setQuery(e.currentTarget.value)}
-            w={280}
-            leftSection={<Search size={15} style={{ color: SA.muted }} />}
-            radius="md"
+            w={240}
+            leftSection={<Search size={14} style={{ color: SA.muted }} />}
             styles={{
               input: {
-                background: SA.panel,
-                border: `1px solid ${SA.border}`,
+                background: SA.panelStrong,
+                border: "none",
                 color: SA.text,
                 fontWeight: 500,
+                borderRadius: 8,
+                height: 40,
+                fontSize: 13,
               },
             }}
           />
+
           <Select
             value={status}
             onChange={(v) => setStatus((v as typeof status) ?? "all")}
             data={[
-              { value: "all", label: `${t("sa.tenants.filter.all")} (${tenants.length})` },
-              { value: "active", label: `${t("sa.tenants.filter.active")} (${tenants.filter((x) => x.isActive).length})` },
-              { value: "archived", label: `${t("sa.tenants.filter.archived")} (${tenants.filter((x) => !x.isActive).length})` },
+              { value: "all", label: `All (${tenants.length})` },
+              { value: "active", label: `Active (${tenants.filter((x) => x.isActive).length})` },
+              { value: "archived", label: `Archived (${tenants.filter((x) => !x.isActive).length})` },
             ]}
-            w={160}
-            radius="md"
+            w={140}
             styles={{
               input: {
-                background: SA.panel,
-                border: `1px solid ${SA.border}`,
+                background: SA.panelStrong,
+                border: "none",
                 color: SA.text,
                 fontWeight: 600,
+                borderRadius: 8,
+                height: 40,
+                fontSize: 13,
               },
             }}
           />
-          <Badge
-            size="lg"
-            variant="filled"
+
+          <Button
+            variant="subtle"
+            size="sm"
+            loading={loading}
+            leftSection={<RefreshCw size={14} />}
+            onClick={load}
             styles={{
               root: {
                 background: SA.panelStrong,
-                color: SA.textSoft,
-                border: `1px solid ${SA.border}`,
+                color: SA.text,
                 fontWeight: 700,
+                borderRadius: 8,
+                height: 40,
+                paddingInline: 18,
+                "&:hover": { background: SA.panelHover, color: SA.accent },
               },
             }}
           >
-            {filtered.length} {filtered.length === 1 ? "Organization" : "Organizations"}
-          </Badge>
-        </Group>
-
-        <Group gap="sm">
-          <Tooltip label="Refresh directory">
-            <Button
-              variant="light"
-              size="sm"
-              leftSection={<RefreshCw size={14} />}
-              onClick={load}
-              styles={{
-                root: {
-                  background: SA.panel,
-                  color: SA.text,
-                  border: `1px solid ${SA.border}`,
-                  fontWeight: 600,
-                  "&:hover": { background: SA.panelHover },
-                },
-              }}
-            >
-              {t("sa.tenants.refresh")}
-            </Button>
-          </Tooltip>
+            {t("sa.tenants.refresh")}
+          </Button>
 
           <Button
             size="sm"
@@ -181,11 +174,14 @@ export default function TenantsPage() {
             onClick={() => setRegisterOpen(true)}
             styles={{
               root: {
-                background: SA.gradient,
-                color: "#06121F",
-                fontWeight: 800,
-                boxShadow: "0 6px 20px -6px rgba(2,132,199,0.5)",
-                "&:hover": { filter: "brightness(1.08)" },
+                background: SA.accent,
+                color: SA.dockActiveColor,
+                fontWeight: 600,
+                borderRadius: 8,
+                height: 40,
+                paddingInline: 20,
+                boxShadow: "none",
+                "&:hover": { filter: "brightness(1.06)" },
               },
             }}
           >
@@ -195,29 +191,129 @@ export default function TenantsPage() {
       </div>
 
       {error && (
-        <Alert color="red" mx={28} mt="md" icon={<Info size={16} />}>
+        <Alert color="red" mx={36} mt="xs" icon={<Info size={16} />} radius="md">
           {error}
         </Alert>
       )}
 
-      {/* Directory List */}
-      <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "24px 28px" }}>
-        <div style={{ maxWidth: 1200, margin: "0 auto" }}>
+      {/* Directory Canvas */}
+      <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "16px 36px 36px" }}>
+        <div style={{ maxWidth: 1240, margin: "0 auto" }}>
+          {/* Fleet Telemetry Hero Bar */}
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 240px), 1fr))",
+              gap: 16,
+              marginBottom: 24,
+            }}
+          >
+            <div
+              style={{
+                borderRadius: 20,
+                padding: "18px 22px",
+                background: SA.panelMint,
+                display: "flex",
+                alignItems: "center",
+                gap: 16,
+              }}
+            >
+              <div
+                style={{
+                  width: 42,
+                  height: 42,
+                  borderRadius: 12,
+                  background: SA.accent,
+                  color: SA.dockActiveColor,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  flexShrink: 0,
+                }}
+              >
+                <Building2 size={20} />
+              </div>
+              <Stack gap={1}>
+                <Text fw={600} size="sm" style={{ color: SA.text, fontSize: 14 }}>
+                  {tenants.length} Sovereign Cloud Tenant
+                </Text>
+                <Text size="xs" style={{ color: SA.muted, fontSize: 12 }}>
+                  Active in central Neon DB pool
+                </Text>
+              </Stack>
+            </div>
+
+            <div
+              style={{
+                borderRadius: 20,
+                padding: "18px 22px",
+                background: SA.panelStrong,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 16,
+              }}
+            >
+              <Group gap="md">
+                <div
+                  style={{
+                    width: 42,
+                    height: 42,
+                    borderRadius: 12,
+                    background: "rgba(59, 130, 246, 0.12)",
+                    color: SA.accent2,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    flexShrink: 0,
+                  }}
+                >
+                  <Users size={20} />
+                </div>
+                <Stack gap={1}>
+                  <Text fw={600} size="sm" style={{ color: SA.text, fontSize: 14 }}>
+                    5 Distributed Client Deployments
+                  </Text>
+                  <Text size="xs" style={{ color: SA.muted, fontSize: 12 }}>
+                    Distributed desktop instances with local SQLite caches
+                  </Text>
+                </Stack>
+              </Group>
+
+              <Button
+                size="xs"
+                onClick={() => setRegisterOpen(true)}
+                styles={{
+                  root: {
+                    borderRadius: 8,
+                    background: SA.panelHover,
+                    color: SA.accent,
+                    fontWeight: 700,
+                    fontSize: 11,
+                    "&:hover": { background: SA.panelMint },
+                  },
+                }}
+              >
+                + Provision Node
+              </Button>
+            </div>
+          </div>
+
           <AnimatePresence mode="popLayout">
             {filtered.length === 0 ? (
               <motion.div
                 initial={{ opacity: 0, y: 12 }}
                 animate={{ opacity: 1, y: 0 }}
                 style={{
-                  borderRadius: 18,
+                  borderRadius: 8,
                   border: `1px dashed ${SA.borderStrong}`,
-                  padding: 60,
+                  padding: "60px 24px",
                   textAlign: "center",
                   background: SA.panel,
                 }}
               >
                 <ThemeIcon
-                  size={52}
+                  size={56}
                   radius="xl"
                   styles={{
                     root: {
@@ -228,9 +324,9 @@ export default function TenantsPage() {
                     },
                   }}
                 >
-                  <Building2 size={24} />
+                  <Building2 size={26} />
                 </ThemeIcon>
-                <Text fw={700} size="md" style={{ color: SA.text }}>
+                <Text fw={600} size="md" style={{ color: SA.text }}>
                   {t("sa.tenants.empty")}
                 </Text>
                 <Text size="sm" mt={4} style={{ color: SA.muted }}>
@@ -238,56 +334,49 @@ export default function TenantsPage() {
                 </Text>
               </motion.div>
             ) : (
-              <Stack gap={12}>
-                {filtered.map((tenant, i) => {
+              <Stack gap={14}>
+                {filtered.map((tenant) => {
                   const initial = (tenant.name || "W").slice(0, 1).toUpperCase();
                   const isSelected = selected?.id === tenant.id;
 
                   return (
-                    <motion.div
+                    <div
+                      className="sa-tenant-card"
                       key={tenant.id}
-                      initial={{ opacity: 0, y: 14 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: Math.min(i * 0.03, 0.3), duration: 0.25 }}
-                      whileHover={{ y: -3 }}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelected(tenant); } }}
                       onClick={() => setSelected(tenant)}
                       style={{
                         display: "flex",
                         alignItems: "center",
-                        gap: 20,
-                        padding: "20px 24px",
-                        borderRadius: 20,
-                        background: isSelected ? SA.panelStrong : SA.panel,
-                        border: `1px solid ${isSelected ? SA.accent : SA.border}`,
+                        gap: 22,
+                        padding: "24px 28px",
+                        borderRadius: 8,
+                        background: isSelected ? SA.panelHover : SA.panel,
+                        border: isSelected
+                          ? `1px solid ${SA.accent}`
+                          : `1px solid ${SA.border}`,
                         cursor: "pointer",
                         transition: "all 0.2s ease",
-                        boxShadow: isSelected
-                          ? `0 0 0 1px ${SA.accent}, 0 16px 36px -12px rgba(2,132,199,0.3)`
-                          : "0 2px 10px rgba(0,0,0,0.06)",
-                      }}
-                      onMouseEnter={(e) => {
-                        if (!isSelected) e.currentTarget.style.borderColor = SA.borderStrong;
-                      }}
-                      onMouseLeave={(e) => {
-                        if (!isSelected) e.currentTarget.style.borderColor = SA.border;
+                        boxShadow: "none",
                       }}
                     >
-                      {/* Avatar Mark */}
+                      {/* Avatar Mark Squircle */}
                       <div
                         style={{
-                          width: 48,
-                          height: 48,
-                          borderRadius: 14,
+                          width: 52,
+                          height: 52,
+                          borderRadius: 16,
                           display: "flex",
                           alignItems: "center",
                           justifyContent: "center",
                           background: tenant.isActive
-                            ? "linear-gradient(135deg, rgba(2,132,199,0.2), rgba(37,99,235,0.12))"
+                            ? SA.panelMint
                             : SA.panelStrong,
-                          border: `1px solid ${tenant.isActive ? "rgba(2,132,199,0.4)" : SA.border}`,
                           color: tenant.isActive ? SA.accent : SA.muted,
-                          fontWeight: 800,
-                          fontSize: 18,
+                          fontWeight: 650,
+                          fontSize: 20,
                           flexShrink: 0,
                         }}
                       >
@@ -295,49 +384,51 @@ export default function TenantsPage() {
                       </div>
 
                       {/* Main Info */}
-                      <Stack gap={3} style={{ flex: 1, minWidth: 0 }}>
+                      <Stack gap={6} style={{ flex: 1, minWidth: 0 }}>
                         <Group gap="xs" wrap="nowrap">
-                          <Text fw={800} size="md" style={{ color: SA.text, letterSpacing: -0.2 }} truncate>
+                          <Text fw={600} size="md" style={{ color: SA.text, fontSize: 17, letterSpacing: -0.3 }} truncate>
                             {tenant.name}
                           </Text>
                           {tenant.packageName && (
-                            <Badge
-                              size="xs"
-                              variant="filled"
-                              styles={{
-                                root: {
-                                  background: `${SA.accent}1f`,
-                                  color: SA.accent,
-                                  border: `1px solid ${SA.accent}44`,
-                                  fontWeight: 800,
-                                },
+                            <div
+                              style={{
+                                display: "inline-flex",
+                                alignItems: "center",
+                                padding: "3px 10px",
+                                borderRadius: 8,
+                                background: SA.panelMint,
+                                color: SA.success,
+                                fontSize: 11,
+                                fontWeight: 600,
+                                textTransform: "uppercase",
+                                letterSpacing: 0.4,
                               }}
                             >
                               {tenant.packageName}
-                            </Badge>
+                            </div>
                           )}
                         </Group>
 
-                        <Group gap="md" wrap="wrap">
+                        <Group gap="lg" wrap="wrap">
                           {tenant.email && (
-                            <Group gap={4}>
-                              <Mail size={12} style={{ color: SA.muted }} />
-                              <Text size="xs" style={{ color: SA.textSoft }} truncate>
+                            <Group gap={6}>
+                              <Mail size={13} style={{ color: SA.muted }} />
+                              <Text size="xs" style={{ color: SA.textSoft, fontSize: 13 }} truncate>
                                 {tenant.email}
                               </Text>
                             </Group>
                           )}
                           {tenant.phone && (
-                            <Group gap={4}>
-                              <Phone size={12} style={{ color: SA.muted }} />
-                              <Text size="xs" style={{ color: SA.textSoft }}>
+                            <Group gap={6}>
+                              <Phone size={13} style={{ color: SA.muted }} />
+                              <Text size="xs" style={{ color: SA.textSoft, fontSize: 13 }}>
                                 {tenant.phone}
                               </Text>
                             </Group>
                           )}
-                          <Group gap={4}>
-                            <Users size={12} style={{ color: SA.muted }} />
-                            <Text size="xs" style={{ color: SA.muted }}>
+                          <Group gap={6}>
+                            <Users size={13} style={{ color: SA.muted }} />
+                            <Text size="xs" style={{ color: SA.muted, fontSize: 13, fontWeight: 600 }}>
                               {tenant.userCount} {tenant.userCount === 1 ? "seat" : "seats"}
                             </Text>
                           </Group>
@@ -347,23 +438,25 @@ export default function TenantsPage() {
                       {/* Right Metadata & Statuses */}
                       <Group gap="sm" align="center" style={{ flexShrink: 0 }}>
                         <SubBadge status={tenant.subscriptionStatus} />
-                        <Badge
-                          size="sm"
-                          variant="filled"
-                          styles={{
-                            root: {
-                              background: tenant.isActive ? "#064E3B" : "#1E293B",
-                              color: tenant.isActive ? "#6EE7B7" : "#94A3B8",
-                              border: `1px solid ${tenant.isActive ? "#059669" : "#475569"}`,
-                              fontWeight: 700,
-                            },
+                        <div
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            padding: "4px 12px",
+                            borderRadius: 8,
+                            background: tenant.isActive ? SA.panelMint : SA.panelStrong,
+                            color: tenant.isActive ? SA.accent : SA.muted,
+                            fontSize: 11,
+                            fontWeight: 600,
+                            textTransform: "uppercase",
+                            letterSpacing: 0.4,
                           }}
                         >
-                          {t(tenant.isActive ? "sa.status.active" : "sa.status.archived")}
-                        </Badge>
+                          {tenant.isActive ? "Active" : "Archived"}
+                        </div>
                         <ChevronRight size={18} style={{ color: SA.muted }} />
                       </Group>
-                    </motion.div>
+                    </div>
                   );
                 })}
               </Stack>
@@ -372,7 +465,7 @@ export default function TenantsPage() {
         </div>
       </div>
 
-      <RegisterTenantModal
+      <RegisterTenantDrawer
         opened={registerOpen}
         onClose={() => setRegisterOpen(false)}
         onCreated={load}

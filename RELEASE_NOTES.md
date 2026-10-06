@@ -37,12 +37,12 @@ timeline
         v1.2.1 : Decimal Minor Units Arithmetic : Comma-Safe Currency Parsing : 50+ Multi-Currency Engine
     section Compliance & Control Plane
         v1.3.0 : Full-Stack Parity : FBR/PRAL Fiscal Outbox Engine : Automated Test Gap Elimination (512 Tests)
-        v1.3.0+ : Sovereign Super Admin Command Deck : Zero-Knowledge Multi-Tenant Isolation : Core Module Locking : High-Contrast WCAG 2.2 AA Theme
+        v1.3.1 : Sovereign Super Admin Developer Cockpit : Slide-over Provisioning Workbench : Live Telemetry Mission Control : Anti-Slop Iconography
 ```
 
 | Version | Release Date | Key Themes & Milestone Deliverables | Verification Gate |
 | :--- | :---: | :--- | :---: |
-| **`v1.3.0+`** | **October 2026** | **Sovereign Super Admin Command Deck & Multi-Tenant Isolation**: Anti-slop high-contrast WCAG 2.2 AA interface (`saTheme`), zero-knowledge tenant privacy, dedicated Super Admin password rotation (`changeMyPassword`), core system module locks (`inventory`, `invoices`, `settings`), and complete canonical module catalog. | **Gate 7 (DoRG)** |
+| **`v1.3.1`** | **October 2026** | **Sovereign Developer Cockpit & Dynamic Telemetry**: Ergonomic slide-over Tenant Provisioning Workbench drawer replacing popup modals; live cross-tenant telemetry KPIs (MRR, tenant count, fleet users); measured database pool round-trip latency probes; live audit event activity calendar & 7-day volume; interactive developer directives console (`ping`, `stats`, `audit`, `update`); persistent operator quests; Tauri auto-updater client; custom avatar & profile switcher; anti-slop SVG iconography. | **Gate 7 (DoRG)** |
 | **`v1.3.0`** | **October 2026** | **Full-Stack Parity & Fiscal Engine**: Complete FBR tax credential synchronization across DB, Rust DTOs, and UI forms; client payment idempotency deduplication across IPC; automated FBR and notification test suites (512 green tests). | **Gate 4 (DoQV)** |
 | **`v1.2.1`** | **September 2026** | **Currency Normalization & Stability**: Eliminated `parseFloat` comma truncation; integrated live multi-currency exchange rates (50+ fiat currencies); stabilized Linux Wayland/WebKitGTK rendering. | **Gate 3 (DoCC)** |
 | **`v1.2.0`** | **September 2026** | **Invoice Voiding & State Machine**: Atomic invoice cancellation with reversing accounting entries and automatic inventory restoration; active/inactive customer lifecycle; canonical FTS5 external content triggers. | **Gate 2 (DoAC)** |
