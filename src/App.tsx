@@ -27,7 +27,9 @@ import {
   Button,
 } from "@mantine/core";
 
+import { listen } from "@tauri-apps/api/event";
 import {
+  checkLicenseStatus,
   getCurrentUser,
   getErrorMessage,
   isCompanySetup,
@@ -37,6 +39,8 @@ import {
   clearSavedSession,
 } from "./api/backend";
 
+import ActivationScreen from "./features/licensing/ActivationScreen";
+import LicenseLockedScreen from "./features/licensing/LicenseLockedScreen";
 import LoginPage from "./features/auth/LoginPage";
 import SetupPage from "./features/auth/SetupPage";
 import ChangePasswordPage from "./features/auth/ChangePasswordPage";
@@ -48,7 +52,7 @@ import { OnboardingProvider } from "./onboarding/OnboardingProvider";
 import { PermissionsProvider } from "./features/permissions/PermissionsProvider";
 import { reportOnboardingEvent } from "./onboarding/bus";
 
-import type { PublicUser, RegisterCompanyResult } from "./types/backend";
+import type { LicenseStatusResponse, PublicUser, RegisterCompanyResult } from "./types/backend";
 
 // ==========================================
 // POSSIBLE SCREENS
@@ -56,6 +60,8 @@ import type { PublicUser, RegisterCompanyResult } from "./types/backend";
 
 type AppScreen =
   | "loading" // checking database on startup
+  | "activation" // machine requires license key
+  | "license-locked" // device blocked or lease expired
   | "setup" // no company yet → first-time setup form
   | "login" // company exists but nobody logged in
   | "change-password" // mustChangePassword = true → force password change
@@ -70,55 +76,86 @@ type AppScreen =
 function App() {
   const [screen, setScreen] = useState<AppScreen>("loading");
   const [user, setUser] = useState<PublicUser | null>(null);
+  const [licenseStatus, setLicenseStatus] = useState<LicenseStatusResponse | null>(null);
   const [errorMessage, setErrorMessage] = useState<string>("");
 
-  // ---- STARTUP LOGIC ----
-  // Runs once when the app window opens
+  async function checkCompanyAndSession() {
+    try {
+      // Question 1: Has a company been set up?
+      const hasCompany = await isCompanySetup();
 
-  useEffect(() => {
-    async function startup() {
-      try {
-        // Question 1: Has a company been set up?
-        const hasCompany = await isCompanySetup();
-
-        if (!hasCompany) {
-          setScreen("setup");
-          return;
-        }
-
-        // Question 2: Is someone already logged in?
-        // First try the in-memory session (fast)
-        try {
-          const currentUser = await getCurrentUser();
-          setUser(currentUser);
-          setScreen(
-            currentUser.mustChangePassword ? "change-password" : "dashboard",
-          );
-          return;
-        } catch {
-          // No in-memory session — that's normal after restart
-        }
-
-        // Question 3: Try to restore saved session from SQLite
-        try {
-          const savedUser = await loadSavedSession();
-          setUser(savedUser);
-          setScreen(
-            savedUser.mustChangePassword ? "change-password" : "dashboard",
-          );
-          return;
-        } catch {
-          // No saved session — show login
-        }
-
-        setScreen("login");
-      } catch (error) {
-        setErrorMessage(getErrorMessage(error));
-        setScreen("fatal-error");
+      if (!hasCompany) {
+        setScreen("setup");
+        return;
       }
-    }
 
-    startup();
+      // Question 2: Is someone already logged in?
+      try {
+        const currentUser = await getCurrentUser();
+        setUser(currentUser);
+        setScreen(
+          currentUser.mustChangePassword ? "change-password" : "dashboard",
+        );
+        return;
+      } catch {
+        // No in-memory session — continue
+      }
+
+      // Question 3: Try to restore saved session from SQLite
+      try {
+        const savedUser = await loadSavedSession();
+        setUser(savedUser);
+        setScreen(
+          savedUser.mustChangePassword ? "change-password" : "dashboard",
+        );
+        return;
+      } catch {
+        // No saved session — show login
+      }
+
+      setScreen("login");
+    } catch (error) {
+      setErrorMessage(getErrorMessage(error));
+      setScreen("fatal-error");
+    }
+  }
+
+  async function checkLicenseAndProceed() {
+    try {
+      const lic = await checkLicenseStatus();
+      setLicenseStatus(lic);
+
+      if (!lic.isLicensed) {
+        if (lic.isBlocked) {
+          setScreen("license-locked");
+        } else {
+          setScreen("activation");
+        }
+        return;
+      }
+
+      await checkCompanyAndSession();
+    } catch (error) {
+      setErrorMessage(getErrorMessage(error));
+      setScreen("fatal-error");
+    }
+  }
+
+  // ---- STARTUP LOGIC ----
+  useEffect(() => {
+    checkLicenseAndProceed();
+
+    let unlisten: (() => void) | undefined;
+    listen<LicenseStatusResponse>("corbel://license-revoked", (event) => {
+      setLicenseStatus(event.payload);
+      setScreen("license-locked");
+    }).then((fn) => {
+      unlisten = fn;
+    });
+
+    return () => {
+      if (unlisten) unlisten();
+    };
   }, []); // empty array = run once on mount
 
   // ---- HANDLERS PASSED TO CHILDREN ----
@@ -194,6 +231,30 @@ function App() {
           </Button>
         </Stack>
       </Center>
+    );
+  }
+
+  if (screen === "activation") {
+    return (
+      <ActivationScreen
+        onActivationSuccess={(status) => {
+          setLicenseStatus(status);
+          checkCompanyAndSession();
+        }}
+      />
+    );
+  }
+
+  if (screen === "license-locked") {
+    return (
+      <LicenseLockedScreen
+        status={licenseStatus}
+        onUnlocked={(newStatus) => {
+          setLicenseStatus(newStatus);
+          checkCompanyAndSession();
+        }}
+        onEnterNewKey={() => setScreen("activation")}
+      />
     );
   }
 

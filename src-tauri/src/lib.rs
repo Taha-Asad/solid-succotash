@@ -3,6 +3,7 @@ mod db;
 pub mod error;
 pub mod domain;
 pub mod application;
+pub mod licensing;
 mod pdf;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use std::str::FromStr;
@@ -156,11 +157,13 @@ pub async fn run() {
 
     println!("Starting Tauri application...");
 
+    let pool_for_licensing = sqlite_pool.clone();
+
     tauri::Builder::default()
         .manage(sqlite_pool)
         .manage(commands::auth::SessionState::new())
         .manage(commands::auth::LoginAttemptTracker::new())
-        .setup(|app| {
+        .setup(move |app| {
             // Capture the app handle (for import push-progress events) and
             // resolve the bundled Tesseract OCR engine, if present.
             commands::import_wizard::init_app_services(app.handle());
@@ -171,6 +174,8 @@ pub async fn run() {
             // ticker so time-based alerts (expiry/overdue) surface on their own.
             commands::notifications::init_notifications(app.handle());
             commands::notifications::start_notification_ticker();
+            // Sovereign Binary Licensing heartbeat ticker
+            licensing::start_licensing_heartbeat_ticker(app.handle().clone(), pool_for_licensing);
             Ok(())
         })
         .plugin(tauri_plugin_opener::init())
@@ -337,6 +342,18 @@ pub async fn run() {
             commands::saas::update_tenant_company,
             commands::saas::archive_company,
             commands::saas::activate_company,
+            // ---- Sovereign Binary Licensing & Fleet Governance ----
+            commands::saas::get_device_identity,
+            commands::saas::check_license_status,
+            commands::saas::activate_license,
+            commands::saas::deactivate_license,
+            commands::saas::saas_issue_license,
+            commands::saas::saas_list_licenses,
+            commands::saas::saas_list_active_devices,
+            commands::saas::saas_revoke_license,
+            commands::saas::saas_revoke_device,
+            commands::saas::saas_unblock_device,
+            commands::saas::saas_extend_license,
         ])
         .run(tauri::generate_context!())
         .expect("Error while running Tauri application");

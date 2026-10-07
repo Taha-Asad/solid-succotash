@@ -85,6 +85,11 @@ import type {
   PlatformAnalytics,
   UpdatePackageInput,
   UpdateTenantCompanyInput,
+  DeviceIdentity,
+  LicenseStatusResponse,
+  PublicLicense,
+  PublicDeviceActivation,
+  IssueLicenseInput,
 } from "../types/backend";
 
 // ==========================================
@@ -1259,6 +1264,66 @@ export function archiveCompany(companyId: string): Promise<void> {
 
 export function activateCompany(companyId: string): Promise<void> {
   return invoke<void>("activate_company", { companyId });
+}
+
+// ==========================================
+// SOVEREIGN BINARY LICENSING & FLEET GOVERNANCE
+// ==========================================
+
+export function getDeviceIdentity(): Promise<DeviceIdentity> {
+  return invoke<DeviceIdentity>("get_device_identity");
+}
+
+export function checkLicenseStatus(): Promise<LicenseStatusResponse> {
+  return invoke<LicenseStatusResponse>("check_license_status");
+}
+
+export function activateLicense(input: {
+  licenseKey: string;
+  deviceName?: string;
+}): Promise<LicenseStatusResponse> {
+  return invoke<LicenseStatusResponse>("activate_license", { input });
+}
+
+export function deactivateLicense(): Promise<void> {
+  return invoke<void>("deactivate_license");
+}
+
+export function saasIssueLicense(input: IssueLicenseInput): Promise<PublicLicense> {
+  return invoke<PublicLicense>("saas_issue_license", { input });
+}
+
+export function saasListLicenses(): Promise<PublicLicense[]> {
+  return invoke<PublicLicense[]>("saas_list_licenses");
+}
+
+export function saasListActiveDevices(): Promise<PublicDeviceActivation[]> {
+  return invoke<PublicDeviceActivation[]>("saas_list_active_devices");
+}
+
+export function saasRevokeLicense(
+  licenseId: string,
+  reason?: string,
+): Promise<void> {
+  return invoke<void>("saas_revoke_license", { licenseId, reason });
+}
+
+export function saasRevokeDevice(
+  deviceId: string,
+  reason?: string,
+): Promise<void> {
+  return invoke<void>("saas_revoke_device", { deviceId, reason });
+}
+
+export function saasUnblockDevice(deviceId: string): Promise<void> {
+  return invoke<void>("saas_unblock_device", { deviceId });
+}
+
+export function saasExtendLicense(
+  licenseId: string,
+  additionalDays: number,
+): Promise<void> {
+  return invoke<void>("saas_extend_license", { licenseId, additionalDays });
 }
 
 // ==========================================

@@ -13,6 +13,23 @@ use crate::commands::saas::types::{
     SubscriptionRow, TenantCompanyDetail, TenantCompanySummary,
 };
 use crate::error::AppError;
+use crate::licensing::types::{IssueLicenseInput, PublicDeviceActivation, PublicLicense};
+
+#[derive(Debug, Clone)]
+pub struct CloudHeartbeatResult {
+    pub is_blocked: bool,
+    pub reason: Option<String>,
+    pub license_type: Option<String>,
+    pub days_remaining: Option<i64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CloudActivationResult {
+    pub client_name: String,
+    pub license_type: String,
+    pub expires_at: Option<String>,
+    pub days_remaining: Option<i64>,
+}
 
 static GLOBAL_CLOUD_DB: OnceLock<NeonCloudDb> = OnceLock::new();
 
@@ -1060,6 +1077,408 @@ impl NeonCloudDb {
             }
         }
     }
+
+    // ==========================================
+    // SAAS SUPER ADMIN: LICENSING & DEVICE GOVERNANCE
+    // ==========================================
+
+    pub async fn issue_tenant_license(&self, input: IssueLicenseInput) -> Result<PublicLicense, AppError> {
+        let pool = self
+            .pool()
+            .ok_or_else(|| AppError::internal("Cloud database not connected".to_string()))?;
+
+        let id = Uuid::new_v4().to_string();
+        let key_raw = Uuid::new_v4().to_string().replace('-', "").to_uppercase();
+        let license_key = format!("CRBL-{}-{}-{}", &key_raw[0..4], &key_raw[4..8], &key_raw[8..12]);
+        let grace_days = input.offline_grace_days.unwrap_or(7);
+
+        let row = sqlx::query_as::<_, PublicLicense>(
+            r#"
+            INSERT INTO tenant_licenses (
+                id, license_key, client_name, license_type, status,
+                max_devices, offline_grace_days, expires_at, notes,
+                issued_by, created_at, updated_at
+            ) VALUES (
+                $1, $2, $3, $4, 'active',
+                $5, $6,
+                CASE WHEN $7::bigint IS NOT NULL THEN NOW() + ($7 || ' days')::interval ELSE NULL END,
+                $8, 'Taha Asadullah', NOW(), NOW()
+            )
+            RETURNING
+                id, company_id, license_key, client_name, license_type,
+                status, max_devices, 0::bigint as active_devices_count,
+                offline_grace_days,
+                TO_CHAR(expires_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as expires_at,
+                TO_CHAR(created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as created_at,
+                notes
+            "#,
+        )
+        .bind(&id)
+        .bind(&license_key)
+        .bind(&input.client_name)
+        .bind(&input.license_type)
+        .bind(input.max_devices)
+        .bind(grace_days)
+        .bind(input.validity_days)
+        .bind(&input.notes)
+        .fetch_one(pool)
+        .await
+        .map_err(|e| AppError::internal(format!("Failed to issue license: {e}")))?;
+
+        Ok(row)
+    }
+
+    pub async fn list_tenant_licenses(&self) -> Result<Vec<PublicLicense>, AppError> {
+        let pool = self
+            .pool()
+            .ok_or_else(|| AppError::internal("Cloud database not connected".to_string()))?;
+
+        let rows = sqlx::query_as::<_, PublicLicense>(
+            r#"
+            SELECT 
+                l.id, l.company_id, l.license_key, l.client_name, l.license_type,
+                l.status, l.max_devices,
+                COALESCE(da.active_count, 0)::bigint as active_devices_count,
+                l.offline_grace_days,
+                TO_CHAR(l.expires_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as expires_at,
+                TO_CHAR(l.created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as created_at,
+                l.notes
+            FROM tenant_licenses l
+            LEFT JOIN (
+                SELECT license_id, COUNT(*)::bigint as active_count
+                FROM device_activations
+                WHERE is_blocked = FALSE
+                GROUP BY license_id
+            ) da ON da.license_id = l.id
+            ORDER BY l.created_at DESC
+            "#,
+        )
+        .fetch_all(pool)
+        .await
+        .map_err(|e| AppError::internal(format!("Failed to list licenses: {e}")))?;
+
+        Ok(rows)
+    }
+
+    pub async fn list_all_device_activations(&self) -> Result<Vec<PublicDeviceActivation>, AppError> {
+        let pool = self
+            .pool()
+            .ok_or_else(|| AppError::internal("Cloud database not connected".to_string()))?;
+
+        let rows = sqlx::query_as::<_, PublicDeviceActivation>(
+            r#"
+            SELECT 
+                d.id, d.license_id, d.device_hwid, d.device_name, d.os_info, d.app_version,
+                TO_CHAR(d.first_activated_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as first_activated_at,
+                TO_CHAR(d.last_heartbeat_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as last_heartbeat_at,
+                d.ip_address, d.is_blocked, d.block_reason
+            FROM device_activations d
+            ORDER BY d.last_heartbeat_at DESC
+            "#,
+        )
+        .fetch_all(pool)
+        .await
+        .map_err(|e| AppError::internal(format!("Failed to list device activations: {e}")))?;
+
+        Ok(rows)
+    }
+
+    pub async fn revoke_tenant_license(&self, license_id: &str, reason: Option<&str>) -> Result<(), AppError> {
+        let pool = self
+            .pool()
+            .ok_or_else(|| AppError::internal("Cloud database not connected".to_string()))?;
+
+        let block_reason = reason.unwrap_or("License revoked by administrator");
+
+        sqlx::query("UPDATE tenant_licenses SET status = 'revoked', updated_at = NOW() WHERE id = $1")
+            .bind(license_id)
+            .execute(pool)
+            .await
+            .map_err(|e| AppError::internal(format!("Failed to revoke license: {e}")))?;
+
+        sqlx::query("UPDATE device_activations SET is_blocked = TRUE, block_reason = $1, updated_at = NOW() WHERE license_id = $2")
+            .bind(block_reason)
+            .bind(license_id)
+            .execute(pool)
+            .await
+            .map_err(|e| AppError::internal(format!("Failed to block devices under license: {e}")))?;
+
+        Ok(())
+    }
+
+    pub async fn revoke_device_activation(&self, device_id: &str, reason: Option<&str>) -> Result<(), AppError> {
+        let pool = self
+            .pool()
+            .ok_or_else(|| AppError::internal("Cloud database not connected".to_string()))?;
+
+        let block_reason = reason.unwrap_or("Device access revoked by administrator");
+
+        sqlx::query("UPDATE device_activations SET is_blocked = TRUE, block_reason = $1, updated_at = NOW() WHERE id = $2")
+            .bind(block_reason)
+            .bind(device_id)
+            .execute(pool)
+            .await
+            .map_err(|e| AppError::internal(format!("Failed to revoke device: {e}")))?;
+
+        Ok(())
+    }
+
+    pub async fn unblock_device_activation(&self, device_id: &str) -> Result<(), AppError> {
+        let pool = self
+            .pool()
+            .ok_or_else(|| AppError::internal("Cloud database not connected".to_string()))?;
+
+        sqlx::query("UPDATE device_activations SET is_blocked = FALSE, block_reason = NULL, updated_at = NOW() WHERE id = $1")
+            .bind(device_id)
+            .execute(pool)
+            .await
+            .map_err(|e| AppError::internal(format!("Failed to unblock device: {e}")))?;
+
+        Ok(())
+    }
+
+    pub async fn extend_tenant_license(&self, license_id: &str, additional_days: i64) -> Result<(), AppError> {
+        let pool = self
+            .pool()
+            .ok_or_else(|| AppError::internal("Cloud database not connected".to_string()))?;
+
+        let interval_str = format!("{additional_days} days");
+
+        sqlx::query(
+            r#"
+            UPDATE tenant_licenses
+            SET expires_at = COALESCE(expires_at, NOW()) + ($1)::interval,
+                status = 'active',
+                updated_at = NOW()
+            WHERE id = $2
+            "#,
+        )
+        .bind(&interval_str)
+        .bind(license_id)
+        .execute(pool)
+        .await
+        .map_err(|e| AppError::internal(format!("Failed to extend license: {e}")))?;
+
+        Ok(())
+    }
+
+    pub async fn cloud_activate_device(
+        &self,
+        license_key: &str,
+        hwid: &str,
+        device_name: &str,
+        os_info: &str,
+        app_version: &str,
+    ) -> Result<CloudActivationResult, AppError> {
+        let pool = self
+            .pool()
+            .ok_or_else(|| AppError::internal("Cloud database not connected".to_string()))?;
+
+        let clean_key = license_key.trim();
+
+        // 1. Validate license
+        let license_row = sqlx::query(
+            r#"
+            SELECT id, client_name, license_type, status, max_devices,
+                   TO_CHAR(expires_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as expires_at,
+                   CASE WHEN expires_at IS NOT NULL THEN (expires_at > NOW()) ELSE TRUE END as is_not_expired,
+                   CASE WHEN expires_at IS NOT NULL THEN EXTRACT(DAY FROM (expires_at - NOW()))::bigint ELSE NULL END as days_remaining
+            FROM tenant_licenses
+            WHERE license_key = $1
+            "#,
+        )
+        .bind(clean_key)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| AppError::internal(format!("Database error querying license: {e}")))?;
+
+        let lic = license_row.ok_or_else(|| AppError::not_found("Invalid license key. Check key and try again."))?;
+
+        let license_id: String = lic.get("id");
+        let client_name: String = lic.get("client_name");
+        let license_type: String = lic.get("license_type");
+        let status: String = lic.get("status");
+        let max_devices: i64 = lic.get("max_devices");
+        let expires_at: Option<String> = lic.get("expires_at");
+        let is_not_expired: bool = lic.get("is_not_expired");
+        let days_remaining: Option<i64> = lic.get("days_remaining");
+
+        if status != "active" {
+            return Err(AppError::validation(format!("License is {status}. Contact support.")));
+        }
+
+        if !is_not_expired {
+            return Err(AppError::validation("This license has expired. Contact support to renew."));
+        }
+
+        // 2. Check if device is already registered under this license
+        let dev_row = sqlx::query("SELECT id, is_blocked, block_reason FROM device_activations WHERE license_id = $1 AND device_hwid = $2")
+            .bind(&license_id)
+            .bind(hwid)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| AppError::internal(format!("Database error checking device: {e}")))?;
+
+        if let Some(dev) = dev_row {
+            let dev_id: String = dev.get("id");
+            let is_blocked: bool = dev.get("is_blocked");
+            if is_blocked {
+                let reason: Option<String> = dev.get("block_reason");
+                return Err(AppError::validation(
+                    reason.unwrap_or_else(|| "This physical device has been blocked by administrator.".to_string()),
+                ));
+            }
+
+            // Refresh device details
+            let _ = sqlx::query(
+                "UPDATE device_activations SET device_name = $1, os_info = $2, app_version = $3, last_heartbeat_at = NOW() WHERE id = $4"
+            )
+            .bind(device_name)
+            .bind(os_info)
+            .bind(app_version)
+            .bind(&dev_id)
+            .execute(pool)
+            .await;
+        } else {
+            // New device: check device limit
+            let count_row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM device_activations WHERE license_id = $1 AND is_blocked = FALSE")
+                .bind(&license_id)
+                .fetch_one(pool)
+                .await
+                .map_err(|e| AppError::internal(format!("Database error checking active count: {e}")))?;
+
+            if count_row.0 >= max_devices {
+                return Err(AppError::validation(format!(
+                    "Device limit exceeded! This license only permits {} registered device(s).",
+                    max_devices
+                )));
+            }
+
+            let new_dev_id = Uuid::new_v4().to_string();
+            sqlx::query(
+                r#"
+                INSERT INTO device_activations (
+                    id, license_id, device_hwid, device_name, os_info,
+                    app_version, first_activated_at, last_heartbeat_at, is_blocked
+                ) VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW(), FALSE)
+                "#,
+            )
+            .bind(&new_dev_id)
+            .bind(&license_id)
+            .bind(hwid)
+            .bind(device_name)
+            .bind(os_info)
+            .bind(app_version)
+            .execute(pool)
+            .await
+            .map_err(|e| AppError::internal(format!("Failed to register device activation: {e}")))?;
+        }
+
+        Ok(CloudActivationResult {
+            client_name,
+            license_type,
+            expires_at,
+            days_remaining,
+        })
+    }
+
+    pub async fn cloud_heartbeat(
+        &self,
+        license_key: &str,
+        hwid: &str,
+        app_version: &str,
+    ) -> Result<CloudHeartbeatResult, AppError> {
+        let pool = self
+            .pool()
+            .ok_or_else(|| AppError::internal("Cloud database not connected".to_string()))?;
+
+        // 1. Check license
+        let license_row = sqlx::query(
+            r#"
+            SELECT id, status, license_type,
+                   CASE WHEN expires_at IS NOT NULL THEN (expires_at > NOW()) ELSE TRUE END as is_not_expired,
+                   CASE WHEN expires_at IS NOT NULL THEN EXTRACT(DAY FROM (expires_at - NOW()))::bigint ELSE NULL END as days_remaining
+            FROM tenant_licenses
+            WHERE license_key = $1
+            "#,
+        )
+        .bind(license_key)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| AppError::internal(format!("Heartbeat error checking license: {e}")))?;
+
+        let lic = match license_row {
+            Some(l) => l,
+            None => {
+                return Ok(CloudHeartbeatResult {
+                    is_blocked: true,
+                    reason: Some("License key does not exist.".to_string()),
+                    license_type: None,
+                    days_remaining: None,
+                });
+            }
+        };
+
+        let license_id: String = lic.get("id");
+        let status: String = lic.get("status");
+        let license_type: String = lic.get("license_type");
+        let is_not_expired: bool = lic.get("is_not_expired");
+        let days_remaining: Option<i64> = lic.get("days_remaining");
+
+        if status != "active" {
+            return Ok(CloudHeartbeatResult {
+                is_blocked: true,
+                reason: Some(format!("License is {status}.")),
+                license_type: Some(license_type),
+                days_remaining,
+            });
+        }
+
+        if !is_not_expired {
+            return Ok(CloudHeartbeatResult {
+                is_blocked: true,
+                reason: Some("License has expired.".to_string()),
+                license_type: Some(license_type),
+                days_remaining: Some(0),
+            });
+        }
+
+        // 2. Check device activation
+        let dev_row = sqlx::query("SELECT id, is_blocked, block_reason FROM device_activations WHERE license_id = $1 AND device_hwid = $2")
+            .bind(&license_id)
+            .bind(hwid)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| AppError::internal(format!("Heartbeat error checking device: {e}")))?;
+
+        if let Some(dev) = dev_row {
+            let dev_id: String = dev.get("id");
+            let is_blocked: bool = dev.get("is_blocked");
+            if is_blocked {
+                let reason: Option<String> = dev.get("block_reason");
+                return Ok(CloudHeartbeatResult {
+                    is_blocked: true,
+                    reason: reason.or(Some("Device blocked by administrator.".to_string())),
+                    license_type: Some(license_type),
+                    days_remaining,
+                });
+            }
+
+            // Update heartbeat timestamp & app version
+            let _ = sqlx::query("UPDATE device_activations SET last_heartbeat_at = NOW(), app_version = $1 WHERE id = $2")
+                .bind(app_version)
+                .bind(&dev_id)
+                .execute(pool)
+                .await;
+        }
+
+        Ok(CloudHeartbeatResult {
+            is_blocked: false,
+            reason: None,
+            license_type: Some(license_type),
+            days_remaining,
+        })
+    }
 }
 
 pub const DEFAULT_NEON_DATABASE_URL: &str =
@@ -1179,11 +1598,14 @@ pub async fn run_neon_migrations(pool: &PgPool) -> Result<(), sqlx::Error> {
             updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             deleted_at TIMESTAMPTZ
         );
-        ALTER TABLE packages ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
         "#,
     )
     .execute(pool)
     .await?;
+
+    let _ = sqlx::query("ALTER TABLE packages ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ")
+        .execute(pool)
+        .await;
 
     // 4. Company Subscriptions
     sqlx::query(
@@ -1244,6 +1666,58 @@ pub async fn run_neon_migrations(pool: &PgPool) -> Result<(), sqlx::Error> {
     )
     .execute(pool)
     .await?;
+
+    // 7. Tenant Licenses
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS tenant_licenses (
+            id VARCHAR(64) PRIMARY KEY,
+            company_id VARCHAR(64) REFERENCES companies(id) ON DELETE SET NULL,
+            license_key VARCHAR(64) NOT NULL UNIQUE,
+            client_name VARCHAR(255) NOT NULL,
+            license_type VARCHAR(32) NOT NULL DEFAULT 'trial',
+            status VARCHAR(32) NOT NULL DEFAULT 'active',
+            max_devices BIGINT NOT NULL DEFAULT 1,
+            offline_grace_days BIGINT NOT NULL DEFAULT 7,
+            expires_at TIMESTAMPTZ,
+            features JSONB NOT NULL DEFAULT '{}'::jsonb,
+            notes TEXT,
+            issued_by VARCHAR(128) NOT NULL DEFAULT 'Taha Asadullah',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    // 8. Device Activations
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS device_activations (
+            id VARCHAR(64) PRIMARY KEY,
+            license_id VARCHAR(64) NOT NULL REFERENCES tenant_licenses(id) ON DELETE CASCADE,
+            device_hwid VARCHAR(64) NOT NULL,
+            device_name VARCHAR(128) NOT NULL,
+            os_info VARCHAR(128) NOT NULL,
+            app_version VARCHAR(32) NOT NULL DEFAULT '1.3.1',
+            first_activated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            last_heartbeat_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            ip_address VARCHAR(64),
+            is_blocked BOOLEAN NOT NULL DEFAULT FALSE,
+            block_reason TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            UNIQUE(license_id, device_hwid)
+        )
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    let _ = sqlx::query("CREATE INDEX IF NOT EXISTS idx_device_activations_hwid ON device_activations(device_hwid)")
+        .execute(pool)
+        .await;
 
     // Seed default packages if empty
     seed_default_packages(pool).await?;
@@ -1386,6 +1860,7 @@ mod tests {
         let db_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set in .env");
         let pool = PgPoolOptions::new()
             .max_connections(2)
+            .acquire_timeout(std::time::Duration::from_secs(45))
             .connect(&db_url)
             .await
             .expect("Failed to connect to Neon PostgreSQL");

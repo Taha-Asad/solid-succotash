@@ -155,6 +155,11 @@ fn get_embedded_migrations() -> Vec<(i64, &'static str, &'static str)> {
             "021_product_barcode_description",
             include_str!("../../migrations/sqlite/021_product_barcode_description.sql"),
         ),
+        (
+            22,
+            "022_license_lease",
+            include_str!("../../migrations/sqlite/022_license_lease.sql"),
+        ),
     ]
 }
 

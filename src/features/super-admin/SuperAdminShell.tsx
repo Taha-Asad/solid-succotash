@@ -6,14 +6,17 @@ import {
   ChartPie,
   Check,
   Download,
-  Feather,
   Home,
+  KeyRound,
   Languages,
   LogOut,
   Moon,
+  PanelLeftClose,
+  PanelLeftOpen,
   Plus,
   Search,
   Settings,
+  ShieldCheck,
   Sun,
 } from "lucide-react";
 import { useI18n } from "../../i18n/I18nProvider";
@@ -23,6 +26,7 @@ import { SaThemeProvider, useSaScheme, useSaTheme } from "./saTheme";
 import PlatformOverviewPage from "./PlatformOverviewPage";
 import PlatformAnalyticsPage from "./PlatformAnalyticsPage";
 import TenantsPage from "./TenantsPage";
+import FleetLicensingPage from "./FleetLicensingPage";
 import PackagesPage from "./PackagesPage";
 import PlatformSettingsPage from "./PlatformSettingsPage";
 import RegisterTenantDrawer from "./RegisterTenantDrawer";
@@ -31,7 +35,7 @@ import EditTenantModal from "./EditTenantModal";
 import DevProfileDrawer from "./DevProfileDrawer";
 import "./admin.css";
 
-export type SaView = "overview" | "tenants" | "packages" | "analytics" | "settings";
+export type SaView = "overview" | "tenants" | "licensing" | "packages" | "analytics" | "settings";
 
 interface NavItem {
   id: SaView;
@@ -50,7 +54,8 @@ const navSections: NavSection[] = [
     title: "Fleet Operations",
     items: [
       { id: "overview", icon: Home, label: "sa.nav.overview" },
-      { id: "tenants", icon: Building2, label: "sa.nav.tenants", badge: "6 Nodes" },
+      { id: "tenants", icon: Building2, label: "sa.nav.tenants" },
+      { id: "licensing", icon: KeyRound, label: "sa.nav.licensing", badge: "Live Gate" },
     ],
   },
   {
@@ -149,6 +154,26 @@ function PlatformShell({
   const [editCompany, setEditCompany] = useState<PublicCompany | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
 
+  const [collapsed, setCollapsed] = useState<boolean>(() => {
+    try {
+      const stored = localStorage.getItem("corbel_sa_sidebar_collapsed");
+      if (stored !== null) return stored === "true";
+      return typeof window !== "undefined" && window.innerWidth < 1024;
+    } catch {
+      return false;
+    }
+  });
+
+  const toggleCollapsed = () => {
+    setCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem("corbel_sa_sidebar_collapsed", String(next));
+      } catch {}
+      return next;
+    });
+  };
+
   const { t, dir } = useI18n();
   const SA = useSaTheme();
   const { scheme, setScheme } = useSaScheme();
@@ -175,15 +200,27 @@ function PlatformShell({
         Skip to content
       </a>
 
-      {/* Modern Hierarchical Sidebar */}
-      <aside className="sa-sidebar">
-        {/* Brand Lockup */}
-        <div className="sa-brand">
-          <img src="/corbel_icon.svg" alt="Corbel ERP" />
-          <div>
-            <strong>Corbel</strong>
-            <span>by The Foolish Crow</span>
+      {/* Modern Hierarchical Sidebar with Auto-Collapsing Icon Rail */}
+      <aside className={`sa-sidebar ${collapsed ? "is-collapsed" : "is-expanded"}`}>
+        {/* Brand Lockup & Collapse Rail Trigger */}
+        <div className="sa-brand-row">
+          <div className="sa-brand">
+            <img src="/corbel_icon.svg" alt="Corbel ERP" />
+            <div>
+              <strong>Corbel</strong>
+              <span>by The Foolish Crow</span>
+            </div>
           </div>
+          <Tooltip label={collapsed ? "Expand sidebar rail" : "Collapse sidebar rail"} position="right" withinPortal>
+            <button
+              type="button"
+              className="sa-collapse-toggle"
+              onClick={toggleCollapsed}
+              aria-label={collapsed ? "Expand sidebar rail" : "Collapse sidebar rail"}
+            >
+              {collapsed ? <PanelLeftOpen size={15} /> : <PanelLeftClose size={15} />}
+            </button>
+          </Tooltip>
         </div>
 
         {/* Live Cluster Context Card */}
@@ -196,106 +233,103 @@ function PlatformShell({
         </div>
 
         {/* Categorized Navigation */}
-        <nav aria-label="Platform navigation">
+        <nav aria-label="Platform navigation" style={{ width: "100%" }}>
           {navSections.map((section) => (
             <div key={section.title} className="sa-nav-section">
               <div className="sa-nav-label">{section.title}</div>
-              {section.items.map(({ id, icon: Icon, label, badge }) => (
-                <button
-                  key={id}
-                  className="sa-nav-item"
-                  aria-current={view === id ? "page" : undefined}
-                  onClick={() => setView(id)}
-                >
-                  <Icon size={17} />
-                  <span>{t(label)}</span>
-                  {badge && <span className="sa-nav-badge">{badge}</span>}
-                </button>
-              ))}
+              {section.items.map(({ id, icon: Icon, label, badge }) => {
+                const navBtn = (
+                  <button
+                    key={id}
+                    className="sa-nav-item"
+                    aria-current={view === id ? "page" : undefined}
+                    onClick={() => setView(id)}
+                  >
+                    <Icon size={17} />
+                    <span>{t(label)}</span>
+                    {badge && <span className="sa-nav-badge">{badge}</span>}
+                  </button>
+                );
+
+                return collapsed ? (
+                  <Tooltip key={id} label={t(label)} position="right" offset={10} withinPortal>
+                    {navBtn}
+                  </Tooltip>
+                ) : (
+                  navBtn
+                );
+              })}
             </div>
           ))}
         </nav>
 
         {/* Sidebar Footer & User Profile */}
         <div className="sa-sidebar-bottom">
-          {/* Cozy Mascot Companion (Homage to reference image bottom-left sidebar) */}
-          <div
-            style={{
-              padding: "10px 14px",
-              marginBottom: 10,
-              borderRadius: 14,
-              background: SA.panelStrong,
-              border: `1px solid ${SA.border}`,
-              display: "flex",
-              alignItems: "center",
-              gap: 12,
-            }}
+          {/* Sovereign Engine Core Chip */}
+          <Tooltip
+            label="Corbel Sovereign Engine v1.3.1 · Host: Linux"
+            position="right"
+            disabled={!collapsed}
+            withinPortal
           >
-            <div
-              style={{
-                width: 38,
-                height: 38,
-                borderRadius: 10,
-                background: `${SA.accent}18`,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                color: SA.accent,
-                flexShrink: 0,
-              }}
-            >
-              <Feather size={18} />
+            <div className="sa-engine-chip" title="Corbel Sovereign Engine v1.3.1">
+              <div className="sa-engine-chip-icon">
+                <ShieldCheck size={16} />
+              </div>
+              <div className="sa-engine-chip-text">
+                <Text fw={750} size="xs" style={{ color: SA.text, fontSize: 11, lineHeight: 1.2 }}>
+                  Corbel Engine
+                </Text>
+                <Text size="xs" style={{ color: SA.muted, fontSize: 10 }}>
+                  v1.3.1 · Sovereign Node
+                </Text>
+              </div>
             </div>
-            <div>
-              <Text fw={750} size="xs" style={{ color: SA.text, fontSize: 12, lineHeight: 1.2 }}>
-                Sovereign Familiar
-              </Text>
-              <Text size="xs" style={{ color: SA.muted, fontSize: 10 }}>
-                Level 14 · Corbel Root
-              </Text>
-            </div>
-          </div>
+          </Tooltip>
 
           <div className="sa-studio">
             THE FOOLISH CROW
             <span>Observe. Build. Verify.</span>
           </div>
 
-          <div
-            className="sa-account-box"
-            onClick={() => setDevDrawerOpen(true)}
-            style={{ cursor: "pointer" }}
-            title="Click to open Developer Profile & Updater"
-          >
-            {avatarUrl ? (
-              <Avatar
-                src={avatarUrl}
-                size={34}
-                radius="xl"
-                styles={{ root: { border: `1.5px solid ${SA.accent}` } }}
-              />
-            ) : (
-              <span className="sa-avatar">{currentUser.fullName.slice(0, 1).toUpperCase()}</span>
-            )}
-            <div className="sa-account-info">
-              <strong>{currentUser.fullName}</strong>
-              <span>Super administrator</span>
+          <Tooltip label="Open Developer Profile & Cockpit" position="right" disabled={!collapsed} withinPortal>
+            <div
+              className="sa-account-box"
+              onClick={() => setDevDrawerOpen(true)}
+              style={{ cursor: "pointer" }}
+              title="Click to open Developer Profile & Updater"
+            >
+              {avatarUrl ? (
+                <Avatar
+                  src={avatarUrl}
+                  size={32}
+                  radius="xl"
+                  styles={{ root: { border: `1.5px solid ${SA.accent}` } }}
+                />
+              ) : (
+                <span className="sa-avatar">{currentUser.fullName.slice(0, 1).toUpperCase()}</span>
+              )}
+              <div className="sa-account-info">
+                <strong>{currentUser.fullName}</strong>
+                <span>Super administrator</span>
+              </div>
+              <Tooltip label={t("sa.logout")} withinPortal>
+                <ActionIcon
+                  className="sa-account-logout"
+                  variant="subtle"
+                  size="sm"
+                  color={SA.muted}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onLogout();
+                  }}
+                  aria-label={t("sa.logout")}
+                >
+                  <LogOut size={16} />
+                </ActionIcon>
+              </Tooltip>
             </div>
-            <Tooltip label={t("sa.logout")}>
-              <ActionIcon
-                variant="subtle"
-                size="sm"
-                color={SA.muted}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onLogout();
-                }}
-                aria-label={t("sa.logout")}
-              >
-                <LogOut size={16} />
-              </ActionIcon>
-            </Tooltip>
-          </div>
+          </Tooltip>
         </div>
       </aside>
 
@@ -415,6 +449,7 @@ function PlatformShell({
             />
           )}
           {view === "tenants" && <TenantsPage key={refreshKey} />}
+          {view === "licensing" && <FleetLicensingPage />}
           {view === "packages" && <PackagesPage />}
           {view === "analytics" && <PlatformAnalyticsPage />}
           {view === "settings" && (

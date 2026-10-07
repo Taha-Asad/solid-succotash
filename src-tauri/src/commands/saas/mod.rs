@@ -22,6 +22,7 @@ pub mod subscriptions;
 pub mod flags;
 pub mod tenants;
 pub mod analytics;
+pub mod licensing;
 
 #[cfg(test)]
 mod tests;
@@ -31,3 +32,4 @@ pub use subscriptions::*;
 pub use flags::*;
 pub use tenants::*;
 pub use analytics::*;
+pub use licensing::*;

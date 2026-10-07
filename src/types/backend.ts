@@ -1018,3 +1018,66 @@ export type FbrConnectionTestResult = {
   message: string;
   timestamp: string;
 };
+
+// ==========================================
+// SOVEREIGN BINARY LICENSING & DEVICE GOVERNANCE
+// ==========================================
+
+export type DeviceIdentity = {
+  hwid: string;
+  deviceName: string;
+  osInfo: string;
+  appVersion: string;
+};
+
+export type LicenseStatusResponse = {
+  isLicensed: boolean;
+  isBlocked: boolean;
+  blockReason?: string | null;
+  licenseKey?: string | null;
+  clientName?: string | null;
+  licenseType?: string | null;
+  daysRemaining?: number | null;
+  graceDaysRemaining?: number | null;
+  isOfflineGrace: boolean;
+  deviceHwid: string;
+};
+
+export type PublicLicense = {
+  id: string;
+  companyId?: string | null;
+  licenseKey: string;
+  clientName: string;
+  licenseType: string;
+  status: string;
+  maxDevices: number;
+  activeDevicesCount: number;
+  offlineGraceDays: number;
+  expiresAt?: string | null;
+  createdAt: string;
+  notes?: string | null;
+};
+
+export type PublicDeviceActivation = {
+  id: string;
+  licenseId: string;
+  deviceHwid: string;
+  deviceName: string;
+  osInfo: string;
+  appVersion: string;
+  firstActivatedAt: string;
+  lastHeartbeatAt: string;
+  ipAddress?: string | null;
+  isBlocked: boolean;
+  blockReason?: string | null;
+};
+
+export type IssueLicenseInput = {
+  clientName: string;
+  licenseType: string;
+  maxDevices: number;
+  validityDays?: number | null;
+  offlineGraceDays?: number | null;
+  notes?: string | null;
+};
+
