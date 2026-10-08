@@ -18,6 +18,8 @@ import {
   Check,
   CheckCircle2,
   Copy,
+  CreditCard,
+  KeyRound,
   Lock,
   Mail,
   Pencil,
@@ -40,8 +42,25 @@ import type {
 import { useI18n } from "../../i18n/I18nProvider";
 import { useSaTheme } from "./saTheme.tsx";
 import { MODULE_CATALOG, MODULE_LABELS, SubBadge } from "./TenantComponents";
+import { ChangeSubscriptionModal } from "./ChangeSubscriptionModal";
+import { IssueOtpModal } from "./IssueOtpModal";
 
-const CORE_MODULES = new Set(["inventory", "invoices", "settings"]);
+const CORE_MODULES = new Set(["dashboard", "inventory", "invoices", "settings", "users"]);
+
+const ALL_MODULE_KEYS = [
+  "dashboard",
+  "inventory",
+  "invoices",
+  "customers",
+  "purchase_orders",
+  "pos",
+  "ledger",
+  "reports",
+  "settings",
+  "import",
+  "users",
+  "fbr",
+];
 
 export default function TenantDetailDrawer({
   tenant,
@@ -60,6 +79,8 @@ export default function TenantDetailDrawer({
   const SA = useSaTheme();
   const [detail, setDetail] = useState<TenantCompanyDetail | null>(null);
   const [busy, setBusy] = useState(false);
+  const [changeSubOpen, setChangeSubOpen] = useState(false);
+  const [issueOtpOpen, setIssueOtpOpen] = useState(false);
 
   const opened = tenant !== null;
 
@@ -84,6 +105,7 @@ export default function TenantDetailDrawer({
       await setCompanyModule({ companyId: tenant.id, moduleKey, isEnabled: enabled });
       const fresh = await getTenantCompanyDetail(tenant.id);
       setDetail(fresh);
+      onChanged();
     } catch (err) {
       console.error(err);
     } finally {
@@ -278,6 +300,16 @@ export default function TenantDetailDrawer({
                   >
                     {t("sa.tenants.edit.button")}
                   </Button>
+                  <Button
+                    size="xs"
+                    variant="light"
+                    color="yellow"
+                    onClick={() => setIssueOtpOpen(true)}
+                    leftSection={<KeyRound size={13} />}
+                    styles={{ root: { fontWeight: 600 } }}
+                  >
+                    Issue OTP
+                  </Button>
                   <Tooltip label={tenant.isActive ? t("sa.tenants.archive") : t("sa.tenants.activate")}>
                     <Button
                       size="xs"
@@ -296,9 +328,25 @@ export default function TenantDetailDrawer({
 
             {/* Subscription & Tier Plan */}
             <div style={{ padding: "20px 24px", borderBottom: `1px solid ${SA.border}` }}>
-              <Text size="xs" fw={650} style={{ color: SA.accent, textTransform: "uppercase", letterSpacing: 1 }}>
-                {t("sa.tenants.detail.subscription")} & Quotas
-              </Text>
+              <Group justify="space-between" align="center">
+                <Text size="xs" fw={650} style={{ color: SA.accent, textTransform: "uppercase", letterSpacing: 1 }}>
+                  {t("sa.tenants.detail.subscription")} & Quotas
+                </Text>
+                <Button
+                  size="compact-xs"
+                  variant="light"
+                  leftSection={<CreditCard size={12} />}
+                  onClick={() => setChangeSubOpen(true)}
+                  style={{
+                    background: `${SA.accent}22`,
+                    color: SA.accent,
+                    border: `1px solid ${SA.accent}44`,
+                    fontWeight: 700,
+                  }}
+                >
+                  Change Plan
+                </Button>
+              </Group>
               <div
                 style={{
                   marginTop: 12,
@@ -376,15 +424,38 @@ export default function TenantDetailDrawer({
               </Group>
 
               <Stack gap={8}>
-                {detail.modules.map((mod) => {
-                  const isCore = CORE_MODULES.has(mod.moduleKey);
-                  const meta = MODULE_CATALOG[mod.moduleKey];
-                  const title = meta?.title ?? t(MODULE_LABELS[mod.moduleKey] ?? mod.moduleKey);
+                {ALL_MODULE_KEYS.map((key) => {
+                  const mod = detail.modules.find((m) => m.moduleKey === key);
+                  const isCore = CORE_MODULES.has(key);
+                  const isEnabled = isCore ? true : (mod ? mod.isEnabled : false);
+                  const meta = MODULE_CATALOG[key];
+                  const title = meta?.title ?? t(MODULE_LABELS[key] ?? key);
                   const description = meta?.description ?? "Operational ERP module";
+
+                  let isPlanEntitled = true;
+                  if (pkg && !isCore) {
+                    try {
+                      const limits: Record<string, unknown> = typeof pkg.moduleLimits === "string" 
+                        ? JSON.parse(pkg.moduleLimits) 
+                        : (pkg.moduleLimits || {});
+                      const feats: Record<string, unknown> = typeof pkg.features === "string"
+                        ? JSON.parse(pkg.features)
+                        : (pkg.features || {});
+                      const limitAllowed = limits[key] !== undefined ? Boolean(limits[key]) : true;
+                      const featAllowed = key === "fbr" ? Boolean(feats.fbr)
+                        : key === "import" ? Boolean(feats.data_import ?? feats.import ?? true)
+                        : key === "pos" ? Boolean(feats.pos ?? true)
+                        : key === "ledger" ? Boolean(feats.ledger ?? feats.accounts ?? true)
+                        : true;
+                      isPlanEntitled = limitAllowed && featAllowed;
+                    } catch {
+                      // fallback
+                    }
+                  }
 
                   return (
                     <div
-                      key={mod.id}
+                      key={key}
                       style={{
                         padding: "12px 14px",
                         borderRadius: 12,
@@ -401,7 +472,7 @@ export default function TenantDetailDrawer({
                           <Text size="sm" fw={700} style={{ color: SA.text }}>
                             {title}
                           </Text>
-                          {isCore && (
+                          {isCore ? (
                             <Badge
                               size="xs"
                               variant="filled"
@@ -416,6 +487,24 @@ export default function TenantDetailDrawer({
                             >
                               Core System
                             </Badge>
+                          ) : isPlanEntitled ? (
+                            <Badge
+                              size="xs"
+                              variant="light"
+                              color="blue"
+                              styles={{ root: { fontWeight: 650 } }}
+                            >
+                              Included in Plan
+                            </Badge>
+                          ) : (
+                            <Badge
+                              size="xs"
+                              variant="outline"
+                              color="gray"
+                              styles={{ root: { fontWeight: 600 } }}
+                            >
+                              Requires Upgrade
+                            </Badge>
                           )}
                         </Group>
                         <Text size="xs" style={{ color: SA.muted }} lineClamp={1}>
@@ -425,12 +514,12 @@ export default function TenantDetailDrawer({
 
                       <Switch
                         size="md"
-                        checked={isCore ? true : mod.isEnabled}
+                        checked={isEnabled}
                         disabled={isCore}
-                        onChange={(e) => toggleModule(mod.moduleKey, e.currentTarget.checked)}
+                        onChange={(e) => toggleModule(key, e.currentTarget.checked)}
                         styles={{
                           track: {
-                            backgroundColor: (isCore ? true : mod.isEnabled) ? SA.accent : SA.borderStrong,
+                            backgroundColor: isEnabled ? SA.accent : SA.borderStrong,
                             borderColor: "transparent",
                             cursor: isCore ? "not-allowed" : "pointer",
                           },
@@ -490,6 +579,29 @@ export default function TenantDetailDrawer({
             </div>
           </Stack>
         </ScrollArea>
+      )}
+
+      {tenant && (
+        <>
+          <ChangeSubscriptionModal
+            companyId={tenant.id}
+            companyName={detail?.company.name ?? tenant.name}
+            currentPackageId={detail?.package?.id}
+            opened={changeSubOpen}
+            onClose={() => setChangeSubOpen(false)}
+            onSuccess={() => {
+              getTenantCompanyDetail(tenant.id).then(setDetail).catch(() => {});
+              onChanged();
+            }}
+          />
+
+          <IssueOtpModal
+            companyId={tenant.id}
+            companyName={detail?.company.name ?? tenant.name}
+            opened={issueOtpOpen}
+            onClose={() => setIssueOtpOpen(false)}
+          />
+        </>
       )}
     </Drawer>
   );

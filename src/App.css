@@ -31,12 +31,16 @@
   --app-text-soft: #475569;
   --app-muted: #64748b;
   --app-soft: #f1f5f9;
-  --app-accent: #2563eb;
-  --app-accent-soft: #eff6ff;
-  --app-gold-soft: #fef3c7;
-  --app-gold-deep: #d97706;
+  --app-accent: #C9952A;
+  --app-accent-bright: #E6C965;
+  --app-accent-soft: rgba(201, 149, 42, 0.14);
+  --app-accent-shadow: rgba(201, 149, 42, 0.35);
+  --app-accent-gradient: linear-gradient(135deg, var(--app-accent, #C9952A) 0%, var(--app-accent-bright, #E6C965) 100%);
+  --app-on-accent: #0A0A0C;
+  --app-gold-soft: var(--app-accent-soft, rgba(201, 149, 42, 0.14));
+  --app-gold-deep: var(--app-accent, #C9952A);
   --app-on-primary: #ffffff;
-  --app-hover: rgba(37, 99, 235, 0.05);
+  --app-hover: rgba(201, 149, 42, 0.06);
   --app-scroll: #cbd5e1;
   --app-scroll-hover: #94a3b8;
   --app-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.08), 0 1px 2px -1px rgba(0, 0, 0, 0.04);
@@ -44,23 +48,27 @@
 }
 
 :root[data-mantine-color-scheme="dark"] {
-  --app-bg: #0b111e;
-  --app-surface: #141c2e;
-  --app-border: #243048;
-  --app-text: #f8fafc;
-  --app-text-soft: #cbd5e1;
-  --app-muted: #94a3b8;
-  --app-soft: #1c273e;
-  --app-accent: #3b82f6;
-  --app-accent-soft: rgba(59, 130, 246, 0.16);
-  --app-gold-soft: rgba(245, 158, 11, 0.14);
-  --app-gold-deep: #f59e0b;
+  --app-bg: #0a0a0c;
+  --app-surface: #141416;
+  --app-border: #27272a;
+  --app-text: #fafafa;
+  --app-text-soft: #d4d4d8;
+  --app-muted: #a1a1aa;
+  --app-soft: #18181b;
+  --app-accent: #C9952A;
+  --app-accent-bright: #E6C965;
+  --app-accent-soft: rgba(201, 149, 42, 0.20);
+  --app-accent-shadow: rgba(201, 149, 42, 0.35);
+  --app-accent-gradient: linear-gradient(135deg, var(--app-accent, #C9952A) 0%, var(--app-accent-bright, #E6C965) 100%);
+  --app-on-accent: #0A0A0C;
+  --app-gold-soft: var(--app-accent-soft, rgba(201, 149, 42, 0.20));
+  --app-gold-deep: var(--app-accent, #C9952A);
   --app-on-primary: #ffffff;
   --app-hover: rgba(255, 255, 255, 0.05);
-  --app-scroll: #243048;
-  --app-scroll-hover: #38496b;
+  --app-scroll: #27272a;
+  --app-scroll-hover: #3f3f46;
   --app-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.6);
-  --app-card-border: 1px solid #243048;
+  --app-card-border: 1px solid #27272a;
 }
 
 html,
@@ -292,8 +300,8 @@ h6 {
 }
 
 :root[data-mantine-color-scheme="dark"] .hero-welcome-card {
-  background: linear-gradient(135deg, #141a2e 0%, #17203b 100%);
-  border: 1px solid rgba(40, 52, 85, 0.85);
+  background: linear-gradient(135deg, #141416 0%, #1a1a1e 100%);
+  border: 1px solid rgba(39, 39, 42, 0.85);
 }
 
 /* Micro-interaction polish: Emil Kowalski responsive press feedback */
@@ -339,5 +347,59 @@ button:active,
   font-weight: 700 !important;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15) !important;
 }
+
+/* ==========================================
+   MANTINE GLOBAL ACCENT ADAPTATION
+   Guarantees Chips, ThemeIcons, Badges, and
+   Buttons adhere to the company accent token.
+   ========================================== */
+
+/* Mantine Chip Accent Adaptation */
+.mantine-Chip-input:checked + .mantine-Chip-label,
+.mantine-Chip-label[data-checked] {
+  background: var(--app-accent) !important;
+  color: var(--app-on-accent, #ffffff) !important;
+  border-color: var(--app-accent) !important;
+}
+
+.mantine-Chip-input:checked + .mantine-Chip-label .mantine-Chip-icon,
+.mantine-Chip-label[data-checked] .mantine-Chip-icon {
+  color: var(--app-on-accent, #ffffff) !important;
+}
+
+.mantine-Chip-label:hover {
+  border-color: var(--app-accent) !important;
+}
+
+/* Mantine ThemeIcon & Badge Gold/Accent Adaptation */
+.mantine-ThemeIcon-root[data-color="gold"][data-variant="light"],
+.mantine-Badge-root[data-color="gold"][data-variant="light"] {
+  background: var(--app-accent-soft) !important;
+  color: var(--app-accent) !important;
+}
+
+.mantine-ThemeIcon-root[data-color="gold"][data-variant="filled"],
+.mantine-Badge-root[data-color="gold"][data-variant="filled"] {
+  background: var(--app-accent) !important;
+  color: var(--app-on-accent, #ffffff) !important;
+}
+
+/* Universal Accent Button Utility */
+.btn-accent,
+.corbel-btn-accent,
+button[data-accent="true"] {
+  background: var(--app-accent-gradient, var(--app-accent)) !important;
+  color: var(--app-on-accent, #0A0A0C) !important;
+  border: none !important;
+  box-shadow: 0 4px 14px -2px var(--app-accent-shadow) !important;
+  transition: all 0.15s ease !important;
+}
+
+button[data-accent="true"]:hover,
+.btn-accent:hover {
+  filter: brightness(1.08) !important;
+  transform: translateY(-1px);
+}
+
 
 

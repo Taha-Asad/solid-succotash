@@ -90,6 +90,7 @@ import type {
   PublicLicense,
   PublicDeviceActivation,
   IssueLicenseInput,
+  ResetTenantPasswordResult,
 } from "../types/backend";
 
 // ==========================================
@@ -1008,10 +1009,31 @@ export type AuditEntry = {
 };
 
 export function listAuditEntries(
-  limit: number,
-  offset: number,
+  limit?: number,
+  offset?: number,
+  companyId?: string,
+  action?: string,
+  search?: string,
 ): Promise<AuditEntry[]> {
-  return invoke<AuditEntry[]>("list_audit_logs", { limit, offset });
+  return invoke<AuditEntry[]>("list_audit_logs", {
+    limit: limit ?? 50,
+    offset: offset ?? 0,
+    companyId: companyId || null,
+    action: action || null,
+    search: search || null,
+  });
+}
+
+export function exportAuditReport(
+  companyId?: string,
+  action?: string,
+  search?: string,
+): Promise<string> {
+  return invoke<string>("export_audit_report", {
+    companyId: companyId || null,
+    action: action || null,
+    search: search || null,
+  });
 }
 
 // ==========================================
@@ -1264,6 +1286,12 @@ export function archiveCompany(companyId: string): Promise<void> {
 
 export function activateCompany(companyId: string): Promise<void> {
   return invoke<void>("activate_company", { companyId });
+}
+
+export function resetTenantPassword(
+  companyId: string,
+): Promise<ResetTenantPasswordResult> {
+  return invoke<ResetTenantPasswordResult>("reset_tenant_password", { companyId });
 }
 
 // ==========================================

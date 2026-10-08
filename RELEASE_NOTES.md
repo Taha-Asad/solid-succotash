@@ -38,10 +38,12 @@ timeline
     section Compliance & Control Plane
         v1.3.0 : Full-Stack Parity : FBR/PRAL Fiscal Outbox Engine : Automated Test Gap Elimination (512 Tests)
         v1.3.1 : Sovereign Super Admin Developer Cockpit : Slide-over Provisioning Workbench : Live Telemetry Mission Control : Anti-Slop Iconography
+        v1.3.2 : Dynamic Client Theming : Plan-Gated Module Governance : Super Admin Provisioning & OTP Issuance : Pure Neutral Obsidian
 ```
 
 | Version | Release Date | Key Themes & Milestone Deliverables | Verification Gate |
 | :--- | :---: | :--- | :---: |
+| **`v1.3.2`** | **October 2026** | **Client Theming & Plan-Gated Governance**: End-to-end dynamic accent propagation across all buttons, chips, icons, and cards; automated perceptual luminance contrast calculation (`--app-on-accent`: `#ffffff` vs `#0A0A0C`); elimination of bluish dark mode in favor of Pure Neutral Obsidian (`#0A0A0C` / `#141416` / `#27272A`); Super Admin tenant registration with one-time password (OTP) generation; package upgrade/downgrade auto-pruning; backend IPC module intersection with `<ModuleLockedView>` frontend guard. | **Gate 7 (DoRG)** |
 | **`v1.3.1`** | **October 2026** | **Sovereign Developer Cockpit & Dynamic Telemetry**: Ergonomic slide-over Tenant Provisioning Workbench drawer replacing popup modals; live cross-tenant telemetry KPIs (MRR, tenant count, fleet users); measured database pool round-trip latency probes; live audit event activity calendar & 7-day volume; interactive developer directives console (`ping`, `stats`, `audit`, `update`); persistent operator quests; Tauri auto-updater client; custom avatar & profile switcher; anti-slop SVG iconography. | **Gate 7 (DoRG)** |
 | **`v1.3.0`** | **October 2026** | **Full-Stack Parity & Fiscal Engine**: Complete FBR tax credential synchronization across DB, Rust DTOs, and UI forms; client payment idempotency deduplication across IPC; automated FBR and notification test suites (512 green tests). | **Gate 4 (DoQV)** |
 | **`v1.2.1`** | **September 2026** | **Currency Normalization & Stability**: Eliminated `parseFloat` comma truncation; integrated live multi-currency exchange rates (50+ fiat currencies); stabilized Linux Wayland/WebKitGTK rendering. | **Gate 3 (DoCC)** |

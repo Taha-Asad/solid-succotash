@@ -1040,6 +1040,7 @@ export type LicenseStatusResponse = {
   daysRemaining?: number | null;
   graceDaysRemaining?: number | null;
   isOfflineGrace: boolean;
+  isMigrationGrace?: boolean;
   deviceHwid: string;
 };
 
@@ -1079,5 +1080,12 @@ export type IssueLicenseInput = {
   validityDays?: number | null;
   offlineGraceDays?: number | null;
   notes?: string | null;
+};
+
+export type ResetTenantPasswordResult = {
+  email: string;
+  temporaryPassword: string;
+  userId: string;
+  companyId: string;
 };
 

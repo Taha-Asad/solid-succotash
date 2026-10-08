@@ -262,6 +262,7 @@ pub async fn run() {
             commands::backup::restore_backup,
             commands::backup::list_backups,
             commands::audit::list_audit_logs,
+            commands::audit::export_audit_report,
             commands::reports::report_sales_summary,
             commands::reports::report_sales_by_month,
             commands::reports::report_top_products,
@@ -342,6 +343,7 @@ pub async fn run() {
             commands::saas::update_tenant_company,
             commands::saas::archive_company,
             commands::saas::activate_company,
+            commands::saas::reset_tenant_password,
             // ---- Sovereign Binary Licensing & Fleet Governance ----
             commands::saas::get_device_identity,
             commands::saas::check_license_status,

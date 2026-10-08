@@ -25,6 +25,7 @@ import {
   CheckCircle2,
   Clock,
   Cpu,
+  Download,
   ExternalLink,
   KeyRound,
   Laptop,
@@ -38,6 +39,7 @@ import {
 
 import {
   checkForUpdates,
+  exportAuditReport,
   getErrorMessage,
   getPlatformAnalytics,
   listAuditEntries,
@@ -53,7 +55,7 @@ import type {
   PublicUser,
   TenantCompanySummary,
 } from "../../types/backend";
-import { useSaTheme } from "./saTheme";
+import { useSaCustomizer, useSaTheme } from "./saTheme";
 import type { SaView } from "./SuperAdminShell";
 
 interface ConsoleMessage {
@@ -94,6 +96,7 @@ export default function PlatformOverviewPage({
   refreshKey?: number;
 }) {
   const SA = useSaTheme();
+  const { config } = useSaCustomizer();
 
   // Telemetry & Data States
   const [tenants, setTenants] = useState<TenantCompanySummary[]>([]);
@@ -101,6 +104,10 @@ export default function PlatformOverviewPage({
   const [analytics, setAnalytics] = useState<PlatformAnalytics | null>(null);
   const [auditLogs, setAuditLogs] = useState<AuditEntry[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Cross-Tenant Audit Controls
+  const [auditActionFilter] = useState<string>("");
+  const [auditExporting, setAuditExporting] = useState(false);
 
   // Latency Probe State
   const [latencyMs, setLatencyMs] = useState<number | null>(null);
@@ -119,7 +126,7 @@ export default function PlatformOverviewPage({
     {
       id: "init",
       time: new Date().toLocaleTimeString(),
-      text: "Corbel Sovereign Command Deck v1.3.1 online. IPC channels authenticated.",
+      text: "Corbel Sovereign Command Deck v1.3.2 online. IPC channels authenticated.",
       type: "info",
     },
   ]);
@@ -171,7 +178,7 @@ export default function PlatformOverviewPage({
         listTenantCompanies().catch(() => [] as TenantCompanySummary[]),
         saasListActiveDevices().catch(() => [] as PublicDeviceActivation[]),
         getPlatformAnalytics().catch(() => null),
-        listAuditEntries(15, 0).catch(() => [] as AuditEntry[]),
+        listAuditEntries(25, 0, undefined, auditActionFilter || undefined, undefined).catch(() => [] as AuditEntry[]),
       ]);
 
       setTenants(tData);
@@ -183,7 +190,28 @@ export default function PlatformOverviewPage({
     } finally {
       setLoading(false);
     }
-  }, [appendLog]);
+  }, [appendLog, auditActionFilter]);
+
+  const handleExportAuditCsv = async () => {
+    setAuditExporting(true);
+    try {
+      const csv = await exportAuditReport(undefined, auditActionFilter || undefined, undefined);
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `corbel_cross_tenant_audit_${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      appendLog("Cross-tenant audit report CSV exported successfully", "success");
+    } catch (err) {
+      appendLog(`Export audit report failed: ${getErrorMessage(err)}`, "error");
+    } finally {
+      setAuditExporting(false);
+    }
+  };
 
   useEffect(() => {
     loadTelemetry();
@@ -816,103 +844,125 @@ export default function PlatformOverviewPage({
           </div>
 
           {/* Card B: Live Platform Mutation Stream */}
-          <div className="sa-card">
-            <div className="sa-card-header">
-              <div>
-                <div className="sa-card-title">
-                  <Activity size={16} color={SA.accent} />
-                  <span>Platform Mutation Stream</span>
+          {config.widgets.showAuditStream && (
+            <div className="sa-card">
+              <div className="sa-card-header">
+                <div>
+                  <div className="sa-card-title">
+                    <Activity size={16} color={SA.accent} />
+                    <span>Platform Mutation Stream</span>
+                  </div>
+                  <div className="sa-card-subtitle">
+                    Real-time audit log captured across isolated schemas
+                  </div>
                 </div>
-                <div className="sa-card-subtitle">
-                  Real-time audit log captured across isolated schemas
-                </div>
+
+                <Group gap="xs">
+                  <Button
+                    size="compact-xs"
+                    variant="light"
+                    leftSection={<Download size={12} />}
+                    onClick={handleExportAuditCsv}
+                    loading={auditExporting}
+                    styles={{
+                      root: {
+                        background: SA.panelStrong,
+                        color: SA.text,
+                        border: `1px solid ${SA.border}`,
+                        fontSize: 11,
+                        fontWeight: 650,
+                      },
+                    }}
+                  >
+                    Export CSV
+                  </Button>
+                  <Tooltip label="Refresh audit stream">
+                    <ActionIcon
+                      size="sm"
+                      variant="subtle"
+                      onClick={loadTelemetry}
+                      style={{ color: SA.textSoft }}
+                    >
+                      <RefreshCw size={13} />
+                    </ActionIcon>
+                  </Tooltip>
+                </Group>
               </div>
 
-              <Tooltip label="Refresh audit stream">
-                <ActionIcon
-                  size="sm"
-                  variant="subtle"
-                  onClick={loadTelemetry}
-                  style={{ color: SA.textSoft }}
-                >
-                  <RefreshCw size={13} />
-                </ActionIcon>
-              </Tooltip>
-            </div>
-
-            <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
-              {auditLogs.length === 0 ? (
-                <div
-                  style={{
-                    padding: "24px 16px",
-                    textAlign: "center",
-                    background: SA.panelStrong,
-                    borderRadius: 10,
-                    border: `1px solid ${SA.border}`,
-                  }}
-                >
-                  <ShieldCheck size={22} color={SA.muted} style={{ marginBottom: 6 }} />
-                  <Text fw={750} size="xs" style={{ color: SA.text }}>
-                    Auditing Engine Armed & Active
-                  </Text>
-                  <Text size="xs" style={{ color: SA.muted, marginTop: 2 }}>
-                    Sign-ins, invoice finalizations, and license changes stream here automatically.
-                  </Text>
-                </div>
-              ) : (
-                auditLogs.slice(0, 6).map((entry) => (
+              <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+                {auditLogs.length === 0 ? (
                   <div
-                    key={entry.id}
                     style={{
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      gap: 12,
-                      padding: "8px 12px",
-                      borderRadius: 8,
+                      padding: "24px 16px",
+                      textAlign: "center",
                       background: SA.panelStrong,
+                      borderRadius: 10,
                       border: `1px solid ${SA.border}`,
                     }}
                   >
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-                      <Badge
-                        size="xs"
-                        variant="filled"
-                        styles={{
-                          root: {
-                            background: SA.accentMuted,
-                            color: SA.accent,
-                            fontWeight: 800,
-                            letterSpacing: 0.3,
-                            fontSize: 9,
-                            border: `1px solid ${SA.border}`,
-                          },
-                        }}
-                      >
-                        {entry.action}
-                      </Badge>
+                    <ShieldCheck size={22} color={SA.muted} style={{ marginBottom: 6 }} />
+                    <Text fw={750} size="xs" style={{ color: SA.text }}>
+                      Auditing Engine Armed & Active
+                    </Text>
+                    <Text size="xs" style={{ color: SA.muted, marginTop: 2 }}>
+                      Sign-ins, invoice finalizations, and license changes stream here automatically.
+                    </Text>
+                  </div>
+                ) : (
+                  auditLogs.slice(0, 6).map((entry) => (
+                    <div
+                      key={entry.id}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: 12,
+                        padding: "8px 12px",
+                        borderRadius: 8,
+                        background: SA.panelStrong,
+                        border: `1px solid ${SA.border}`,
+                      }}
+                    >
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                        <Badge
+                          size="xs"
+                          variant="filled"
+                          styles={{
+                            root: {
+                              background: SA.accentMuted,
+                              color: SA.accent,
+                              fontWeight: 800,
+                              letterSpacing: 0.3,
+                              fontSize: 9,
+                              border: `1px solid ${SA.border}`,
+                            },
+                          }}
+                        >
+                          {entry.action}
+                        </Badge>
 
-                      <div style={{ minWidth: 0 }}>
-                        <Text fw={700} size="xs" truncate style={{ color: SA.text, fontSize: 11 }}>
-                          {entry.resource}
-                        </Text>
-                        <Text size="xs" truncate style={{ color: SA.muted, fontSize: 10 }}>
-                          by {entry.userEmail || "root"}
+                        <div style={{ minWidth: 0 }}>
+                          <Text fw={700} size="xs" truncate style={{ color: SA.text, fontSize: 11 }}>
+                            {entry.resource}
+                          </Text>
+                          <Text size="xs" truncate style={{ color: SA.muted, fontSize: 10 }}>
+                            by {entry.userEmail || "root"}
+                          </Text>
+                        </div>
+                      </div>
+
+                      <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0, color: SA.muted }}>
+                        <Clock size={10} />
+                        <Text size="xs" style={{ fontSize: 10, fontVariantNumeric: "tabular-nums" }}>
+                          {formatRelativeTime(entry.createdAt)}
                         </Text>
                       </div>
                     </div>
-
-                    <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0, color: SA.muted }}>
-                      <Clock size={10} />
-                      <Text size="xs" style={{ fontSize: 10, fontVariantNumeric: "tabular-nums" }}>
-                        {formatRelativeTime(entry.createdAt)}
-                      </Text>
-                    </div>
-                  </div>
-                ))
-              )}
+                  ))
+                )}
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
 
@@ -986,7 +1036,7 @@ export default function PlatformOverviewPage({
           {/* Monospace Output Window */}
           <div className="sa-terminal-frame" style={{ marginTop: 4 }}>
             <div className="sa-terminal-titlebar">
-              <span className="sa-terminal-title">corbel-ipc-diagnostics // v1.3.1</span>
+              <span className="sa-terminal-title">corbel-ipc-diagnostics // v1.3.2</span>
               <Button
                 size="compact-xs"
                 variant="subtle"

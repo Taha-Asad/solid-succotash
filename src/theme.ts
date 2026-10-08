@@ -38,20 +38,20 @@ const gold: MantineColorsTuple = [
   "#4F3610", // 9
 ];
 
-// ---- Dark-mode neutral scale (clean Slate scale) --------------------
-// Replaces Mantine's default grey-dark with crisp, high-contrast Slate.
+// ---- Dark-mode neutral scale (clean Neutral Obsidian / Zinc scale) --
+// Pure obsidian / neutral darks with zero bluish saturation.
 
 const dark: MantineColorsTuple = [
-  "#F8FAFC", // 0  primary text (slate-50)
-  "#E2E8F0", // 1  slate-200
-  "#CBD5E1", // 2  slate-300
-  "#94A3B8", // 3  slate-400
-  "#64748B", // 4  slate-500
-  "#475569", // 5  slate-600
-  "#38496B", // 6  slate-border-strong
-  "#243048", // 7  body borders / soft (matches --app-border)
-  "#141C2E", // 8  card / surface (matches --app-surface)
-  "#0B111E", // 9  deepest background (matches --app-bg)
+  "#FAFAFA", // 0  primary text (zinc-50)
+  "#E4E4E7", // 1  zinc-200
+  "#D4D4D8", // 2  zinc-300
+  "#A1A1AA", // 3  zinc-400
+  "#71717A", // 4  zinc-500
+  "#52525B", // 5  zinc-600
+  "#3F3F46", // 6  zinc-700
+  "#27272A", // 7  body borders / soft (matches --app-border: zinc-800)
+  "#141416", // 8  card / surface (matches --app-surface)
+  "#0A0A0C", // 9  deepest background (matches --app-bg)
 ];
 
 // ---- Semantic tokens used directly by pages ---------------------------
@@ -64,10 +64,14 @@ export const INK = {
   navy: "#1D2B54",
   navySoft: "var(--app-soft)",
   navyDeep: "#0E1530",
-  gold: "#C9952A",
-  goldSoft: "var(--app-gold-soft)",
-  goldDeep: "var(--app-gold-deep)",
-  goldBright: "#E6C965",
+  accent: "var(--app-accent, #C9952A)",
+  accentSoft: "var(--app-accent-soft, rgba(201, 149, 42, 0.16))",
+  gold: "var(--app-accent, #C9952A)",
+  goldSoft: "var(--app-accent-soft, rgba(201, 149, 42, 0.16))",
+  goldDeep: "var(--app-accent, #C9952A)",
+  goldBright: "var(--app-accent-bright, #E6C965)",
+  gradient: "var(--app-accent-gradient, linear-gradient(135deg, #C9952A 0%, #E6C965 100%))",
+  onAccent: "var(--app-on-accent, #0A0A0C)",
   paper: "var(--app-bg)",
   border: "var(--app-border)",
   muted: "var(--app-muted)",
@@ -80,7 +84,7 @@ export const INK = {
   // Graph / accent hues used across charts
   chart: {
     navy: "#1D2B54",
-    gold: "#C9952A",
+    gold: "var(--app-accent, #C9952A)",
     teal: "#12A5A0",
     violet: "#7C6FD0",
     rose: "#D15B8A",
@@ -126,6 +130,22 @@ export const theme = createTheme({
       defaultProps: {
         verticalSpacing: "sm",
         horizontalSpacing: "md",
+      },
+    },
+    Chip: {
+      styles: {
+        label: {
+          "&[data-checked]": {
+            backgroundColor: "var(--app-accent) !important",
+            color: "var(--app-on-accent, #ffffff) !important",
+            borderColor: "var(--app-accent) !important",
+          },
+        },
+        icon: {
+          "&[data-checked]": {
+            color: "var(--app-on-accent, #ffffff) !important",
+          },
+        },
       },
     },
   },

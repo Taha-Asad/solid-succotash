@@ -406,11 +406,11 @@ const GOLD_BTN = {
   root: {
     position: "relative" as const,
     overflow: "hidden",
-    background: "linear-gradient(135deg, #C9952A 0%, #E6C965 100%)",
-    color: "#131C39",
+    background: "var(--app-accent-gradient)",
+    color: "var(--app-on-accent, #0A0A0C)",
     fontWeight: 700,
-    boxShadow: "0 8px 20px -6px rgba(201,149,42,0.6)",
-    "&:hover": { filter: "brightness(1.06)" },
+    boxShadow: "0 8px 20px -6px var(--app-accent-shadow)",
+    "&:hover": { filter: "brightness(1.08)" },
     "&:disabled": {
       background: "rgba(19,28,57,0.08)",
       color: "#9AA3B5",
@@ -471,8 +471,7 @@ function TourCard({
       <div
         style={{
           height: 5,
-          background:
-            "linear-gradient(90deg, #C9952A 0%, #E6C965 55%, #C9952A 100%)",
+          background: "var(--app-accent-gradient)",
         }}
       />
       <div style={{ padding: "16px 20px 14px" }}>

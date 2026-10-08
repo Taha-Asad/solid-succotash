@@ -259,8 +259,8 @@ function SectionCard({
             width: 38,
             height: 38,
             borderRadius: 12,
-            background: "linear-gradient(135deg, #C9952A 0%, #E6C965 100%)",
-            color: "#131C39",
+            background: "var(--app-accent-gradient)",
+            color: "var(--app-on-accent, #0A0A0C)",
             flexShrink: 0,
           }}
         >

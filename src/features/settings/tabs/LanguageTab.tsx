@@ -29,8 +29,8 @@ export function LanguageTab() {
             width: 38,
             height: 38,
             borderRadius: 12,
-            background: "linear-gradient(135deg, #C9952A 0%, #E6C965 100%)",
-            color: "#131C39",
+            background: "var(--app-accent-gradient)",
+            color: "var(--app-on-accent, #0A0A0C)",
           }}
         >
           <LanguagesIcon size={18} />
@@ -59,7 +59,7 @@ export function LanguageTab() {
                 border: `1.5px solid ${
                   selected ? INK.gold : "var(--app-border)"
                 }`,
-                background: selected ? "rgba(201,149,42,0.08)" : "var(--app-surface)",
+                background: selected ? "var(--app-accent-soft)" : "var(--app-surface)",
                 transition: "border-color 0.15s ease, background 0.15s ease",
               }}
               onMouseEnter={(e) => {
@@ -80,9 +80,9 @@ export function LanguageTab() {
                     alignItems: "center",
                     justifyContent: "center",
                     background: selected
-                      ? "linear-gradient(135deg, #C9952A 0%, #E6C965 100%)"
+                      ? "var(--app-accent-gradient)"
                       : "var(--app-soft)",
-                    color: selected ? "#131C39" : INK.muted,
+                    color: selected ? "var(--app-on-accent, #0A0A0C)" : INK.muted,
                     fontWeight: 800,
                     fontSize: 14,
                   }}

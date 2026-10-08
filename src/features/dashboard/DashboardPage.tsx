@@ -179,10 +179,10 @@ export default function DashboardHome({ user, onNavigate }: DashboardHomeProps) 
                 leftSection={<Plus size={16} />}
                 onClick={() => goTo("invoices")}
                 style={{
-                  background: "#4F61ED",
-                  color: "#ffffff",
+                  background: "var(--app-accent-gradient, var(--app-accent))",
+                  color: "var(--app-on-accent, #ffffff)",
                   fontWeight: 600,
-                  boxShadow: "0 4px 14px -2px rgba(79, 97, 237, 0.35)",
+                  boxShadow: "0 4px 14px -2px var(--app-accent-shadow)",
                   transition: "transform 0.15s ease",
                 }}
               >
@@ -237,9 +237,9 @@ export default function DashboardHome({ user, onNavigate }: DashboardHomeProps) 
             onClick={() => goTo("reports")}
             style={{
               borderRadius: 22,
-              background: "linear-gradient(135deg, #4F61ED 0%, #3B4CCA 100%)",
-              color: "#ffffff",
-              boxShadow: "0 10px 24px -6px rgba(79, 97, 237, 0.35)",
+              background: "var(--app-accent-gradient)",
+              color: "var(--app-on-accent, #ffffff)",
+              boxShadow: "0 10px 24px -6px var(--app-accent-shadow)",
               cursor: "pointer",
               transition: "transform 0.2s ease",
             }}

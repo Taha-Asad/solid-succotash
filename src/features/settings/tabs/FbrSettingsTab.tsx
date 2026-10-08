@@ -231,8 +231,8 @@ export function FbrSettingsTab() {
                 borderRadius: 12,
                 background: isConnected
                   ? "linear-gradient(135deg, #2B8A3E 0%, #40C057 100%)"
-                  : "linear-gradient(135deg, #C9952A 0%, #E6C965 100%)",
-                color: isConnected ? "#fff" : "#131C39",
+                  : "var(--app-accent-gradient)",
+                color: isConnected ? "#fff" : "var(--app-on-accent, #0A0A0C)",
               }}
             >
               {isConnected ? <CheckCircle size={18} /> : <Send size={18} />}
@@ -344,8 +344,8 @@ export function FbrSettingsTab() {
                 width: 38,
                 height: 38,
                 borderRadius: 12,
-                background: "linear-gradient(135deg, #C9952A 0%, #E6C965 100%)",
-                color: "#131C39",
+                background: "var(--app-accent-gradient)",
+                color: "var(--app-on-accent, #0A0A0C)",
               }}
             >
               <AlertTriangle size={18} />

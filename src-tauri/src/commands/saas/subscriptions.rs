@@ -133,6 +133,64 @@ pub async fn assign_company_subscription(
         }
     };
 
+    let cloud_db = crate::db::neon::NeonCloudDb::global();
+    if cloud_db.is_connected() {
+        let _ = cloud_db
+            .assign_company_subscription(
+                &company_id,
+                &package_id,
+                &status,
+                trial_ends_at.as_deref(),
+                &start,
+                &period_end,
+            )
+            .await;
+    }
+
+    // Synchronize company_modules with new package limits
+    if let Ok(pkg) = fetch_package(pool.inner(), &package_id).await {
+        let limits: serde_json::Value = serde_json::from_str(&pkg.module_limits).unwrap_or_default();
+        let feats: serde_json::Value = serde_json::from_str(&pkg.features).unwrap_or_default();
+
+        const ALL_MODULES: &[&str] = &[
+            "dashboard", "inventory", "invoices", "customers", "purchase_orders",
+            "pos", "fbr", "ledger", "reports", "settings", "import", "users"
+        ];
+
+        for &m in ALL_MODULES {
+            let is_core = matches!(m, "dashboard" | "inventory" | "invoices" | "settings" | "users");
+            if is_core {
+                continue;
+            }
+
+            let limit_allowed = match limits.get(m) {
+                Some(serde_json::Value::Bool(b)) => *b,
+                Some(serde_json::Value::Number(n)) => n.as_i64().unwrap_or(0) > 0,
+                _ => true,
+            };
+            let feat_allowed = match m {
+                "fbr" => feats.get("fbr").and_then(|v| v.as_bool()).unwrap_or(false),
+                "import" => feats.get("data_import").or_else(|| feats.get("import")).and_then(|v| v.as_bool()).unwrap_or(true),
+                "pos" => feats.get("pos").and_then(|v| v.as_bool()).unwrap_or(true),
+                "ledger" => feats.get("ledger").or_else(|| feats.get("accounts")).and_then(|v| v.as_bool()).unwrap_or(true),
+                "purchase_orders" => limits.get("purchases").or_else(|| limits.get("purchase_orders")).and_then(|v| v.as_bool().or_else(|| v.as_i64().map(|n| n > 0))).unwrap_or(true),
+                _ => feats.get(m).and_then(|v| v.as_bool()).unwrap_or(true),
+            };
+
+            let allowed = limit_allowed && feat_allowed;
+            if !allowed {
+                let _ = sqlx::query("UPDATE company_modules SET is_enabled = 0, updated_at = CURRENT_TIMESTAMP WHERE company_id = ? AND module_key = ?")
+                    .bind(&company_id)
+                    .bind(m)
+                    .execute(pool.inner())
+                    .await;
+                if cloud_db.is_connected() {
+                    let _ = cloud_db.set_company_module(&company_id, m, false).await;
+                }
+            }
+        }
+    }
+
     audit_for(
         pool.inner(),
         &actor,

@@ -21,6 +21,8 @@ pub struct LicenseStatusResponse {
     pub days_remaining: Option<i64>,
     pub grace_days_remaining: Option<i64>,
     pub is_offline_grace: bool,
+    #[serde(default)]
+    pub is_migration_grace: bool,
     pub device_hwid: String,
 }
 

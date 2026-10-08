@@ -43,7 +43,7 @@ export function ThemeBrandingTab() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
-  const { colorScheme, setColorScheme } = useAppTheme();
+  const { colorScheme, setColorScheme, setUserAccent } = useAppTheme();
 
   const form = useForm({
     initialValues: DEFAULT_THEME,
@@ -77,6 +77,15 @@ export function ThemeBrandingTab() {
       const { erpWatermark: _watermark, ...tenantFields } = values;
       const saved = await updateTheme(tenantFields);
       form.setValues(saved);
+      if (saved.accentColor) {
+        setUserAccent(saved.accentColor);
+        if (typeof document !== "undefined") {
+          document.documentElement.style.setProperty("--app-accent", saved.accentColor);
+        }
+        window.dispatchEvent(
+          new CustomEvent("corbel_theme_updated", { detail: saved }),
+        );
+      }
       setSuccess("Theme & branding updated.");
     } catch (err) {
       setError(getErrorMessage(err));
@@ -132,7 +141,16 @@ export function ThemeBrandingTab() {
             <ColorInput
               label="Accent Color"
               format="hex"
-              swatches={[INK.gold, INK.goldBright, "#AC7922", "#E1903B"]}
+              swatches={[
+                "#C9952A", // Corbel Gold
+                "#2563EB", // Sapphire Blue
+                "#059669", // Emerald Teal
+                "#7C3AED", // Amethyst Purple
+                "#DC2626", // Crimson Red
+                "#D97706", // Amber Ochre
+                "#06B6D4", // Sovereign Cyan
+                "#71717A", // Zinc Slate
+              ]}
               {...form.getInputProps("accentColor")}
             />
           </SimpleGrid>
@@ -268,7 +286,7 @@ export function ThemeBrandingTab() {
                   fontSize: 11,
                   fontWeight: 700,
                   background: form.values.accentColor,
-                  color: "#131C39",
+                  color: "#ffffff",
                 }}
               >
                 INVOICE

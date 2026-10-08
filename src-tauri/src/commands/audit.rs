@@ -68,58 +68,85 @@ pub async fn log_audit(
     }
 }
 
-/// Lists audit logs for the current user's company (paginated).
+/// Lists audit logs for the current user's company or cross-tenant for Super Admin (paginated).
 #[tauri::command]
 pub async fn list_audit_logs(
     pool: State<'_, SqlitePool>,
     session: State<'_, SessionState>,
+    company_id: Option<String>,
+    action: Option<String>,
+    search: Option<String>,
     limit: Option<i64>,
     offset: Option<i64>,
 ) -> Result<Vec<AuditEntry>, AppError> {
     let current_user = require_current_user(pool.inner(), session.inner()).await?;
 
-    if current_user.role != "owner" && current_user.role != "admin" {
-        return Err(AppError::internal("Only owners and admins can view audit logs".to_string()));
+    if !current_user.is_super_admin && current_user.role != "owner" && current_user.role != "admin" {
+        return Err(AppError::internal("Only owners, admins, or super admins can view audit logs".to_string()));
     }
 
-    let company_id = current_user
-        .company_id
-        .as_ref()
-        .ok_or("Not assigned to a company")?;
+    let target_company_id = if current_user.is_super_admin {
+        company_id
+    } else {
+        Some(
+            current_user
+                .company_id
+                .clone()
+                .ok_or_else(|| AppError::internal("Not assigned to a company".to_string()))?,
+        )
+    };
 
     let limit = limit.unwrap_or(100).clamp(1, 500);
     let offset = offset.unwrap_or(0).max(0);
 
-    let rows = sqlx::query_as::<
-        _,
-        (
-            String,
-            String,
-            String,
-            String,
-            String,
-            String,
-            String,
-            Option<String>,
-            Option<String>,
-            String,
-        ),
-    >(
+    let mut builder = sqlx::QueryBuilder::new(
         r#"
         SELECT id, company_id, user_id, user_email, user_role,
                action, resource, resource_id, details, created_at
         FROM audit_logs
-        WHERE company_id = ?
-        ORDER BY created_at DESC
-        LIMIT ? OFFSET ?
+        WHERE 1=1
         "#,
-    )
-    .bind(company_id)
-    .bind(limit)
-    .bind(offset)
-    .fetch_all(pool.inner())
-    .await
-    .map_err(|e| AppError::internal(format!("Audit query error: {e}")))?;
+    );
+
+    if let Some(ref cid) = target_company_id {
+        builder.push(" AND company_id = ");
+        builder.push_bind(cid);
+    }
+    if let Some(ref act) = action {
+        builder.push(" AND action = ");
+        builder.push_bind(act);
+    }
+    if let Some(ref s) = search {
+        let pattern = format!("%{s}%");
+        builder.push(" AND (user_email LIKE ");
+        builder.push_bind(pattern.clone());
+        builder.push(" OR resource LIKE ");
+        builder.push_bind(pattern.clone());
+        builder.push(" OR details LIKE ");
+        builder.push_bind(pattern);
+        builder.push(")");
+    }
+    builder.push(" ORDER BY created_at DESC LIMIT ");
+    builder.push_bind(limit);
+    builder.push(" OFFSET ");
+    builder.push_bind(offset);
+
+    let rows = builder
+        .build_query_as::<(
+            String,
+            String,
+            String,
+            String,
+            String,
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+            String,
+        )>()
+        .fetch_all(pool.inner())
+        .await
+        .map_err(|e| AppError::internal(format!("Audit query error: {e}")))?;
 
     Ok(rows
         .into_iter()
@@ -136,6 +163,94 @@ pub async fn list_audit_logs(
             created_at: r.9,
         })
         .collect())
+}
+
+/// Exports audit logs formatted as an RFC 4180 CSV string.
+#[tauri::command]
+pub async fn export_audit_report(
+    pool: State<'_, SqlitePool>,
+    session: State<'_, SessionState>,
+    company_id: Option<String>,
+    action: Option<String>,
+) -> Result<String, AppError> {
+    let current_user = require_current_user(pool.inner(), session.inner()).await?;
+
+    if !current_user.is_super_admin && current_user.role != "owner" && current_user.role != "admin" {
+        return Err(AppError::internal("Only owners, admins, or super admins can export audit reports".to_string()));
+    }
+
+    let target_company_id = if current_user.is_super_admin {
+        company_id
+    } else {
+        Some(
+            current_user
+                .company_id
+                .clone()
+                .ok_or_else(|| AppError::internal("Not assigned to a company".to_string()))?,
+        )
+    };
+
+    let mut builder = sqlx::QueryBuilder::new(
+        r#"
+        SELECT id, company_id, user_id, user_email, user_role,
+               action, resource, resource_id, details, created_at
+        FROM audit_logs
+        WHERE 1=1
+        "#,
+    );
+
+    if let Some(ref cid) = target_company_id {
+        builder.push(" AND company_id = ");
+        builder.push_bind(cid);
+    }
+    if let Some(ref act) = action {
+        builder.push(" AND action = ");
+        builder.push_bind(act);
+    }
+    builder.push(" ORDER BY created_at DESC LIMIT 1000");
+
+    let rows = builder
+        .build_query_as::<(
+            String,
+            String,
+            String,
+            String,
+            String,
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+            String,
+        )>()
+        .fetch_all(pool.inner())
+        .await
+        .map_err(|e| AppError::internal(format!("Audit export error: {e}")))?;
+
+    fn escape_csv(val: &str) -> String {
+        if val.contains(',') || val.contains('"') || val.contains('\n') || val.contains('\r') {
+            format!("\"{}\"", val.replace('"', "\"\""))
+        } else {
+            val.to_string()
+        }
+    }
+
+    let mut csv = String::from("id,timestamp,company_id,user_email,user_role,action,resource,resource_id,details\n");
+    for r in rows {
+        csv.push_str(&format!(
+            "{},{},{},{},{},{},{},{},{}\n",
+            escape_csv(&r.0),
+            escape_csv(&r.9),
+            escape_csv(&r.1),
+            escape_csv(&r.3),
+            escape_csv(&r.4),
+            escape_csv(&r.5),
+            escape_csv(&r.6),
+            escape_csv(r.7.as_deref().unwrap_or("")),
+            escape_csv(r.8.as_deref().unwrap_or("")),
+        ));
+    }
+
+    Ok(csv)
 }
 
 // ==========================================
@@ -238,7 +353,7 @@ mod tests {
         // Input: no user in the session.
         // Expected: Err "You must log in first".
         let app = setup_app().await;
-        let err = list_audit_logs(state_of(&app), state_of(&app), None, None)
+        let err = list_audit_logs(state_of(&app), state_of(&app), None, None, None, None, None)
             .await
             .unwrap_err();
         assert!(err.contains("log in first"), "got: {err}");
@@ -257,10 +372,10 @@ mod tests {
             insert_user(&pool, company_id, "emp@test.com", "Emp", "employee", true).await;
         set_session_user(&app, employee).await;
 
-        let err = list_audit_logs(state_of(&app), state_of(&app), None, None)
+        let err = list_audit_logs(state_of(&app), state_of(&app), None, None, None, None, None)
             .await
             .unwrap_err();
-        assert!(err.contains("Only owners and admins"), "got: {err}");
+        assert!(err.contains("Only owners, admins"), "got: {err}");
     }
 
     #[tokio::test]
@@ -289,7 +404,7 @@ mod tests {
         )
         .await;
 
-        let logs = list_audit_logs(state_of(&app), state_of(&app), None, None)
+        let logs = list_audit_logs(state_of(&app), state_of(&app), None, None, None, None, None)
             .await
             .expect("owner lists");
         assert_eq!(logs.len(), 2);
@@ -308,7 +423,7 @@ mod tests {
         seed_audit(&pool, company_id, &owner.id, "2026-01-02T00:00:00Z", "b").await;
         seed_audit(&pool, company_id, &owner.id, "2026-01-03T00:00:00Z", "c").await;
 
-        let logs = list_audit_logs(state_of(&app), state_of(&app), None, None)
+        let logs = list_audit_logs(state_of(&app), state_of(&app), None, None, None, None, None)
             .await
             .expect("list");
         let actions: Vec<&str> = logs.iter().map(|l| l.action.as_str()).collect();
@@ -329,7 +444,7 @@ mod tests {
             seed_audit(&pool, company_id, &owner.id, &stamp, "seed").await;
         }
 
-        let logs = list_audit_logs(state_of(&app), state_of(&app), Some(501), None)
+        let logs = list_audit_logs(state_of(&app), state_of(&app), None, None, None, Some(501), None)
             .await
             .expect("list");
         assert_eq!(logs.len(), 500, "limit must clamp to 500");
@@ -348,7 +463,7 @@ mod tests {
         seed_audit(&pool, company_id, &owner.id, "2026-01-02T00:00:00Z", "b").await;
         seed_audit(&pool, company_id, &owner.id, "2026-01-03T00:00:00Z", "c").await;
 
-        let logs = list_audit_logs(state_of(&app), state_of(&app), Some(0), None)
+        let logs = list_audit_logs(state_of(&app), state_of(&app), None, None, None, Some(0), None)
             .await
             .expect("list");
         assert_eq!(logs.len(), 1);
@@ -367,7 +482,7 @@ mod tests {
         seed_audit(&pool, company_id, &owner.id, "2026-01-02T00:00:00Z", "b").await;
         seed_audit(&pool, company_id, &owner.id, "2026-01-03T00:00:00Z", "c").await;
 
-        let logs = list_audit_logs(state_of(&app), state_of(&app), Some(2), Some(2))
+        let logs = list_audit_logs(state_of(&app), state_of(&app), None, None, None, Some(2), Some(2))
             .await
             .expect("list");
         let actions: Vec<&str> = logs.iter().map(|l| l.action.as_str()).collect();
@@ -386,7 +501,7 @@ mod tests {
         seed_audit(&pool, company_id, &owner.id, "2026-01-01T00:00:00Z", "a").await;
         seed_audit(&pool, company_id, &owner.id, "2026-01-02T00:00:00Z", "b").await;
 
-        let logs = list_audit_logs(state_of(&app), state_of(&app), None, Some(-5))
+        let logs = list_audit_logs(state_of(&app), state_of(&app), None, None, None, None, Some(-5))
             .await
             .expect("list");
         assert_eq!(logs.len(), 2);
@@ -404,7 +519,7 @@ mod tests {
         let admin = insert_user(&pool, company_id, "admin@test.com", "Admin", "admin", true).await;
         set_session_user(&app, admin).await;
 
-        let result = list_audit_logs(state_of(&app), state_of(&app), None, None).await;
+        let result = list_audit_logs(state_of(&app), state_of(&app), None, None, None, None, None).await;
         assert!(result.is_ok(), "admin must be able to list");
     }
 }

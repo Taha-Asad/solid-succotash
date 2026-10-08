@@ -822,6 +822,158 @@ impl NeonCloudDb {
         Ok(())
     }
 
+    /// Updates or assigns an enterprise subscription package for a company in Neon Cloud
+    pub async fn assign_company_subscription(
+        &self,
+        company_id: &str,
+        package_id: &str,
+        status: &str,
+        trial_ends_at: Option<&str>,
+        _period_start: &str,
+        _period_end: &str,
+    ) -> Result<(), AppError> {
+        let pool = match self.pool() {
+            Some(p) => p,
+            None => return Ok(()),
+        };
+
+        let existing_sub_id: Option<String> = sqlx::query_scalar(
+            "SELECT id FROM company_subscriptions WHERE company_id = $1 ORDER BY created_at DESC LIMIT 1"
+        )
+        .bind(company_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| AppError::database(format!("Neon query error: {e}")))?;
+
+        match existing_sub_id {
+            Some(sub_id) => {
+                sqlx::query(
+                    r#"
+                    UPDATE company_subscriptions
+                    SET package_id = $1, status = $2,
+                        trial_ends_at = CASE WHEN $3::text IS NOT NULL THEN $3::text::timestamp ELSE NULL END,
+                        current_period_start = NOW(),
+                        current_period_end = NOW() + INTERVAL '30 days',
+                        canceled_at = NULL, ended_at = NULL, updated_at = NOW()
+                    WHERE id = $4
+                    "#,
+                )
+                .bind(package_id)
+                .bind(status)
+                .bind(trial_ends_at)
+                .bind(&sub_id)
+                .execute(pool)
+                .await
+                .map_err(|e| AppError::database(format!("Neon update subscription error: {e}")))?;
+            }
+            None => {
+                let sub_id = Uuid::new_v4().to_string();
+                sqlx::query(
+                    r#"
+                    INSERT INTO company_subscriptions (
+                        id, company_id, package_id, status, trial_ends_at,
+                        current_period_start, current_period_end, metadata, created_at, updated_at
+                    ) VALUES (
+                        $1, $2, $3, $4,
+                        CASE WHEN $5::text IS NOT NULL THEN $5::text::timestamp ELSE NULL END,
+                        NOW(), NOW() + INTERVAL '30 days', '{}'::jsonb, NOW(), NOW()
+                    )
+                    "#,
+                )
+                .bind(&sub_id)
+                .bind(company_id)
+                .bind(package_id)
+                .bind(status)
+                .bind(trial_ends_at)
+                .execute(pool)
+                .await
+                .map_err(|e| AppError::database(format!("Neon insert subscription error: {e}")))?;
+            }
+        }
+
+        info!("Successfully synced subscription for company '{company_id}' to Neon Cloud");
+        Ok(())
+    }
+
+    /// Persists module enabled/disabled state in Neon Cloud
+    pub async fn set_company_module(
+        &self,
+        company_id: &str,
+        module_key: &str,
+        is_enabled: bool,
+    ) -> Result<(), AppError> {
+        let pool = match self.pool() {
+            Some(p) => p,
+            None => return Ok(()),
+        };
+
+        let mod_id = Uuid::new_v4().to_string();
+        sqlx::query(
+            r#"
+            INSERT INTO company_modules (id, company_id, module_key, is_enabled, settings, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, '{}'::jsonb, NOW(), NOW())
+            ON CONFLICT (company_id, module_key) DO UPDATE SET
+                is_enabled = EXCLUDED.is_enabled,
+                updated_at = NOW()
+            "#,
+        )
+        .bind(&mod_id)
+        .bind(company_id)
+        .bind(module_key)
+        .bind(is_enabled)
+        .execute(pool)
+        .await
+        .map_err(|e| AppError::database(format!("Neon set module error: {e}")))?;
+
+        info!("Successfully synced module '{module_key}' ({is_enabled}) for company '{company_id}' to Neon Cloud");
+        Ok(())
+    }
+
+    /// Resets the tenant admin password in Neon Cloud and enforces must_change_password
+    pub async fn reset_tenant_password(
+        &self,
+        company_id: &str,
+        temp_password_hash: &str,
+    ) -> Result<String, AppError> {
+        let pool = self
+            .pool()
+            .ok_or_else(|| AppError::internal("Cloud database not connected".to_string()))?;
+
+        let row = sqlx::query(
+            r#"
+            SELECT id, email
+            FROM users
+            WHERE company_id = $1 AND role IN ('owner', 'admin') AND is_active = TRUE
+            ORDER BY created_at ASC
+            LIMIT 1
+            "#,
+        )
+        .bind(company_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| AppError::database(format!("Neon DB error: {e}")))?
+        .ok_or_else(|| AppError::internal("No active admin user found for this company".to_string()))?;
+
+        let user_id: String = row.get("id");
+        let user_email: String = row.get("email");
+
+        sqlx::query(
+            r#"
+            UPDATE users
+            SET password_hash = $1, must_change_password = TRUE, updated_at = NOW()
+            WHERE id = $2
+            "#,
+        )
+        .bind(temp_password_hash)
+        .bind(&user_id)
+        .execute(pool)
+        .await
+        .map_err(|e| AppError::database(format!("Could not update password in Neon: {e}")))?;
+
+        info!("Successfully reset password in Neon Cloud for admin {user_email}");
+        Ok(user_email)
+    }
+
     /// Checks Neon PostgreSQL for a user when logging in on a machine where local SQLite is empty
     pub async fn find_cloud_user_by_email(
         &self,
@@ -1700,7 +1852,7 @@ pub async fn run_neon_migrations(pool: &PgPool) -> Result<(), sqlx::Error> {
             device_hwid VARCHAR(64) NOT NULL,
             device_name VARCHAR(128) NOT NULL,
             os_info VARCHAR(128) NOT NULL,
-            app_version VARCHAR(32) NOT NULL DEFAULT '1.3.1',
+            app_version VARCHAR(32) NOT NULL DEFAULT '1.3.2',
             first_activated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             last_heartbeat_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             ip_address VARCHAR(64),

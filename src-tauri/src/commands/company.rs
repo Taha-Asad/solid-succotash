@@ -568,6 +568,7 @@ pub async fn set_company_module(
     let module_key = match raw_key.as_str() {
         "app" => "dashboard".to_string(),
         "data_import" => "import".to_string(),
+        "purchases" => "purchase_orders".to_string(),
         _ => raw_key,
     };
 
@@ -584,15 +585,49 @@ pub async fn set_company_module(
         "settings",
         "import",
         "users",
+        "employees",
+        "branches",
+        "leads",
+        "discussions",
+        "ai_insights",
     ];
     if !VALID_MODULES.contains(&module_key.as_str()) {
         return Err(AppError::internal(format!("Unknown module: {module_key}")));
     }
 
-    if !is_enabled && matches!(module_key.as_str(), "inventory" | "invoices" | "settings") {
+    if !is_enabled && matches!(module_key.as_str(), "dashboard" | "inventory" | "invoices" | "settings" | "users") {
         return Err(AppError::validation(
-            "Inventory, Invoices, and Settings are core modules and cannot be deactivated.",
+            "Dashboard, Inventory, Invoices, Settings, and Users are core modules and cannot be deactivated.",
         ));
+    }
+
+    if is_enabled && !actor.is_super_admin && actor.role != "super_admin" {
+        let is_core = matches!(module_key.as_str(), "dashboard" | "inventory" | "invoices" | "settings" | "users");
+        if !is_core {
+            if let Ok(Some(sub)) = crate::commands::saas::helpers::fetch_subscription_for_company(pool.inner(), &company_id).await {
+                if let Ok(pkg) = crate::commands::saas::helpers::fetch_package(pool.inner(), &sub.package_id).await {
+                    let limits: serde_json::Value = serde_json::from_str(&pkg.module_limits).unwrap_or_default();
+                    let feats: serde_json::Value = serde_json::from_str(&pkg.features).unwrap_or_default();
+
+                    let allowed_in_limits = limits.get(&module_key)
+                        .map(|v| (v.as_i64().unwrap_or(1) > 0) && v.as_bool().unwrap_or(true))
+                        .unwrap_or(true);
+                    
+                    let allowed_in_feats = match module_key.as_str() {
+                        "fbr" => feats.get("fbr").and_then(|v| v.as_bool()).unwrap_or(false),
+                        "import" => feats.get("data_import").and_then(|v| v.as_bool()).unwrap_or(true),
+                        _ => feats.get(&module_key).and_then(|v| v.as_bool()).unwrap_or(true),
+                    };
+
+                    if !allowed_in_limits || !allowed_in_feats {
+                        return Err(AppError::validation(format!(
+                            "Module '{}' is not included in your active subscription package ({}). Please upgrade your subscription to enable this module.",
+                            module_key, pkg.name
+                        )));
+                    }
+                }
+            }
+        }
     }
 
 
@@ -661,24 +696,7 @@ pub async fn set_company_module(
 
     let cloud_db = crate::db::neon::NeonCloudDb::global();
     if cloud_db.is_connected() {
-        if let Some(pg_pool) = cloud_db.pool() {
-            let mod_id = Uuid::new_v4().to_string();
-            let _ = sqlx::query(
-                r#"
-                INSERT INTO company_modules (id, company_id, module_key, is_enabled, settings)
-                VALUES ($1, $2, $3, $4, '{}'::jsonb)
-                ON CONFLICT (company_id, module_key) DO UPDATE SET
-                    is_enabled = EXCLUDED.is_enabled,
-                    updated_at = NOW();
-                "#,
-            )
-            .bind(&mod_id)
-            .bind(&company_id)
-            .bind(&module_key)
-            .bind(is_enabled)
-            .execute(pg_pool)
-            .await;
-        }
+        let _ = cloud_db.set_company_module(&company_id, &module_key, is_enabled).await;
     }
 
     Ok(row.to_public())

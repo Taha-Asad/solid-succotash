@@ -435,14 +435,20 @@ pub async fn get_my_modules(
         .as_ref()
         .ok_or_else(|| AppError::forbidden("Super admins do not have a company"))?;
 
+    // 1. Fetch active subscription & package for this company
+    let maybe_pkg = match crate::commands::saas::helpers::fetch_subscription_for_company(pool.inner(), company_id).await {
+        Ok(Some(sub)) => crate::commands::saas::helpers::fetch_package(pool.inner(), &sub.package_id).await.ok(),
+        _ => None,
+    };
+
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM company_modules WHERE company_id = ?")
         .bind(company_id)
         .fetch_one(pool.inner())
         .await
         .unwrap_or(0);
 
-    if count == 0 {
-        return Ok(vec![
+    let mut modules: Vec<String> = if count == 0 {
+        vec![
             "dashboard".to_string(),
             "inventory".to_string(),
             "invoices".to_string(),
@@ -455,19 +461,50 @@ pub async fn get_my_modules(
             "settings".to_string(),
             "import".to_string(),
             "users".to_string(),
-        ]);
+        ]
+    } else {
+        sqlx::query_scalar::<_, String>(
+            "SELECT module_key FROM company_modules WHERE company_id = ? AND is_enabled = 1",
+        )
+        .bind(company_id)
+        .fetch_all(pool.inner())
+        .await
+        .map_err(AppError::from)?
+    };
+
+    // 2. Intersect with active subscription package limits & features
+    if let Some(pkg) = maybe_pkg {
+        let limits: serde_json::Value = serde_json::from_str(&pkg.module_limits).unwrap_or_default();
+        let feats: serde_json::Value = serde_json::from_str(&pkg.features).unwrap_or_default();
+
+        modules.retain(|m| {
+            // Core modules are always allowed
+            if matches!(m.as_str(), "dashboard" | "inventory" | "invoices" | "settings" | "users") {
+                return true;
+            }
+
+            let limit_allowed = match limits.get(m.as_str()) {
+                Some(serde_json::Value::Bool(b)) => *b,
+                Some(serde_json::Value::Number(n)) => n.as_i64().unwrap_or(0) > 0,
+                _ => true,
+            };
+            if !limit_allowed {
+                return false;
+            }
+
+            match m.as_str() {
+                "fbr" => feats.get("fbr").and_then(|v| v.as_bool()).unwrap_or(false),
+                "import" => feats.get("data_import").or_else(|| feats.get("import")).and_then(|v| v.as_bool()).unwrap_or(true),
+                "pos" => feats.get("pos").and_then(|v| v.as_bool()).unwrap_or(true),
+                "ledger" => feats.get("ledger").or_else(|| feats.get("accounts")).and_then(|v| v.as_bool()).unwrap_or(true),
+                "purchase_orders" => limits.get("purchases").or_else(|| limits.get("purchase_orders")).and_then(|v| v.as_bool().or_else(|| v.as_i64().map(|n| n > 0))).unwrap_or(true),
+                _ => feats.get(m.as_str()).and_then(|v| v.as_bool()).unwrap_or(true),
+            }
+        });
     }
 
-    let mut modules: Vec<String> = sqlx::query_scalar::<_, String>(
-        "SELECT module_key FROM company_modules WHERE company_id = ? AND is_enabled = 1",
-    )
-    .bind(company_id)
-    .fetch_all(pool.inner())
-    .await
-    .map_err(AppError::from)?;
-
-    // Core un-deactivatable modules: inventory, invoices, settings
-    for core in ["inventory", "invoices", "settings"] {
+    // 3. Ensure core modules are permanently guaranteed
+    for core in ["dashboard", "inventory", "invoices", "settings", "users"] {
         if !modules.iter().any(|m| m == core) {
             modules.push(core.to_string());
         }

@@ -576,4 +576,74 @@ pub async fn update_tenant_company(
     .map_err(|error| AppError::database(format!("Database error: {error}")))
 }
 
+#[tauri::command]
+pub async fn reset_tenant_password(
+    pool: State<'_, SqlitePool>,
+    session: State<'_, SessionState>,
+    company_id: String,
+) -> Result<serde_json::Value, AppError> {
+    let actor = require_super_admin(pool.inner(), session.inner()).await?;
+
+    // Generate secure, readable temporary password
+    let temp_password = format!("Corbel-Temp-{}", &Uuid::new_v4().to_string()[..8].to_uppercase());
+    let password_hash = hash_password(&temp_password).await?;
+
+    let cloud_db = crate::db::neon::NeonCloudDb::global();
+    let mut admin_email = String::new();
+
+    if cloud_db.is_connected() {
+        if let Ok(email) = cloud_db.reset_tenant_password(&company_id, &password_hash).await {
+            admin_email = email;
+        }
+    }
+
+    // Also update local SQLite if tenant user is cached locally
+    let local_row: Option<(String, String)> = sqlx::query_as(
+        r#"
+        SELECT id, email
+        FROM users
+        WHERE company_id = ? AND role IN ('owner', 'admin') AND is_active = 1
+        ORDER BY created_at ASC
+        LIMIT 1
+        "#,
+    )
+    .bind(&company_id)
+    .fetch_optional(pool.inner())
+    .await
+    .unwrap_or(None);
+
+    if let Some((user_id, email)) = local_row {
+        if admin_email.is_empty() {
+            admin_email = email;
+        }
+        let _ = sqlx::query(
+            "UPDATE users SET password_hash = ?, must_change_password = 1 WHERE id = ?",
+        )
+        .bind(&password_hash)
+        .bind(&user_id)
+        .execute(pool.inner())
+        .await;
+    }
+
+    if admin_email.is_empty() {
+        return Err(AppError::internal("Could not locate tenant admin account to reset".to_string()));
+    }
+
+    audit_for(
+        pool.inner(),
+        &actor,
+        &company_id,
+        "reset_password",
+        "user",
+        None,
+        &format!("Super Admin issued temporary OTP for tenant {admin_email}"),
+    ).await;
+
+    Ok(serde_json::json!({
+        "email": admin_email,
+        "temporaryPassword": temp_password,
+    }))
+}
+
+
 

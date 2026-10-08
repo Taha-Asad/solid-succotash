@@ -215,8 +215,8 @@ export default function UserManagementView({
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  background: `${INK.chart.violet}18`,
-                  color: INK.chart.violet,
+                  background: "var(--app-accent-soft)",
+                  color: "var(--app-accent)",
                 }}
               >
                 <Users size={20} />
@@ -235,10 +235,11 @@ export default function UserManagementView({
               onClick={() => setCreateModalOpen(true)}
               styles={{
                 root: {
-                  background: "linear-gradient(135deg, #C9952A 0%, #E6C965 100%)",
-                  color: "#131C39",
+                  background: "var(--app-accent-gradient)",
+                  color: "var(--app-on-accent, #0A0A0C)",
                   fontWeight: 700,
-                  "&:hover": { filter: "brightness(1.05)" },
+                  boxShadow: "0 4px 14px -2px var(--app-accent-shadow)",
+                  "&:hover": { filter: "brightness(1.08)" },
                 },
               }}
             >
@@ -490,7 +491,15 @@ function CreateUserModal({
             <Button variant="subtle" onClick={onClose}>
               Cancel
             </Button>
-            <Button type="submit" loading={loading}>
+            <Button
+              type="submit"
+              loading={loading}
+              style={{
+                background: "var(--app-accent)",
+                color: "var(--app-on-accent, #ffffff)",
+                fontWeight: 700,
+              }}
+            >
               Create User
             </Button>
           </Group>
@@ -590,8 +599,8 @@ function RolesPermissionsCard({
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                background: `${INK.chart.violet}18`,
-                color: INK.chart.violet,
+                background: "var(--app-accent-soft)",
+                color: "var(--app-accent)",
               }}
             >
               <Shield size={20} />
@@ -610,10 +619,11 @@ function RolesPermissionsCard({
             onClick={onCreateRole}
             styles={{
               root: {
-                background: "linear-gradient(135deg, #C9952A 0%, #E6C965 100%)",
-                color: "#131C39",
+                background: "var(--app-accent-gradient)",
+                color: "var(--app-on-accent, #0A0A0C)",
                 fontWeight: 700,
-                "&:hover": { filter: "brightness(1.05)" },
+                boxShadow: "0 4px 14px -2px var(--app-accent-shadow)",
+                "&:hover": { filter: "brightness(1.08)" },
               },
             }}
           >
@@ -788,7 +798,16 @@ function RolesPermissionsCard({
                         Delete Role
                       </Button>
                     )}
-                    <Button onClick={handleSave} loading={saving} disabled={isOwnerRole}>
+                    <Button
+                      onClick={handleSave}
+                      loading={saving}
+                      disabled={isOwnerRole}
+                      style={{
+                        background: isOwnerRole ? undefined : "var(--app-accent)",
+                        color: isOwnerRole ? undefined : "var(--app-on-accent, #ffffff)",
+                        fontWeight: 700,
+                      }}
+                    >
                       Save Permissions
                     </Button>
                   </Group>
@@ -874,7 +893,15 @@ function CreateRoleModal({
             <Button variant="subtle" onClick={onClose}>
               Cancel
             </Button>
-            <Button type="submit" loading={loading}>
+            <Button
+              type="submit"
+              loading={loading}
+              style={{
+                background: "var(--app-accent)",
+                color: "var(--app-on-accent, #ffffff)",
+                fontWeight: 700,
+              }}
+            >
               Create Role
             </Button>
           </Group>

@@ -281,7 +281,7 @@ export default function DevProfileDrawer({
                 color="orange"
                 styles={{ root: { fontWeight: 700 } }}
               >
-                v1.3.1
+                v1.3.2
               </Badge>
             </Tooltip>
           </Group>
@@ -580,7 +580,7 @@ export default function DevProfileDrawer({
                     </Text>
                   </div>
                   <Badge variant="outline" color="orange">
-                    v1.3.1-sovereign
+                    v1.3.2-sovereign
                   </Badge>
                 </Group>
 

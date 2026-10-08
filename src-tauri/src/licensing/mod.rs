@@ -10,7 +10,7 @@ use crate::error::AppError;
 use tauri::{AppHandle, Emitter};
 use types::{DeviceIdentity, LicenseStatusResponse};
 
-pub const APP_VERSION: &str = "1.3.1";
+pub const APP_VERSION: &str = "1.3.2";
 pub const DEFAULT_GRACE_DAYS: i64 = 7;
 
 /// Starts a background ticker that periodically pings licensing status and emits corbel://license-revoked if revoked.
@@ -64,6 +64,7 @@ pub async fn check_license_status(sqlite_pool: &SqlitePool) -> Result<LicenseSta
             days_remaining: Some(9999),
             grace_days_remaining: Some(7),
             is_offline_grace: false,
+            is_migration_grace: false,
             device_hwid: hwid,
         });
     }
@@ -85,6 +86,56 @@ pub async fn check_license_status(sqlite_pool: &SqlitePool) -> Result<LicenseSta
     let row = match lease_row {
         Some(r) => r,
         None => {
+            // Check if this workstation has an existing company database!
+            let company_count = sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM companies WHERE deleted_at IS NULL",
+            )
+            .fetch_one(sqlite_pool)
+            .await
+            .unwrap_or(0);
+
+            if company_count > 0 {
+                // Existing merchant installation undergoing migration!
+                // Grant an automated 14-day transition grace period
+                let now = Utc::now();
+                let grace_expires = now + chrono::Duration::days(14);
+                let now_str = now.to_rfc3339();
+                let grace_str = grace_expires.to_rfc3339();
+
+                let _ = sqlx::query(
+                    r#"
+                    INSERT OR REPLACE INTO _license_lease (
+                        id, license_key, client_name, device_hwid, lease_token,
+                        last_verified_at, grace_expires_at, license_expires_at,
+                        status, monotonic_counter, offline_grace_days
+                    ) VALUES (
+                        1, 'CRBL-MIGRATION-GRACE', 'Existing Merchant (Migration Grace)',
+                        ?, 'MIGRATION_GRACE_TOKEN', ?, ?, ?, 'migration_grace', 1, 14
+                    )
+                    "#,
+                )
+                .bind(&hwid)
+                .bind(&now_str)
+                .bind(&grace_str)
+                .bind(&grace_str)
+                .execute(sqlite_pool)
+                .await;
+
+                return Ok(LicenseStatusResponse {
+                    is_licensed: true,
+                    is_blocked: false,
+                    block_reason: None,
+                    license_key: Some("CRBL-MIGRATION-GRACE".to_string()),
+                    client_name: Some("Existing Organization (Migration Grace)".to_string()),
+                    license_type: Some("migration_grace".to_string()),
+                    days_remaining: Some(14),
+                    grace_days_remaining: Some(14),
+                    is_offline_grace: false,
+                    is_migration_grace: true,
+                    device_hwid: hwid,
+                });
+            }
+
             return Ok(LicenseStatusResponse {
                 is_licensed: false,
                 is_blocked: false,
@@ -95,6 +146,7 @@ pub async fn check_license_status(sqlite_pool: &SqlitePool) -> Result<LicenseSta
                 days_remaining: None,
                 grace_days_remaining: None,
                 is_offline_grace: false,
+                is_migration_grace: false,
                 device_hwid: hwid,
             });
         }
@@ -122,6 +174,7 @@ pub async fn check_license_status(sqlite_pool: &SqlitePool) -> Result<LicenseSta
             days_remaining: None,
             grace_days_remaining: None,
             is_offline_grace: false,
+            is_migration_grace: false,
             device_hwid: hwid,
         });
     }
@@ -138,11 +191,50 @@ pub async fn check_license_status(sqlite_pool: &SqlitePool) -> Result<LicenseSta
             days_remaining: None,
             grace_days_remaining: None,
             is_offline_grace: false,
+            is_migration_grace: false,
             device_hwid: hwid,
         });
     }
 
     let now = Utc::now();
+
+    // 4b. Migration Grace Check
+    if status == "migration_grace" {
+        let grace_expires = DateTime::parse_from_rfc3339(&grace_expires_at_str)
+            .map(|dt| dt.with_timezone(&Utc))
+            .unwrap_or(now);
+
+        if now <= grace_expires {
+            let days_left = (grace_expires - now).num_days().max(1);
+            return Ok(LicenseStatusResponse {
+                is_licensed: true,
+                is_blocked: false,
+                block_reason: None,
+                license_key: Some(license_key),
+                client_name: Some(client_name),
+                license_type: Some("migration_grace".to_string()),
+                days_remaining: Some(days_left),
+                grace_days_remaining: Some(days_left),
+                is_offline_grace: false,
+                is_migration_grace: true,
+                device_hwid: hwid,
+            });
+        } else {
+            return Ok(LicenseStatusResponse {
+                is_licensed: false,
+                is_blocked: false,
+                block_reason: Some("14-Day migration transition grace expired. Workstation license key required.".to_string()),
+                license_key: None,
+                client_name: None,
+                license_type: None,
+                days_remaining: Some(0),
+                grace_days_remaining: Some(0),
+                is_offline_grace: false,
+                is_migration_grace: false,
+                device_hwid: hwid,
+            });
+        }
+    }
 
     // 5. Monotonic Clock-Skew / Time Tamper Detection
     if let Ok(last_verified) = DateTime::parse_from_rfc3339(&last_verified_at_str) {
@@ -158,6 +250,7 @@ pub async fn check_license_status(sqlite_pool: &SqlitePool) -> Result<LicenseSta
                 days_remaining: None,
                 grace_days_remaining: None,
                 is_offline_grace: false,
+                is_migration_grace: false,
                 device_hwid: hwid,
             });
         }
@@ -183,6 +276,7 @@ pub async fn check_license_status(sqlite_pool: &SqlitePool) -> Result<LicenseSta
                         days_remaining: None,
                         grace_days_remaining: None,
                         is_offline_grace: false,
+                        is_migration_grace: false,
                         device_hwid: hwid,
                     });
                 }
@@ -220,6 +314,7 @@ pub async fn check_license_status(sqlite_pool: &SqlitePool) -> Result<LicenseSta
                     days_remaining,
                     grace_days_remaining: Some(DEFAULT_GRACE_DAYS),
                     is_offline_grace: false,
+                    is_migration_grace: false,
                     device_hwid: hwid,
                 });
             }
@@ -245,6 +340,7 @@ pub async fn check_license_status(sqlite_pool: &SqlitePool) -> Result<LicenseSta
             days_remaining: None,
             grace_days_remaining: Some(0),
             is_offline_grace: true,
+            is_migration_grace: false,
             device_hwid: hwid,
         });
     }
@@ -267,6 +363,7 @@ pub async fn check_license_status(sqlite_pool: &SqlitePool) -> Result<LicenseSta
         days_remaining: license_days_remaining,
         grace_days_remaining: Some(grace_days_remaining),
         is_offline_grace: true,
+        is_migration_grace: false,
         device_hwid: hwid,
     })
 }
@@ -339,6 +436,7 @@ pub async fn activate_license(
         days_remaining: act_res.days_remaining,
         grace_days_remaining: Some(DEFAULT_GRACE_DAYS),
         is_offline_grace: false,
+        is_migration_grace: false,
         device_hwid: hwid,
     })
 }

@@ -16,12 +16,13 @@ import {
   Search,
   Settings,
   ShieldCheck,
+  Sliders,
   Sun,
 } from "lucide-react";
 import { useI18n } from "../../i18n/I18nProvider";
 import { LANGUAGES, LANGUAGE_ORDER, type Lang } from "../../i18n/translations";
 import type { PublicUser, PublicCompany, TenantCompanySummary } from "../../types/backend";
-import { SaThemeProvider, useSaScheme, useSaTheme } from "./saTheme";
+import { SaThemeProvider, useSaCustomizer, useSaScheme, useSaTheme } from "./saTheme";
 import PlatformOverviewPage from "./PlatformOverviewPage";
 import PlatformAnalyticsPage from "./PlatformAnalyticsPage";
 import TenantsPage from "./TenantsPage";
@@ -32,6 +33,7 @@ import RegisterTenantDrawer from "./RegisterTenantDrawer";
 import TenantDetailDrawer from "./TenantDetailDrawer";
 import EditTenantModal from "./EditTenantModal";
 import DevProfileDrawer from "./DevProfileDrawer";
+import { CockpitCustomizerModal } from "./CockpitCustomizerModal";
 import "./admin.css";
 
 export type SaView = "overview" | "tenants" | "licensing" | "packages" | "analytics" | "settings";
@@ -149,6 +151,7 @@ function PlatformShell({
 
   const [view, setView] = useState<SaView>("overview");
   const [registerOpen, setRegisterOpen] = useState(false);
+  const [customizerOpen, setCustomizerOpen] = useState(false);
   const [selectedTenant, setSelectedTenant] = useState<TenantCompanySummary | null>(null);
   const [editCompany, setEditCompany] = useState<PublicCompany | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -176,6 +179,7 @@ function PlatformShell({
   const { t, dir } = useI18n();
   const SA = useSaTheme();
   const { scheme, setScheme } = useSaScheme();
+  const { config } = useSaCustomizer();
   const { setColorScheme } = useMantineColorScheme();
 
   useEffect(() => {
@@ -194,7 +198,12 @@ function PlatformShell({
     .find((item) => item.id === view);
 
   return (
-    <div className="sa-console" style={variables} dir={dir} data-scheme={scheme}>
+    <div
+      className={`sa-console ${config.density === "compact" ? "is-compact" : ""}`}
+      style={variables}
+      dir={dir}
+      data-scheme={scheme}
+    >
       <a className="sa-skip" href="#platform-content">
         Skip to content
       </a>
@@ -206,8 +215,8 @@ function PlatformShell({
           <div className="sa-brand">
             <img src="/corbel_icon.svg" alt="Corbel ERP" />
             <div>
-              <strong>Corbel</strong>
-              <span>by The Foolish Crow</span>
+              <strong>{config.brandTitle || "Corbel"}</strong>
+              <span>{config.brandSubtitle || "by The Foolish Crow"}</span>
             </div>
           </div>
           <Tooltip label={collapsed ? "Expand sidebar rail" : "Collapse sidebar rail"} position="right" withinPortal>
@@ -266,12 +275,12 @@ function PlatformShell({
         <div className="sa-sidebar-bottom">
           {/* Sovereign Engine Core Chip */}
           <Tooltip
-            label="Corbel Sovereign Engine v1.3.1 · Host: Linux"
+            label="Corbel Sovereign Engine v1.3.2 · Host: Linux"
             position="right"
             disabled={!collapsed}
             withinPortal
           >
-            <div className="sa-engine-chip" title="Corbel Sovereign Engine v1.3.1">
+            <div className="sa-engine-chip" title="Corbel Sovereign Engine v1.3.2">
               <div className="sa-engine-chip-icon">
                 <ShieldCheck size={16} />
               </div>
@@ -280,7 +289,7 @@ function PlatformShell({
                   Corbel Engine
                 </Text>
                 <Text size="xs" style={{ color: SA.muted, fontSize: 10 }}>
-                  v1.3.1 · Sovereign Node
+                  v1.3.2 · Sovereign Node
                 </Text>
               </div>
             </div>
@@ -372,6 +381,19 @@ function PlatformShell({
                 onClick={() => setScheme(scheme === "dark" ? "light" : "dark")}
               >
                 {scheme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
+              </ActionIcon>
+            </Tooltip>
+
+            <Tooltip label="Customize Cockpit Suite (Accents, Canvas, Density, Widgets)">
+              <ActionIcon
+                variant="subtle"
+                size="lg"
+                color={SA.textSoft}
+                radius="xl"
+                aria-label="Customize Cockpit Suite"
+                onClick={() => setCustomizerOpen(true)}
+              >
+                <Sliders size={18} />
               </ActionIcon>
             </Tooltip>
 
@@ -478,6 +500,10 @@ function PlatformShell({
         onClose={() => setDevDrawerOpen(false)}
         user={currentUser}
         onUserUpdated={setCurrentUser}
+      />
+      <CockpitCustomizerModal
+        opened={customizerOpen}
+        onClose={() => setCustomizerOpen(false)}
       />
     </div>
   );

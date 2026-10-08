@@ -56,9 +56,9 @@ import {
   saveFileDialog,
   type CompanyTheme,
 } from "../api/backend";
-import { checkForUpdates, installUpdate } from "../api/updater";
-import type { UpdateResult } from "../api/updater";
-import type { PublicUser, UserRole } from "../types/backend";
+import { checkForUpdates, installUpdate, type UpdateResult } from "../api/updater";
+import type { PublicUser, UserRole, LicenseStatusResponse } from "../types/backend";
+import { MigrationGraceBanner } from "../features/licensing/MigrationGraceBanner";
 
 import DashboardHome from "../features/dashboard/DashboardPage";
 import InventoryPage from "../features/inventory/InventoryPage";
@@ -77,6 +77,7 @@ import LanguageMenu from "./LanguageMenu";
 import { CorbelMark } from "./CorbelLogo";
 import HelpPage from "../features/help/HelpPage";
 import ProfilePage from "../features/profile/ProfilePage";
+import ModuleLockedView from "./ModuleLockedView";
 import { INK } from "../theme";
 import { useAppTheme } from "../theme/AppThemeProvider";
 import { useI18n } from "../i18n/I18nProvider";
@@ -101,6 +102,21 @@ export type DashboardView =
   | "settings"
   | "help"
   | "profile";
+
+export const VIEW_TO_MODULE: Record<DashboardView, string | null> = {
+  home: "dashboard",
+  inventory: "inventory",
+  invoices: "invoices",
+  customers: "customers",
+  purchasing: "purchase_orders",
+  import: "import",
+  reports: "reports",
+  accounts: "ledger",
+  users: "users",
+  settings: "settings",
+  profile: null,
+  help: null,
+};
 
 const NAV_ITEMS: {
   key: DashboardView;
@@ -264,9 +280,13 @@ const pageVariants: Variants = {
 export default function AppShell({
   user,
   onLogout,
+  licenseStatus,
+  onLicenseStatusUpdate,
 }: {
   user: PublicUser;
   onLogout: () => Promise<void>;
+  licenseStatus?: LicenseStatusResponse | null;
+  onLicenseStatusUpdate?: (updated: LicenseStatusResponse) => void;
 }) {
   const [view, setView] = useState<DashboardView>("home");
   const [prevView, setPrevView] = useState<DashboardView>("home");
@@ -322,6 +342,17 @@ export default function AppShell({
   }, []);
 
   useEffect(() => {
+    const handler = (e: Event) => {
+      const custom = e as CustomEvent;
+      if (custom?.detail) {
+        setBranding((prev) => ({ ...prev, theme: custom.detail }));
+      }
+    };
+    window.addEventListener("corbel_theme_updated", handler);
+    return () => window.removeEventListener("corbel_theme_updated", handler);
+  }, []);
+
+  useEffect(() => {
     let cancelled = false;
     checkForUpdates().then((result) => {
       if (!cancelled) setUpdateResult(result);
@@ -364,25 +395,6 @@ export default function AppShell({
       (!item.module || perms.isModuleEnabled(item.module)),
   );
 
-  // Automatically fallback to core module "invoices" if the active view's module was disabled
-  useEffect(() => {
-    const viewToModule: Record<string, string> = {
-      home: "dashboard",
-      inventory: "inventory",
-      invoices: "invoices",
-      customers: "customers",
-      purchasing: "purchase_orders",
-      import: "import",
-      reports: "reports",
-      accounts: "ledger",
-      users: "users",
-      settings: "settings",
-    };
-    const mod = viewToModule[view];
-    if (mod && !perms.isModuleEnabled(mod)) {
-      setView("invoices");
-    }
-  }, [view, perms]);
 
 
   async function handleBackup() {
@@ -421,7 +433,12 @@ export default function AppShell({
   const secondary = theme?.secondaryColor ?? DEFAULT_SECONDARY;
   // The accent is the highlight color (default antique gold) and drives the
   // sidebar accents; primary/secondary form the brand gradient used on buttons.
-  const accent = theme?.accentColor ?? DEFAULT_PRIMARY;
+  const accent =
+    theme?.accentColor ??
+    (typeof localStorage !== "undefined"
+      ? localStorage.getItem("corbel_company_accent")
+      : null) ??
+    DEFAULT_PRIMARY;
   const accentGradient = `linear-gradient(135deg, ${accent} 0%, ${accent} 100%)`;
   const brandGradient = `linear-gradient(135deg, ${primary} 0%, ${secondary} 100%)`;
   const brandGlow = `0 6px 18px -6px ${hexToRgba(accent, 0.55)}`;
@@ -718,6 +735,12 @@ export default function AppShell({
 
       {/* ==================== CONTENT ==================== */}
       <Box style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, height: "100%", overflow: "hidden" }}>
+        {licenseStatus && (
+          <MigrationGraceBanner
+            licenseStatus={licenseStatus}
+            onStatusUpdate={onLicenseStatusUpdate ?? (() => {})}
+          />
+        )}
         {/* Top bar */}
         <Box
           style={{
@@ -788,8 +811,8 @@ export default function AppShell({
                 onClick={toggleColorScheme}
                 aria-label="Toggle color scheme"
                 style={{
-                  color: INK.gold,
-                  background: isDark ? "rgba(201,149,42,0.14)" : "rgba(201,149,42,0.10)",
+                  color: accent,
+                  background: hexToRgba(accent, isDark ? 0.16 : 0.10),
                   border: `1px solid ${hexToRgba(accent, 0.25)}`,
                 }}
               >
@@ -831,7 +854,15 @@ export default function AppShell({
               exit="exit"
               style={{ padding: 28, minHeight: "100%" }}
             >
-              {view === "home" && (
+              {(() => {
+                const targetModule = VIEW_TO_MODULE[view];
+                const isLocked = targetModule ? !perms.isModuleEnabled(targetModule) : false;
+                if (isLocked) {
+                  return <ModuleLockedView moduleKey={view} onBack={() => goTo("home")} />;
+                }
+                return (
+                  <>
+                    {view === "home" && (
                 <Box
                   style={{
                     display: "flex",
@@ -881,6 +912,9 @@ export default function AppShell({
               {view === "help" && (
                 <HelpPage companyName={branding.companyName} />
               )}
+                  </>
+                );
+              })()}
             </motion.div>
           </AnimatePresence>
         </Box>

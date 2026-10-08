@@ -1,5 +1,8 @@
 use super::types::*;
-use super::helpers::{audit_for, can_manage_company, fetch_modules_for_company, resolve_company_id, validate_module_key};
+use super::helpers::{
+    audit_for, can_manage_company, fetch_modules_for_company, fetch_package,
+    fetch_subscription_for_company, resolve_company_id, validate_module_key,
+};
 use crate::commands::auth::{require_current_user, SessionState};
 use crate::error::AppError;
 use sqlx::SqlitePool;
@@ -45,6 +48,24 @@ pub async fn set_company_module(
         return Err(AppError::internal("Core system modules (Inventory, Invoices, Settings) cannot be disabled".to_string()));
     }
 
+    // Gate non-core module activations by the company's active subscription plan
+    if is_enabled
+        && !actor.is_super_admin
+        && !["inventory", "invoices", "settings", "dashboard", "users"].contains(&module_key.as_str())
+    {
+        if let Ok(Some(sub)) = fetch_subscription_for_company(pool.inner(), &company_id).await {
+            if let Ok(pkg) = fetch_package(pool.inner(), &sub.package_id).await {
+                let allowed = pkg.features.iter().any(|f| f.eq_ignore_ascii_case(&module_key));
+                if !allowed {
+                    return Err(AppError::forbidden(format!(
+                        "Module '{}' is not included in your organization's active '{}' plan. Contact Super Admin to upgrade.",
+                        module_key, pkg.name
+                    )));
+                }
+            }
+        }
+    }
+
     let existing_id: Option<String> =
         sqlx::query_scalar("SELECT id FROM company_modules WHERE company_id = ? AND module_key = ?")
             .bind(&company_id)
@@ -83,6 +104,11 @@ pub async fn set_company_module(
             id
         }
     };
+
+    let cloud_db = crate::db::neon::NeonCloudDb::global();
+    if cloud_db.is_connected() {
+        let _ = cloud_db.set_company_module(&company_id, &module_key, is_enabled).await;
+    }
 
     audit_for(
         pool.inner(),

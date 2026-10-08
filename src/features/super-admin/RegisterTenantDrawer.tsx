@@ -7,9 +7,11 @@
 
 import { useEffect, useState } from "react";
 import {
+  ActionIcon,
   Alert,
   Badge,
   Button,
+  CopyButton,
   Drawer,
   Group,
   PasswordInput,
@@ -27,7 +29,9 @@ import {
   Check,
   CheckCircle2,
   Coins,
+  Copy,
   Globe,
+  KeyRound,
   Layers,
   Server,
   User,
@@ -324,6 +328,31 @@ export default function RegisterTenantDrawer({
                 </Group>
                 <Group justify="space-between" mb={8}>
                   <Text size="xs" fw={700} style={{ color: SA.text }}>
+                    Company ID:
+                  </Text>
+                  <Text size="xs" style={{ color: SA.muted, fontFamily: "monospace" }}>
+                    {successResult.company.id}
+                  </Text>
+                </Group>
+                <Group justify="space-between" mb={8}>
+                  <Text size="xs" fw={700} style={{ color: SA.text }}>
+                    Temporary Password:
+                  </Text>
+                  <Group gap={6}>
+                    <Text size="xs" fw={700} style={{ color: SA.accent, fontFamily: "monospace" }}>
+                      {form.adminPassword}
+                    </Text>
+                    <CopyButton value={form.adminPassword} timeout={2000}>
+                      {({ copied, copy }) => (
+                        <ActionIcon size="xs" variant="subtle" color="yellow" onClick={copy}>
+                          {copied ? <Check size={12} /> : <Copy size={12} />}
+                        </ActionIcon>
+                      )}
+                    </CopyButton>
+                  </Group>
+                </Group>
+                <Group justify="space-between" mb={8}>
+                  <Text size="xs" fw={700} style={{ color: SA.text }}>
                     Dedicated Domain:
                   </Text>
                   <Text size="xs" style={{ color: SA.accent, fontFamily: "monospace" }}>
@@ -339,6 +368,34 @@ export default function RegisterTenantDrawer({
                   </Badge>
                 </Group>
               </div>
+
+              <CopyButton
+                value={`=== CORBEL ENTERPRISE CREDENTIAL VOUCHER ===
+Organization: ${successResult.company.name}
+Company ID: ${successResult.company.id}
+Admin Email: ${successResult.adminUser.email}
+Temporary One-Time Password: ${form.adminPassword}
+Subscription Tier: ${selectedPkg?.name || "Active Tier"}
+First-Time Login Instruction:
+1. Open Corbel ERP on your workstation.
+2. Sign in with the Admin Email and Temporary Password above.
+3. You will be required to set your permanent private password immediately.
+==============================================`}
+                timeout={2000}
+              >
+                {({ copied, copy }) => (
+                  <Button
+                    fullWidth
+                    variant="light"
+                    color="yellow"
+                    mb="xs"
+                    onClick={copy}
+                    leftSection={copied ? <Check size={14} /> : <Copy size={14} />}
+                  >
+                    {copied ? "Credential Voucher Copied!" : "Copy Client Credential Voucher"}
+                  </Button>
+                )}
+              </CopyButton>
 
               <Button
                 fullWidth
@@ -593,21 +650,39 @@ export default function RegisterTenantDrawer({
                     }}
                   />
 
-                  <PasswordInput
-                    label="Initial Master Password"
-                    placeholder="Min. 8 characters"
-                    value={form.adminPassword}
-                    onChange={(e) => setField("adminPassword", e.target.value)}
-                    required
-                    styles={{
-                      input: {
-                        background: SA.panelStrong,
-                        border: `1px solid ${SA.border}`,
-                        color: SA.text,
-                        borderRadius: 10,
-                      },
-                    }}
-                  />
+                  <div>
+                    <Group justify="space-between" mb={4}>
+                      <Text size="xs" fw={500} style={{ color: SA.text }}>
+                        Initial Master Password
+                      </Text>
+                      <Button
+                        size="compact-xs"
+                        variant="subtle"
+                        color="yellow"
+                        leftSection={<KeyRound size={12} />}
+                        onClick={() => {
+                          const otp = "Corbel-Temp-" + Math.random().toString(16).substring(2, 8).toUpperCase();
+                          setField("adminPassword", otp);
+                        }}
+                      >
+                        Auto-Generate OTP
+                      </Button>
+                    </Group>
+                    <PasswordInput
+                      placeholder="Min. 8 characters"
+                      value={form.adminPassword}
+                      onChange={(e) => setField("adminPassword", e.target.value)}
+                      required
+                      styles={{
+                        input: {
+                          background: SA.panelStrong,
+                          border: `1px solid ${SA.border}`,
+                          color: SA.text,
+                          borderRadius: 10,
+                        },
+                      }}
+                    />
+                  </div>
                 </Stack>
               </div>
 

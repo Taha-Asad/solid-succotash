@@ -32,7 +32,6 @@ import {
   checkLicenseStatus,
   getCurrentUser,
   getErrorMessage,
-  isCompanySetup,
   logoutUser,
   loadSavedSession,
   saveSession,
@@ -81,13 +80,8 @@ function App() {
 
   async function checkCompanyAndSession() {
     try {
-      // Question 1: Has a company been set up?
-      const hasCompany = await isCompanySetup();
-
-      if (!hasCompany) {
-        setScreen("setup");
-        return;
-      }
+      // Enterprise Provisioning: Companies are provisioned by the Super Admin.
+      // Tenants authenticate with email and one-time password provided by Admin.
 
       // Question 2: Is someone already logged in?
       try {
@@ -294,7 +288,12 @@ function App() {
     return (
       <OnboardingProvider screen={screen} user={user}>
         <PermissionsProvider>
-          <AppShell user={user} onLogout={handleLogout} />
+          <AppShell
+            user={user}
+            onLogout={handleLogout}
+            licenseStatus={licenseStatus}
+            onLicenseStatusUpdate={setLicenseStatus}
+          />
         </PermissionsProvider>
       </OnboardingProvider>
     );

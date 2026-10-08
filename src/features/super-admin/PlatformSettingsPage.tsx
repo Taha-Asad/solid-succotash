@@ -46,6 +46,7 @@ import {
   RefreshCw,
   Save,
   ShieldCheck,
+  Sliders,
   Sparkles,
   Sun,
   User,
@@ -71,6 +72,7 @@ import type {
   TenantCompanySummary,
 } from "../../types/backend";
 import { useSaScheme, useSaTheme } from "./saTheme";
+import { CockpitCustomizerModal } from "./CockpitCustomizerModal";
 
 // Preset avatars matching The Foolish Crow / Corbel lore
 const AVATAR_OPTIONS = [
@@ -176,6 +178,7 @@ export default function PlatformSettingsPage({
 
   // Active Tab: "profile" | "erpcrm" | "system" | "updater"
   const [activeTab, setActiveTab] = useState<string | null>("profile");
+  const [customizerOpen, setCustomizerOpen] = useState(false);
 
   // Profile Form State
   const [fullName, setFullName] = useState(user?.fullName || "Taha Asadullah");
@@ -1032,7 +1035,67 @@ export default function PlatformSettingsPage({
                 })}
               </Stack>
             </div>
+
+            {/* Executive Cockpit Customization Suite */}
+            <div
+              style={{
+                borderRadius: 22,
+                padding: "24px 26px",
+                background: SA.panel,
+                border: `1px solid ${SA.border}`,
+                boxShadow: SA.shadow,
+                gridColumn: "1 / -1",
+              }}
+            >
+              <Group justify="space-between" align="center" wrap="wrap" gap="md">
+                <Group gap={14}>
+                  <div
+                    style={{
+                      width: 40,
+                      height: 40,
+                      borderRadius: 12,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      background: `${SA.accent}14`,
+                      color: SA.accent,
+                    }}
+                  >
+                    <Sliders size={20} />
+                  </div>
+                  <div>
+                    <Text fw={700} size="md" style={{ color: SA.text }}>
+                      Executive Cockpit Customization Suite
+                    </Text>
+                    <Text size="xs" style={{ color: SA.muted }}>
+                      Configure palette accents, pitch-dark canvas tones, operational density & widget visibility
+                    </Text>
+                  </div>
+                </Group>
+                <Button
+                  onClick={() => setCustomizerOpen(true)}
+                  leftSection={<Sliders size={15} />}
+                  styles={{
+                    root: {
+                      background: SA.accent,
+                      color: "#FFFFFF",
+                      fontWeight: 700,
+                      borderRadius: 10,
+                      height: 40,
+                      "&:hover": { filter: "brightness(1.1)" },
+                    },
+                  }}
+                >
+                  Open Cockpit Customizer
+                </Button>
+              </Group>
+            </div>
           </SimpleGrid>
+
+          <CockpitCustomizerModal
+            opened={customizerOpen}
+            onClose={() => setCustomizerOpen(false)}
+          />
         </Tabs.Panel>
 
         {/* ============================================================== */}
@@ -1079,7 +1142,7 @@ export default function PlatformSettingsPage({
                 color="orange"
                 styles={{ root: { fontWeight: 700 } }}
               >
-                v1.3.1 · Sovereign
+                v1.3.2 · Sovereign
               </Badge>
             </Group>
 

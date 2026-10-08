@@ -58,7 +58,7 @@ const FEATURES = [
   },
 ];
 
-export default function LoginPage({ onLogin, onSwitchToSetup }: LoginPageProps) {
+export default function LoginPage({ onLogin }: LoginPageProps) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -301,32 +301,21 @@ export default function LoginPage({ onLogin, onSwitchToSetup }: LoginPageProps) 
                     rightSection={!loading && <ArrowRight size={16} />}
                     styles={{
                       root: {
-                        background: "linear-gradient(135deg, #C9952A 0%, #E6C965 100%)",
-                        color: "#131C39",
+                        background: "var(--app-accent-gradient)",
+                        color: "var(--app-on-accent, #0A0A0C)",
                         fontWeight: 700,
                         height: 46,
-                        "&:hover": { filter: "brightness(1.05)" },
+                        boxShadow: "0 4px 14px -2px var(--app-accent-shadow)",
+                        "&:hover": { filter: "brightness(1.08)" },
                       },
                     }}
                   >
                     {t("login.signIn")}
                   </Button>
                 </motion.div>
-                {onSwitchToSetup && (
-                  <Group justify="center" mt="xs">
-                    <Text size="xs" c="dimmed">
-                      Setting up a new organization?
-                    </Text>
-                    <Button
-                      variant="subtle"
-                      size="compact-xs"
-                      color="blue"
-                      onClick={onSwitchToSetup}
-                    >
-                      Register Company →
-                    </Button>
-                  </Group>
-                )}
+                <Text size="xs" c="dimmed" ta="center" mt="xs">
+                  Accounts are provisioned by your system administrator.
+                </Text>
               </Stack>
             </form>
           </Card>

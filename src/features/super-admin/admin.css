@@ -964,3 +964,37 @@
     display: inline-flex;
   }
 }
+
+/* ==================== COMPACT OPERATIONS DENSITY ==================== */
+.sa-console.is-compact {
+  font-size: 13px;
+}
+.sa-console.is-compact .sa-sidebar {
+  width: 230px;
+  padding: 12px 10px;
+}
+.sa-console.is-compact .sa-sidebar.is-collapsed {
+  width: 60px;
+}
+.sa-console.is-compact .sa-topbar {
+  min-height: 50px;
+  padding: 8px 16px;
+}
+.sa-console.is-compact .sa-content {
+  padding: 16px 20px 32px;
+  gap: 16px;
+}
+.sa-console.is-compact .sa-card {
+  padding: 12px 14px;
+}
+.sa-console.is-compact .sa-nav-item {
+  padding: 6px 8px;
+  font-size: 12.5px;
+  gap: 8px;
+}
+.sa-console.is-compact .sa-table th,
+.sa-console.is-compact .sa-table td {
+  padding: 6px 10px;
+  font-size: 12px;
+}
+

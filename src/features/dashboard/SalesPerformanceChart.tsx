@@ -108,9 +108,9 @@ export default function SalesPerformanceChart({
                 style={{
                   fontWeight: 600,
                   fontSize: 11,
-                  background: active ? "#4F61ED" : "transparent",
-                  color: active ? "#ffffff" : "var(--app-text)",
-                  boxShadow: active ? "0 2px 8px -1px rgba(79, 97, 237, 0.4)" : "none",
+                  background: active ? "var(--app-accent)" : "transparent",
+                  color: active ? "var(--app-on-accent, #ffffff)" : "var(--app-text)",
+                  boxShadow: active ? "0 2px 8px -1px var(--app-accent-shadow)" : "none",
                 }}
               >
                 {range}

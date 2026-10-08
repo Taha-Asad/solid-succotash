@@ -100,8 +100,8 @@ export default function ChangePasswordPage({
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                background: "linear-gradient(135deg, #C9952A 0%, #E6C965 100%)",
-                color: "#131C39",
+                background: "var(--app-accent-gradient)",
+                color: "var(--app-on-accent, #0A0A0C)",
                 marginBottom: 8,
               }}
             >
@@ -184,12 +184,12 @@ export default function ChangePasswordPage({
                   disabled={!currentPassword || !newPassword || !confirmPassword}
                   styles={{
                     root: {
-                      background:
-                        "linear-gradient(135deg, #C9952A 0%, #E6C965 100%)",
-                      color: "#131C39",
+                      background: "var(--app-accent-gradient)",
+                      color: "var(--app-on-accent, #0A0A0C)",
                       fontWeight: 700,
                       height: 46,
-                      "&:hover": { filter: "brightness(1.05)" },
+                      boxShadow: "0 4px 14px -2px var(--app-accent-shadow)",
+                      "&:hover": { filter: "brightness(1.08)" },
                     },
                   }}
                 >

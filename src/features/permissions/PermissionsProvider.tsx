@@ -49,7 +49,13 @@ interface PermissionsContextValue {
 
 const PermissionsCtx = createContext<PermissionsContextValue | null>(null);
 
-const CORE_UNINACTIVATABLE_MODULES = ["inventory", "invoices", "settings"];
+const CORE_UNINACTIVATABLE_MODULES = [
+  "dashboard",
+  "inventory",
+  "invoices",
+  "settings",
+  "users",
+];
 
 export function PermissionsProvider({ children }: { children: ReactNode }) {
   const [permissions, setPermissions] = useState<RolePermission[]>([]);
@@ -65,6 +71,11 @@ export function PermissionsProvider({ children }: { children: ReactNode }) {
       // keep existing
     }
   }, []);
+
+  useEffect(() => {
+    window.addEventListener("corbel_modules_updated", fetchModules);
+    return () => window.removeEventListener("corbel_modules_updated", fetchModules);
+  }, [fetchModules]);
 
   useEffect(() => {
     let cancelled = false;

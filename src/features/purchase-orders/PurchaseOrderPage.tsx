@@ -107,10 +107,11 @@ const STATUS_COLORS: Record<string, string> = {
 
 const gradientButton = {
   root: {
-    background: "linear-gradient(135deg, #C9952A 0%, #E6C965 100%)",
-    color: "#131C39",
+    background: "var(--app-accent-gradient)",
+    color: "var(--app-on-accent, #0A0A0C)",
     fontWeight: 700,
-    "&:hover": { filter: "brightness(1.05)" },
+    boxShadow: "0 4px 14px -2px var(--app-accent-shadow)",
+    "&:hover": { filter: "brightness(1.08)" },
   },
 };
 
@@ -200,7 +201,13 @@ function StatCard({
             radius="md"
             size="lg"
             variant="light"
-            style={{ background: `${tint}18`, color: tint }}
+            style={{
+              background:
+                tint.startsWith("var(") || tint.includes("accent")
+                  ? "var(--app-accent-soft)"
+                  : `${tint}18`,
+              color: tint,
+            }}
           >
             {icon}
           </ThemeIcon>
@@ -362,7 +369,7 @@ function POListView({ onOpen }: { onOpen: (id: string) => void }) {
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                background: `${INK.gold}18`,
+                background: INK.goldSoft,
                 color: INK.gold,
               }}
             >
