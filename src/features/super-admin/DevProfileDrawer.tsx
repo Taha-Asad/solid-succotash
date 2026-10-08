@@ -38,8 +38,8 @@ import {
   Lock,
   RefreshCw,
   Save,
+  ShieldCheck,
   Terminal,
-  Trees,
   User,
   Zap,
 } from "lucide-react";
@@ -59,7 +59,7 @@ const DEV_AVATAR_PRESETS = [
   { id: "crow", label: "Sovereign Crow", icon: Feather, url: "" },
   { id: "hacker", label: "Dev Terminal", icon: Terminal, url: "" },
   { id: "keystone", label: "Studio Keystone", icon: Landmark, url: "" },
-  { id: "warden", label: "Forest Warden", icon: Trees, url: "" },
+  { id: "arbiter", label: "Sovereign Arbiter", icon: ShieldCheck, url: "" },
   { id: "neon", label: "Neon Architect", icon: Zap, url: "" },
 ];
 

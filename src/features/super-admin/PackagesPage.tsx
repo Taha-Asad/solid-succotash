@@ -430,13 +430,13 @@ function PackageEditorModal({
             styles={{
               root: {
                 background: SA.accent,
-                color: SA.dockActiveColor,
-                fontWeight: 600,
+                color: SA.accentOnAccent,
+                fontWeight: 750,
                 borderRadius: 8,
                 height: 40,
                 paddingInline: 24,
-                boxShadow: "none",
-                "&:hover": { filter: "brightness(1.06)" },
+                boxShadow: "0 2px 8px -1px rgba(194, 65, 12, 0.35)",
+                "&:hover": { background: SA.accentHover },
               },
             }}
           >
@@ -548,13 +548,13 @@ export default function PackagesPage() {
             styles={{
               root: {
                 background: SA.accent,
-                color: SA.dockActiveColor,
-                fontWeight: 600,
+                color: SA.accentOnAccent,
+                fontWeight: 750,
                 borderRadius: 8,
                 height: 40,
                 paddingInline: 20,
-                boxShadow: "none",
-                "&:hover": { filter: "brightness(1.06)" },
+                boxShadow: "0 2px 8px -1px rgba(194, 65, 12, 0.35)",
+                "&:hover": { background: SA.accentHover },
               },
             }}
           >

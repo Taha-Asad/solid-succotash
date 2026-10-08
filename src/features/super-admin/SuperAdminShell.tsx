@@ -5,7 +5,6 @@ import {
   Building2,
   ChartPie,
   Check,
-  Download,
   Home,
   KeyRound,
   Languages,
@@ -55,7 +54,7 @@ const navSections: NavSection[] = [
     items: [
       { id: "overview", icon: Home, label: "sa.nav.overview" },
       { id: "tenants", icon: Building2, label: "sa.nav.tenants" },
-      { id: "licensing", icon: KeyRound, label: "sa.nav.licensing", badge: "Live Gate" },
+      { id: "licensing", icon: KeyRound, label: "sa.nav.licensing" },
     ],
   },
   {
@@ -341,15 +340,15 @@ function PlatformShell({
             Platform <span>/</span> <strong>{activeItem ? t(activeItem.label) : "Overview"}</strong>
           </div>
 
-          {/* Quick Search Bar Trigger */}
+          {/* Compact Search Trigger */}
           <div className="sa-search-trigger" onClick={() => setView("tenants")}>
             <Search size={14} />
-            <span>Quick search tenants, plans...</span>
+            <span>Search workspaces...</span>
             <span className="sa-kbd">⌘K</span>
           </div>
 
-          {/* Topbar Actions */}
-          <Group gap="xs">
+          {/* Streamlined Topbar Actions */}
+          <Group gap="sm" wrap="nowrap">
             <ActionIcon
               className="sa-mobile-logout"
               variant="subtle"
@@ -360,11 +359,6 @@ function PlatformShell({
             >
               <LogOut size={18} />
             </ActionIcon>
-
-            <div className="sa-telemetry-badge">
-              <span className="sa-status-beacon" />
-              <span>1 Cloud · 5 Desktop Nodes</span>
-            </div>
 
             <PlatformLanguageMenu />
 
@@ -381,33 +375,8 @@ function PlatformShell({
               </ActionIcon>
             </Tooltip>
 
-            {/* Developer App Update Trigger */}
-            <Tooltip label="Check for software updates & release notes">
-              <Button
-                size="xs"
-                variant="subtle"
-                leftSection={<Download size={14} />}
-                onClick={() => setDevDrawerOpen(true)}
-                styles={{
-                  root: {
-                    borderRadius: 999,
-                    border: `1px solid ${SA.border}`,
-                    background: SA.panel,
-                    color: SA.text,
-                    fontWeight: 750,
-                    height: 32,
-                    paddingInline: 12,
-                    fontSize: 12,
-                    "&:hover": { color: SA.accent, borderColor: SA.accent },
-                  },
-                }}
-              >
-                v1.3.1 · Update
-              </Button>
-            </Tooltip>
-
             {/* Developer Avatar Trigger */}
-            <Tooltip label="Open Developer Profile & Cockpit">
+            <Tooltip label="Operator Cockpit & Updates">
               <UnstyledButton
                 onClick={() => setDevDrawerOpen(true)}
                 style={{ display: "flex", alignItems: "center", cursor: "pointer" }}
@@ -431,10 +400,27 @@ function PlatformShell({
               </UnstyledButton>
             </Tooltip>
 
-            <button className="sa-primary" onClick={() => setRegisterOpen(true)}>
-              <Plus size={16} />
-              <span>Register tenant</span>
-            </button>
+            <Button
+              size="xs"
+              radius="xl"
+              leftSection={<Plus size={15} />}
+              onClick={() => setRegisterOpen(true)}
+              styles={{
+                root: {
+                  background: SA.accent,
+                  color: SA.accentOnAccent,
+                  fontWeight: 750,
+                  fontSize: 13,
+                  boxShadow: "0 2px 8px -1px rgba(194, 65, 12, 0.4)",
+                  "&:hover": {
+                    background: SA.accentHover,
+                    transform: "translateY(-1px)",
+                  },
+                },
+              }}
+            >
+              Register tenant
+            </Button>
           </Group>
         </header>
 

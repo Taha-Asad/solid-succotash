@@ -715,13 +715,13 @@ export default function RegisterTenantDrawer({
                   styles={{
                     root: {
                       background: SA.accent,
-                      color: "#FFFFFF",
-                      fontWeight: 700,
+                      color: SA.accentOnAccent,
+                      fontWeight: 750,
                       borderRadius: 12,
                       height: 44,
                       paddingInline: 24,
-                      boxShadow: "0 8px 20px -4px rgba(224, 114, 95, 0.35)",
-                      "&:hover": { filter: "brightness(0.92)" },
+                      boxShadow: "0 4px 14px -2px rgba(194, 65, 12, 0.4)",
+                      "&:hover": { background: SA.accentHover },
                     },
                   }}
                 >

@@ -30,6 +30,7 @@ import {
 import {
   getErrorMessage,
   listTenantCompanies,
+  saasListActiveDevices,
 } from "../../api/backend";
 import type {
   PublicCompany,
@@ -46,6 +47,7 @@ export default function TenantsPage() {
   const { t } = useI18n();
   const SA = useSaTheme();
   const [tenants, setTenants] = useState<TenantCompanySummary[]>([]);
+  const [deviceCount, setDeviceCount] = useState<number>(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
@@ -59,8 +61,11 @@ export default function TenantsPage() {
   const load = useCallback(() => {
     setLoading(true);
     setError("");
-    listTenantCompanies()
-      .then(setTenants)
+    Promise.all([listTenantCompanies(), saasListActiveDevices()])
+      .then(([companyList, devList]) => {
+        setTenants(companyList);
+        setDeviceCount(devList.length);
+      })
       .catch((err) => setError(getErrorMessage(err)))
       .finally(() => setLoading(false));
   }, []);
@@ -115,7 +120,7 @@ export default function TenantsPage() {
             styles={{
               input: {
                 background: SA.panelStrong,
-                border: "none",
+                border: `1px solid ${SA.border}`,
                 color: SA.text,
                 fontWeight: 500,
                 borderRadius: 8,
@@ -137,7 +142,7 @@ export default function TenantsPage() {
             styles={{
               input: {
                 background: SA.panelStrong,
-                border: "none",
+                border: `1px solid ${SA.border}`,
                 color: SA.text,
                 fontWeight: 600,
                 borderRadius: 8,
@@ -156,6 +161,7 @@ export default function TenantsPage() {
             styles={{
               root: {
                 background: SA.panelStrong,
+                border: `1px solid ${SA.border}`,
                 color: SA.text,
                 fontWeight: 700,
                 borderRadius: 8,
@@ -175,13 +181,13 @@ export default function TenantsPage() {
             styles={{
               root: {
                 background: SA.accent,
-                color: SA.dockActiveColor,
-                fontWeight: 600,
+                color: SA.accentOnAccent,
+                fontWeight: 750,
                 borderRadius: 8,
                 height: 40,
                 paddingInline: 20,
-                boxShadow: "none",
-                "&:hover": { filter: "brightness(1.06)" },
+                boxShadow: "0 2px 8px -1px rgba(194, 65, 12, 0.35)",
+                "&:hover": { background: SA.accentHover },
               },
             }}
           >
@@ -272,10 +278,10 @@ export default function TenantsPage() {
                 </div>
                 <Stack gap={1}>
                   <Text fw={600} size="sm" style={{ color: SA.text, fontSize: 14 }}>
-                    5 Distributed Client Deployments
+                    {deviceCount} Distributed Client Node{deviceCount === 1 ? "" : "s"}
                   </Text>
                   <Text size="xs" style={{ color: SA.muted, fontSize: 12 }}>
-                    Distributed desktop instances with local SQLite caches
+                    Tethered desktop hardware instances with local SQLite caches
                   </Text>
                 </Stack>
               </Group>

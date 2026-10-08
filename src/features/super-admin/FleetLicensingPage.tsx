@@ -212,7 +212,16 @@ export default function FleetLicensingPage() {
   });
 
   return (
-    <div style={{ color: SA.text }}>
+    <div
+      style={{
+        width: "100%",
+        maxWidth: 1720,
+        margin: "0 auto",
+        padding: "clamp(16px, 2.2vw, 28px)",
+        color: SA.text,
+        minHeight: "calc(100dvh - 76px)",
+      }}
+    >
       {/* Top Header */}
       <Group justify="space-between" align="center" mb="lg">
         <div>
@@ -239,7 +248,12 @@ export default function FleetLicensingPage() {
               setNewlyIssuedLicense(null);
               setIsDrawerOpen(true);
             }}
-            style={{ backgroundColor: SA.accent, color: "#fff" }}
+            style={{
+              backgroundColor: SA.accent,
+              color: SA.accentOnAccent,
+              fontWeight: 750,
+              boxShadow: "0 2px 8px -1px rgba(194, 65, 12, 0.35)",
+            }}
           >
             Issue Activation Key
           </Button>
@@ -327,24 +341,20 @@ export default function FleetLicensingPage() {
 
       {/* Search and Tabs */}
       <Card p="lg" radius="md" style={{ background: SA.panel, border: `1px solid ${SA.border}` }}>
-        <Group justify="space-between" mb="md">
-          <TextInput
-            placeholder="Search HWID, machine hostname, or client..."
-            leftSection={<Search size={15} />}
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.currentTarget.value)}
-            style={{ width: 340 }}
-            styles={{
-              input: {
-                background: SA.panelStrong,
-                borderColor: SA.border,
-                color: SA.text,
-              },
+        <Tabs value={activeTab} onChange={setActiveTab}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              flexWrap: "wrap",
+              gap: 14,
+              borderBottom: `1px solid ${SA.border}`,
+              paddingBottom: 14,
+              marginBottom: 16,
             }}
-          />
-
-          <Tabs value={activeTab} onChange={setActiveTab}>
-            <Tabs.List>
+          >
+            <Tabs.List style={{ borderBottom: "none" }}>
               <Tabs.Tab value="devices" leftSection={<Cpu size={14} />}>
                 Connected Hardware ({devices.length})
               </Tabs.Tab>
@@ -352,40 +362,56 @@ export default function FleetLicensingPage() {
                 License Contracts ({licenses.length})
               </Tabs.Tab>
             </Tabs.List>
-          </Tabs>
-        </Group>
 
-        {isLoading ? (
-          <Group justify="center" py="xl">
-            <Loader size="sm" color={SA.accent} />
-            <Text size="sm" c="dimmed">
-              Synchronizing fleet state with Neon Control Plane...
-            </Text>
-          </Group>
-        ) : activeTab === "devices" ? (
-          /* TAB 1: FLEET HARDWARE NODES */
-          filteredDevices.length === 0 ? (
-            <Stack align="center" py="xl" gap="xs">
-              <Laptop size={36} color={SA.muted} />
-              <Text size="sm" fw={500} style={{ color: SA.text }}>
-                No active physical devices registered yet
+            <TextInput
+              placeholder="Search HWID, machine hostname, or client..."
+              leftSection={<Search size={15} />}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.currentTarget.value)}
+              style={{ minWidth: 260, maxWidth: 380, flex: 1 }}
+              styles={{
+                input: {
+                  background: SA.panelStrong,
+                  borderColor: SA.border,
+                  color: SA.text,
+                  height: 38,
+                },
+              }}
+            />
+          </div>
+
+          {isLoading ? (
+            <Group justify="center" py="xl">
+              <Loader size="sm" color={SA.accent} />
+              <Text size="sm" c="dimmed">
+                Synchronizing fleet state with Neon Control Plane...
               </Text>
-              <Text size="xs" c="dimmed">
-                When clients run your distributed binaries and activate them, their hardware fingerprints will appear here.
-              </Text>
-            </Stack>
-          ) : (
-            <Table highlightOnHover verticalSpacing="sm" style={{ color: SA.text }}>
-              <Table.Thead>
-                <Table.Tr style={{ borderColor: SA.border }}>
-                  <Table.Th>Workstation Hostname</Table.Th>
-                  <Table.Th>Hardware ID (HWID)</Table.Th>
-                  <Table.Th>OS & Version</Table.Th>
-                  <Table.Th>Last Heartbeat</Table.Th>
-                  <Table.Th>Status</Table.Th>
-                  <Table.Th style={{ textAlign: "right" }}>Kill-Switch</Table.Th>
-                </Table.Tr>
-              </Table.Thead>
+            </Group>
+          ) : activeTab === "devices" ? (
+            /* TAB 1: FLEET HARDWARE NODES */
+            filteredDevices.length === 0 ? (
+              <Stack align="center" py="xl" gap="xs">
+                <Laptop size={36} color={SA.muted} />
+                <Text size="sm" fw={500} style={{ color: SA.text }}>
+                  No active physical devices registered yet
+                </Text>
+                <Text size="xs" c="dimmed">
+                  When clients run your distributed binaries and activate them, their hardware fingerprints will appear here.
+                </Text>
+              </Stack>
+            ) : (
+              <div className="sa-table-scroll">
+                <Table highlightOnHover verticalSpacing="sm" style={{ color: SA.text, minWidth: 780 }}>
+                  <Table.Thead>
+                    <Table.Tr style={{ borderColor: SA.border }}>
+                      <Table.Th>Workstation Hostname</Table.Th>
+                      <Table.Th>Hardware ID (HWID)</Table.Th>
+                      <Table.Th>OS & Version</Table.Th>
+                      <Table.Th>Last Heartbeat</Table.Th>
+                      <Table.Th>Status</Table.Th>
+                      <Table.Th style={{ textAlign: "right" }}>Kill-Switch</Table.Th>
+                    </Table.Tr>
+                  </Table.Thead>
               <Table.Tbody>
                 {filteredDevices.map((dev) => (
                   <Table.Tr key={dev.id} style={{ borderColor: SA.border }}>
@@ -476,21 +502,23 @@ export default function FleetLicensingPage() {
                 ))}
               </Table.Tbody>
             </Table>
-          )
+          </div>
+        )
+      ) : (
+        /* TAB 2: ISSUED LICENSE KEYS */
+        filteredLicenses.length === 0 ? (
+          <Stack align="center" py="xl" gap="xs">
+            <KeyRound size={36} color={SA.muted} />
+            <Text size="sm" fw={500} style={{ color: SA.text }}>
+              No licenses found
+            </Text>
+            <Text size="xs" c="dimmed">
+              Issue a license key above to authorize testing or commercial binaries.
+            </Text>
+          </Stack>
         ) : (
-          /* TAB 2: ISSUED LICENSE KEYS */
-          filteredLicenses.length === 0 ? (
-            <Stack align="center" py="xl" gap="xs">
-              <KeyRound size={36} color={SA.muted} />
-              <Text size="sm" fw={500} style={{ color: SA.text }}>
-                No licenses found
-              </Text>
-              <Text size="xs" c="dimmed">
-                Issue a license key above to authorize testing or commercial binaries.
-              </Text>
-            </Stack>
-          ) : (
-            <Table highlightOnHover verticalSpacing="sm" style={{ color: SA.text }}>
+          <div className="sa-table-scroll">
+            <Table highlightOnHover verticalSpacing="sm" style={{ color: SA.text, minWidth: 840 }}>
               <Table.Thead>
                 <Table.Tr style={{ borderColor: SA.border }}>
                   <Table.Th>License Key</Table.Th>
@@ -587,8 +615,10 @@ export default function FleetLicensingPage() {
                 ))}
               </Table.Tbody>
             </Table>
+          </div>
           )
         )}
+        </Tabs>
       </Card>
 
       {/* ISSUE LICENSE DRAWER */}

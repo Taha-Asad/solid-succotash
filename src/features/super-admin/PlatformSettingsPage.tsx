@@ -48,7 +48,6 @@ import {
   ShieldCheck,
   Sparkles,
   Sun,
-  Trees,
   User,
   Users,
 } from "lucide-react";
@@ -73,11 +72,11 @@ import type {
 } from "../../types/backend";
 import { useSaScheme, useSaTheme } from "./saTheme";
 
-// Preset cozy avatars matching The Foolish Crow / Corbel lore
+// Preset avatars matching The Foolish Crow / Corbel lore
 const AVATAR_OPTIONS = [
   { id: "crow", label: "Sovereign Crow", icon: Feather },
   { id: "keystone", label: "Studio Keystone", icon: Landmark },
-  { id: "pine", label: "Forest Warden", icon: Trees },
+  { id: "arbiter", label: "Sovereign Arbiter", icon: ShieldCheck },
   { id: "quill", label: "Master Quill", icon: PenTool },
 ];
 
