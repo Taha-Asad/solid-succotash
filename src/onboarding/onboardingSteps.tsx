@@ -183,7 +183,8 @@ export const APP_STEPS: OnboardingStep[] = [
     contentKey: "onb.updateCompany.content",
     hintKey: "onb.updateCompany.hint",
     icon: <Save size={18} />,
-    selector: '[data-tour="settings-save"]',
+    selector: '[data-tour="settings-company-card"]',
+    freeRegion: '[data-tour="settings-save"]',
     completeOn: ["settings-saved"],
   },
   {

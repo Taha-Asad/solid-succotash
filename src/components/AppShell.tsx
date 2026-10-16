@@ -4,9 +4,8 @@
 // Dark navy sidebar + animated navigation + content area
 // with smooth framer-motion page transitions.
 
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
-  AnimatePresence,
   motion,
   type Variants,
 } from "framer-motion";
@@ -68,6 +67,7 @@ import PurchaseOrderPage from "../features/purchase-orders/PurchaseOrderPage";
 import ReportsPage from "../features/reports/ReportsPage";
 import UserManagementView from "../features/dashboard/UserManagement";
 import SettingsPage from "../features/settings/SettingsPage";
+import type { SettingsSection } from "../features/settings/SettingsHub";
 import CustomersPage from "../features/customers/CustomersPage";
 import AccountsPage from "../features/accounts/AccountsPage";
 import SearchBar from "./SearchBar";
@@ -258,18 +258,10 @@ type Branding = {
 // ==========================================
 
 const pageVariants: Variants = {
-  initial: { opacity: 0, y: 14, scale: 0.995 },
+  initial: { opacity: 0 },
   enter: {
     opacity: 1,
-    y: 0,
-    scale: 1,
-    transition: { duration: 0.32, ease: [0.22, 1, 0.36, 1] },
-  },
-  exit: {
-    opacity: 0,
-    y: -10,
-    scale: 0.995,
-    transition: { duration: 0.18, ease: [0.4, 0, 1, 1] },
+    transition: { duration: 0.16, ease: "easeOut" },
   },
 };
 
@@ -289,7 +281,9 @@ export default function AppShell({
   onLicenseStatusUpdate?: (updated: LicenseStatusResponse) => void;
 }) {
   const [view, setView] = useState<DashboardView>("home");
+  const [settingsSection, setSettingsSection] = useState<SettingsSection | null>(null);
   const [prevView, setPrevView] = useState<DashboardView>("home");
+  const contentScrollRef = useRef<HTMLDivElement>(null);
   const [backing, setBacking] = useState(false);
   const [backupMsg, setBackupMsg] = useState<string | null>(null);
   const [updateResult, setUpdateResult] = useState<UpdateResult | null>(null);
@@ -304,6 +298,18 @@ export default function AppShell({
   const { t, lang } = useI18n();
   const { startReplay } = useOnboarding();
   const perms = usePermissions();
+
+  const resetContentScroll = () => {
+    if (contentScrollRef.current) {
+      contentScrollRef.current.scrollTop = 0;
+      contentScrollRef.current.scrollTo({ top: 0, behavior: "instant" });
+    }
+    window.scrollTo({ top: 0, behavior: "instant" });
+  };
+
+  useLayoutEffect(() => {
+    resetContentScroll();
+  }, [view, settingsSection]);
 
   useEffect(() => {
     if (user?.id) {
@@ -365,8 +371,20 @@ export default function AppShell({
   // Navigate between modules; the onboarding listens for these events to know
   // when a "navigate to X" task step has been performed. Remember the view we
   // came from so the Import Wizard's back action can return there.
-  function goTo(nextView: DashboardView) {
+  function goTo(nextTarget: DashboardView | string, explicitSection?: SettingsSection | null) {
+    resetContentScroll();
+    if (nextTarget.startsWith("settings:")) {
+      const sec = nextTarget.split(":")[1] as SettingsSection;
+      setSettingsSection(sec);
+      setView("settings");
+      reportOnboardingEvent({ type: "navigate", module: "settings" });
+      return;
+    }
+    const nextView = nextTarget as DashboardView;
     if (nextView === "import" && view !== "import") setPrevView(view);
+    if (nextView === "settings") {
+      setSettingsSection(explicitSection ?? null);
+    }
     setView(nextView);
     reportOnboardingEvent({ type: "navigate", module: nextView });
   }
@@ -395,15 +413,18 @@ export default function AppShell({
       (!item.module || perms.isModuleEnabled(item.module)),
   );
 
-
-
   async function handleBackup() {
+    if (user.role !== "owner") {
+      goTo("settings", "backup");
+      return;
+    }
     setBacking(true);
     setBackupMsg(null);
     try {
       const savePath = await saveFileDialog({
         title: t("backup.title"),
-        defaultPath: `backup-${new Date().toISOString().slice(0, 10)}.db`,
+        defaultPath: `corbel-erp-backup-${new Date().toISOString().slice(0, 10)}.db`,
+        filters: [{ name: "SQLite Database", extensions: ["db"] }],
       });
       if (!savePath) return;
       const path = await createBackup(savePath);
@@ -844,79 +865,91 @@ export default function AppShell({
         </Box>
 
         {/* Animated page container */}
-        <Box style={{ flex: 1, overflowY: "auto", overflowX: "hidden" }} data-tour="content">
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={view}
-              variants={pageVariants}
-              initial="initial"
-              animate="enter"
-              exit="exit"
-              style={{ padding: 28, minHeight: "100%" }}
-            >
-              {(() => {
-                const targetModule = VIEW_TO_MODULE[view];
-                const isLocked = targetModule ? !perms.isModuleEnabled(targetModule) : false;
-                if (isLocked) {
-                  return <ModuleLockedView moduleKey={view} onBack={() => goTo("home")} />;
-                }
-                return (
-                  <>
-                    {view === "home" && (
-                <Box
-                  style={{
-                    display: "flex",
-                    gap: 28,
-                    minHeight: "100%",
-                    alignItems: "flex-start",
-                  }}
-                >
-                  <Box style={{ flex: 1, minWidth: 0 }}>
-                    <DashboardHome user={user} onNavigate={(m) => goTo(m as DashboardView)} />
-                  </Box>
-                  <Box visibleFrom="lg" style={{ width: 300, flexShrink: 0 }}>
-                    <RightContextPanel
+        <Box
+          ref={contentScrollRef}
+          style={{ flex: 1, overflowY: "auto", overflowX: "hidden" }}
+          data-tour="content"
+          onClickCapture={(e) => {
+            const target = e.target as HTMLElement | null;
+            if (target?.closest('[role="tab"]')) {
+              resetContentScroll();
+            }
+          }}
+        >
+          <motion.div
+            key={`${view}:${settingsSection ?? ""}`}
+            variants={pageVariants}
+            initial="initial"
+            animate="enter"
+            style={{ padding: 28, minHeight: "100%" }}
+          >
+            {(() => {
+              const targetModule = VIEW_TO_MODULE[view];
+              const isLocked = targetModule ? !perms.isModuleEnabled(targetModule) : false;
+              if (isLocked) {
+                return <ModuleLockedView moduleKey={view} onBack={() => goTo("home")} />;
+              }
+              return (
+                <>
+                  {view === "home" && (
+                    <Box
+                      style={{
+                        display: "flex",
+                        gap: 28,
+                        minHeight: "100%",
+                        alignItems: "flex-start",
+                      }}
+                    >
+                      <Box style={{ flex: 1, minWidth: 0 }}>
+                        <DashboardHome user={user} onNavigate={(m) => goTo(m)} />
+                      </Box>
+                      <Box visibleFrom="lg" style={{ width: 300, flexShrink: 0 }}>
+                        <RightContextPanel
+                          user={user}
+                          onNavigate={(m) => goTo(m)}
+                          onTriggerBackup={handleBackup}
+                        />
+                      </Box>
+                    </Box>
+                  )}
+                  {view === "inventory" && (
+                    <InventoryPage user={user} onOpenImport={() => goTo("import")} />
+                  )}
+                  {view === "import" && (
+                    <ImportWizard
                       user={user}
-                      onNavigate={(m) => goTo(m as DashboardView)}
-                      onTriggerBackup={handleBackup}
+                      backLabel={t("import.backTo", { view: t(`nav.${prevView}`) })}
+                      onComplete={() => goTo(prevView)}
                     />
-                  </Box>
-                </Box>
-              )}
-              {view === "inventory" && (
-                <InventoryPage user={user} onOpenImport={() => goTo("import")} />
-              )}
-              {view === "import" && (
-                <ImportWizard
-                  user={user}
-                  backLabel={t("import.backTo", { view: t(`nav.${prevView}`) })}
-                  onComplete={() => goTo(prevView)}
-                />
-              )}
-              {view === "invoices" && <InvoicePage />}
-              {view === "customers" && <CustomersPage user={user} />}
-              {view === "purchasing" && <PurchaseOrderPage />}
-              {view === "reports" && <ReportsPage />}
-              {view === "accounts" && <AccountsPage />}
-              {view === "users" && <UserManagementView currentUser={user} />}
-              {view === "settings" && (
-                <SettingsPage user={user} onLogout={onLogout} />
-              )}
-              {view === "profile" && (
-                <ProfilePage
-                  user={user}
-                  onBack={() => goTo("home")}
-                  onLogout={onLogout}
-                />
-              )}
-              {view === "help" && (
-                <HelpPage companyName={branding.companyName} />
-              )}
-                  </>
-                );
-              })()}
-            </motion.div>
-          </AnimatePresence>
+                  )}
+                  {view === "invoices" && <InvoicePage />}
+                  {view === "customers" && <CustomersPage user={user} />}
+                  {view === "purchasing" && <PurchaseOrderPage />}
+                  {view === "reports" && <ReportsPage />}
+                  {view === "accounts" && <AccountsPage />}
+                  {view === "users" && <UserManagementView currentUser={user} />}
+                  {view === "settings" && (
+                    <SettingsPage
+                      user={user}
+                      onLogout={onLogout}
+                      initialSection={settingsSection}
+                      onSectionChange={setSettingsSection}
+                    />
+                  )}
+                  {view === "profile" && (
+                    <ProfilePage
+                      user={user}
+                      onBack={() => goTo("home")}
+                      onLogout={onLogout}
+                    />
+                  )}
+                  {view === "help" && (
+                    <HelpPage companyName={branding.companyName} />
+                  )}
+                </>
+              );
+            })()}
+          </motion.div>
         </Box>
       </Box>
 

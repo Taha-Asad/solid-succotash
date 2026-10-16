@@ -287,6 +287,7 @@ export default function SettingsHub({ user, onSelectSection }: SettingsHubProps)
             padding="lg"
             radius="md"
             className="floating-card floating-card-interactive"
+            data-tour="settings-company-card"
             onClick={() => onSelectSection("company")}
             style={{
               cursor: "pointer",

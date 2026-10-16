@@ -9,6 +9,7 @@ import {
   Text,
   Title,
 } from "@mantine/core";
+import { ArrowLeft, ArrowRight } from "lucide-react";
 import {
   getErrorMessage,
   listAuditEntries,
@@ -59,19 +60,21 @@ export function AuditLogTab() {
           <Button
             size="xs"
             variant="subtle"
+            leftSection={<ArrowLeft size={14} />}
             disabled={page === 0}
             onClick={() => setPage(page - 1)}
           >
-            ← Previous
+            Previous
           </Button>
           <Text size="sm">Page {page + 1}</Text>
           <Button
             size="xs"
             variant="subtle"
+            rightSection={<ArrowRight size={14} />}
             disabled={entries.length < pageSize}
             onClick={() => setPage(page + 1)}
           >
-            Next →
+            Next
           </Button>
         </Group>
       </Group>

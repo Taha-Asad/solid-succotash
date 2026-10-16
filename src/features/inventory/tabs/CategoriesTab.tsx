@@ -118,7 +118,7 @@ function CategoryFormView({
           radius="md"
           mb="sm"
         >
-          ← Back to Categories
+          Back to Categories
         </Button>
 
         <Group justify="space-between" align="flex-end">

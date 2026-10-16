@@ -93,7 +93,7 @@ export function InvoiceCustomerSection({
             leftSection={<UserPlus size={14} />}
             onClick={onOpenNewCustomerModal}
           >
-            + New Customer
+            New Customer
           </Button>
         </Group>
       </Group>

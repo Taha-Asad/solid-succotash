@@ -17,7 +17,6 @@ import {
   Archive,
   Check,
   CheckCircle2,
-  Copy,
   CreditCard,
   KeyRound,
   Lock,
@@ -207,7 +206,6 @@ export default function TenantDetailDrawer({
                             variant="light"
                             onClick={copy}
                             leftSection={copied ? <Check size={11} /> : <Mail size={11} />}
-                            rightSection={<Copy size={10} />}
                             styles={{
                               root: {
                                 background: SA.panel,
@@ -229,7 +227,6 @@ export default function TenantDetailDrawer({
                             variant="light"
                             onClick={copy}
                             leftSection={copied ? <Check size={11} /> : <Phone size={11} />}
-                            rightSection={<Copy size={10} />}
                             styles={{
                               root: {
                                 background: SA.panel,

@@ -178,7 +178,7 @@ export function InvoiceFastEntryCard({
               fontWeight: 600,
             }}
           >
-            + Add Line
+            Add Line
           </Button>
         </Group>
       </Stack>

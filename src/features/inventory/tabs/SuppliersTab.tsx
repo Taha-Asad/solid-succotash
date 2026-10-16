@@ -112,7 +112,7 @@ function SupplierFormView({
           radius="md"
           mb="sm"
         >
-          ← Back to Suppliers
+          Back to Suppliers
         </Button>
 
         <Group justify="space-between" align="flex-end">

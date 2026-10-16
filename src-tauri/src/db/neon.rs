@@ -20,7 +20,9 @@ pub struct CloudHeartbeatResult {
     pub is_blocked: bool,
     pub reason: Option<String>,
     pub license_type: Option<String>,
+    pub expires_at: Option<String>,
     pub days_remaining: Option<i64>,
+    pub offline_grace_days: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -29,6 +31,7 @@ pub struct CloudActivationResult {
     pub license_type: String,
     pub expires_at: Option<String>,
     pub days_remaining: Option<i64>,
+    pub offline_grace_days: i64,
 }
 
 static GLOBAL_CLOUD_DB: OnceLock<NeonCloudDb> = OnceLock::new();
@@ -1431,8 +1434,8 @@ impl NeonCloudDb {
         // 1. Validate license
         let license_row = sqlx::query(
             r#"
-            SELECT id, client_name, license_type, status, max_devices,
-                   TO_CHAR(expires_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as expires_at,
+            SELECT id, client_name, license_type, status, max_devices, offline_grace_days,
+                   TO_CHAR(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as expires_at,
                    CASE WHEN expires_at IS NOT NULL THEN (expires_at > NOW()) ELSE TRUE END as is_not_expired,
                    CASE WHEN expires_at IS NOT NULL THEN EXTRACT(DAY FROM (expires_at - NOW()))::bigint ELSE NULL END as days_remaining
             FROM tenant_licenses
@@ -1451,6 +1454,7 @@ impl NeonCloudDb {
         let license_type: String = lic.get("license_type");
         let status: String = lic.get("status");
         let max_devices: i64 = lic.get("max_devices");
+        let offline_grace_days: i64 = lic.get("offline_grace_days");
         let expires_at: Option<String> = lic.get("expires_at");
         let is_not_expired: bool = lic.get("is_not_expired");
         let days_remaining: Option<i64> = lic.get("days_remaining");
@@ -1531,6 +1535,7 @@ impl NeonCloudDb {
             license_type,
             expires_at,
             days_remaining,
+            offline_grace_days,
         })
     }
 
@@ -1547,7 +1552,8 @@ impl NeonCloudDb {
         // 1. Check license
         let license_row = sqlx::query(
             r#"
-            SELECT id, status, license_type,
+            SELECT id, status, license_type, offline_grace_days,
+                   TO_CHAR(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as expires_at,
                    CASE WHEN expires_at IS NOT NULL THEN (expires_at > NOW()) ELSE TRUE END as is_not_expired,
                    CASE WHEN expires_at IS NOT NULL THEN EXTRACT(DAY FROM (expires_at - NOW()))::bigint ELSE NULL END as days_remaining
             FROM tenant_licenses
@@ -1566,7 +1572,9 @@ impl NeonCloudDb {
                     is_blocked: true,
                     reason: Some("License key does not exist.".to_string()),
                     license_type: None,
+                    expires_at: None,
                     days_remaining: None,
+                    offline_grace_days: 7,
                 });
             }
         };
@@ -1574,6 +1582,8 @@ impl NeonCloudDb {
         let license_id: String = lic.get("id");
         let status: String = lic.get("status");
         let license_type: String = lic.get("license_type");
+        let offline_grace_days: i64 = lic.get("offline_grace_days");
+        let expires_at: Option<String> = lic.get("expires_at");
         let is_not_expired: bool = lic.get("is_not_expired");
         let days_remaining: Option<i64> = lic.get("days_remaining");
 
@@ -1582,7 +1592,9 @@ impl NeonCloudDb {
                 is_blocked: true,
                 reason: Some(format!("License is {status}.")),
                 license_type: Some(license_type),
+                expires_at,
                 days_remaining,
+                offline_grace_days,
             });
         }
 
@@ -1591,7 +1603,9 @@ impl NeonCloudDb {
                 is_blocked: true,
                 reason: Some("License has expired.".to_string()),
                 license_type: Some(license_type),
+                expires_at,
                 days_remaining: Some(0),
+                offline_grace_days,
             });
         }
 
@@ -1612,7 +1626,9 @@ impl NeonCloudDb {
                     is_blocked: true,
                     reason: reason.or(Some("Device blocked by administrator.".to_string())),
                     license_type: Some(license_type),
+                    expires_at,
                     days_remaining,
+                    offline_grace_days,
                 });
             }
 
@@ -1628,7 +1644,9 @@ impl NeonCloudDb {
             is_blocked: false,
             reason: None,
             license_type: Some(license_type),
+            expires_at,
             days_remaining,
+            offline_grace_days,
         })
     }
 }

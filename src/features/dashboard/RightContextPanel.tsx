@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import {
   Box,
   Stack,
@@ -19,6 +19,7 @@ import {
   UserCheck,
   ArrowUpRight,
 } from "lucide-react";
+import { reportSalesSummary, reportStock } from "../../api/backend";
 import type { PublicUser } from "../../types/backend";
 
 interface RightContextPanelProps {
@@ -32,10 +33,28 @@ interface RightContextPanelProps {
 export default function RightContextPanel({
   user,
   onNavigate,
-  lowStockCount = 0,
-  unpaidInvoiceCount = 0,
+  lowStockCount: propLowStock,
+  unpaidInvoiceCount: propUnpaid,
   onTriggerBackup,
 }: RightContextPanelProps) {
+  const [fetchedLowStock, setFetchedLowStock] = useState(0);
+  const [fetchedUnpaid, setFetchedUnpaid] = useState(0);
+
+  useEffect(() => {
+    if (propLowStock === undefined || propUnpaid === undefined) {
+      Promise.all([
+        reportStock(10).catch(() => null),
+        reportSalesSummary().catch(() => null),
+      ]).then(([st, sales]) => {
+        if (st) setFetchedLowStock(st.lowStockCount ?? 0);
+        if (sales) setFetchedUnpaid(sales.finalizedCount ?? 0);
+      });
+    }
+  }, [propLowStock, propUnpaid]);
+
+  const lowStockCount = propLowStock ?? fetchedLowStock;
+  const unpaidInvoiceCount = propUnpaid ?? fetchedUnpaid;
+
   // Calendar navigation state
   const [currentDate, setCurrentDate] = useState(() => new Date());
 
@@ -136,7 +155,7 @@ export default function RightContextPanel({
           radius="pill"
           fullWidth
           rightSection={<ArrowUpRight size={14} />}
-          onClick={() => onNavigate("settings")}
+          onClick={() => onNavigate("profile")}
           style={{
             background: "var(--app-surface)",
             border: "1px solid var(--app-border)",

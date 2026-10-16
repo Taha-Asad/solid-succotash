@@ -3,14 +3,14 @@ pub mod types;
 
 use chrono::{DateTime, Utc};
 use sqlx::{Row, SqlitePool};
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 use crate::db::neon::NeonCloudDb;
 use crate::error::AppError;
 use tauri::{AppHandle, Emitter};
 use types::{DeviceIdentity, LicenseStatusResponse};
 
-pub const APP_VERSION: &str = "1.3.2";
+pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const DEFAULT_GRACE_DAYS: i64 = 7;
 
 /// Starts a background ticker that periodically pings licensing status and emits corbel://license-revoked if revoked.
@@ -44,8 +44,13 @@ pub fn get_device_identity() -> DeviceIdentity {
 
 /// Checks whether the application is running in developer bypass mode.
 pub fn is_dev_mode() -> bool {
-    std::env::var("CORBEL_DEV_MODE").map(|v| v == "1" || v == "true").unwrap_or(false)
-        || cfg!(debug_assertions)
+    if std::env::var("CORBEL_DISABLE_DEV_BYPASS").map(|v| v == "1" || v == "true").unwrap_or(false) {
+        return false;
+    }
+    if let Ok(v) = std::env::var("CORBEL_DEV_MODE") {
+        return v == "1" || v == "true";
+    }
+    cfg!(debug_assertions)
 }
 
 /// Comprehensive license verification against local SQLite lease + Neon Cloud control plane.
@@ -96,21 +101,39 @@ pub async fn check_license_status(sqlite_pool: &SqlitePool) -> Result<LicenseSta
 
             if company_count > 0 {
                 // Existing merchant installation undergoing migration!
-                // Grant an automated 14-day transition grace period
+                // Grant an automated 14-day transition grace period.
+                // Baseline start date from migration 22 execution timestamp if recorded, or now.
                 let now = Utc::now();
-                let grace_expires = now + chrono::Duration::days(14);
+                let migration_applied_at_str = sqlx::query_scalar::<_, String>(
+                    "SELECT applied_at FROM _migrations WHERE version = 22",
+                )
+                .fetch_optional(sqlite_pool)
+                .await
+                .ok()
+                .flatten();
+
+                let baseline_start = migration_applied_at_str
+                    .as_deref()
+                    .and_then(|s| {
+                        chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
+                            .ok()
+                            .map(|ndt| DateTime::<Utc>::from_naive_utc_and_offset(ndt, Utc))
+                    })
+                    .unwrap_or(now);
+
+                let grace_expires = baseline_start + chrono::Duration::days(14);
                 let now_str = now.to_rfc3339();
                 let grace_str = grace_expires.to_rfc3339();
 
-                let _ = sqlx::query(
+                let insert_res = sqlx::query(
                     r#"
                     INSERT OR REPLACE INTO _license_lease (
                         id, license_key, client_name, device_hwid, lease_token,
                         last_verified_at, grace_expires_at, license_expires_at,
-                        status, monotonic_counter, offline_grace_days
+                        status, monotonic_counter
                     ) VALUES (
                         1, 'CRBL-MIGRATION-GRACE', 'Existing Merchant (Migration Grace)',
-                        ?, 'MIGRATION_GRACE_TOKEN', ?, ?, ?, 'migration_grace', 1, 14
+                        ?, 'MIGRATION_GRACE_TOKEN', ?, ?, ?, 'migration_grace', 1
                     )
                     "#,
                 )
@@ -121,19 +144,40 @@ pub async fn check_license_status(sqlite_pool: &SqlitePool) -> Result<LicenseSta
                 .execute(sqlite_pool)
                 .await;
 
-                return Ok(LicenseStatusResponse {
-                    is_licensed: true,
-                    is_blocked: false,
-                    block_reason: None,
-                    license_key: Some("CRBL-MIGRATION-GRACE".to_string()),
-                    client_name: Some("Existing Organization (Migration Grace)".to_string()),
-                    license_type: Some("migration_grace".to_string()),
-                    days_remaining: Some(14),
-                    grace_days_remaining: Some(14),
-                    is_offline_grace: false,
-                    is_migration_grace: true,
-                    device_hwid: hwid,
-                });
+                if let Err(e) = insert_res {
+                    error!("Failed to persist migration grace lease into SQLite: {e}");
+                }
+
+                if now <= grace_expires {
+                    let days_left = (grace_expires - now).num_days().max(1);
+                    return Ok(LicenseStatusResponse {
+                        is_licensed: true,
+                        is_blocked: false,
+                        block_reason: None,
+                        license_key: Some("CRBL-MIGRATION-GRACE".to_string()),
+                        client_name: Some("Existing Organization (Migration Grace)".to_string()),
+                        license_type: Some("migration_grace".to_string()),
+                        days_remaining: Some(days_left),
+                        grace_days_remaining: Some(days_left),
+                        is_offline_grace: false,
+                        is_migration_grace: true,
+                        device_hwid: hwid,
+                    });
+                } else {
+                    return Ok(LicenseStatusResponse {
+                        is_licensed: false,
+                        is_blocked: false,
+                        block_reason: Some("14-Day migration transition grace expired. Workstation license key required.".to_string()),
+                        license_key: None,
+                        client_name: None,
+                        license_type: None,
+                        days_remaining: Some(0),
+                        grace_days_remaining: Some(0),
+                        is_offline_grace: false,
+                        is_migration_grace: false,
+                        device_hwid: hwid,
+                    });
+                }
             }
 
             return Ok(LicenseStatusResponse {
@@ -179,29 +223,16 @@ pub async fn check_license_status(sqlite_pool: &SqlitePool) -> Result<LicenseSta
         });
     }
 
-    // 4. Status Check
-    if status == "blocked" || status == "revoked" {
-        return Ok(LicenseStatusResponse {
-            is_licensed: false,
-            is_blocked: true,
-            block_reason: Some("Access revoked by administrator.".to_string()),
-            license_key: Some(license_key),
-            client_name: Some(client_name),
-            license_type: None,
-            days_remaining: None,
-            grace_days_remaining: None,
-            is_offline_grace: false,
-            is_migration_grace: false,
-            device_hwid: hwid,
-        });
-    }
-
     let now = Utc::now();
 
-    // 4b. Migration Grace Check
+    // 4. Migration Grace Check
     if status == "migration_grace" {
         let grace_expires = DateTime::parse_from_rfc3339(&grace_expires_at_str)
             .map(|dt| dt.with_timezone(&Utc))
+            .or_else(|_| {
+                chrono::NaiveDateTime::parse_from_str(&grace_expires_at_str, "%Y-%m-%d %H:%M:%S")
+                    .map(|ndt| DateTime::<Utc>::from_naive_utc_and_offset(ndt, Utc))
+            })
             .unwrap_or(now);
 
         if now <= grace_expires {
@@ -256,13 +287,14 @@ pub async fn check_license_status(sqlite_pool: &SqlitePool) -> Result<LicenseSta
         }
     }
 
-    // 6. Attempt Cloud Heartbeat if Neon is available
+    // 6. Attempt Cloud Heartbeat if Neon is available (also allows remote Unblock / +14 Days recovery)
     let cloud_db = NeonCloudDb::global();
     if cloud_db.is_connected() {
         match cloud_db.cloud_heartbeat(&license_key, &hwid, APP_VERSION).await {
             Ok(heartbeat_res) => {
                 if heartbeat_res.is_blocked {
-                    let _ = sqlx::query("UPDATE _license_lease SET status = 'blocked' WHERE id = 1")
+                    let _ = sqlx::query("UPDATE _license_lease SET status = 'blocked', license_expires_at = COALESCE(?, license_expires_at) WHERE id = 1")
+                        .bind(&heartbeat_res.expires_at)
                         .execute(sqlite_pool)
                         .await;
 
@@ -272,8 +304,8 @@ pub async fn check_license_status(sqlite_pool: &SqlitePool) -> Result<LicenseSta
                         block_reason: heartbeat_res.reason.or(Some("Revoked by administrator".to_string())),
                         license_key: Some(license_key),
                         client_name: Some(client_name),
-                        license_type: None,
-                        days_remaining: None,
+                        license_type: heartbeat_res.license_type,
+                        days_remaining: heartbeat_res.days_remaining,
                         grace_days_remaining: None,
                         is_offline_grace: false,
                         is_migration_grace: false,
@@ -281,8 +313,9 @@ pub async fn check_license_status(sqlite_pool: &SqlitePool) -> Result<LicenseSta
                     });
                 }
 
-                // Heartbeat success: extend local offline lease by DEFAULT_GRACE_DAYS (7 days)
-                let new_grace = now + chrono::Duration::days(DEFAULT_GRACE_DAYS);
+                // Heartbeat success: extend local offline lease by license's configured offline_grace_days
+                let grace_days = heartbeat_res.offline_grace_days.max(1);
+                let new_grace = now + chrono::Duration::days(grace_days);
                 let new_grace_str = new_grace.to_rfc3339();
                 let now_str = now.to_rfc3339();
 
@@ -291,6 +324,7 @@ pub async fn check_license_status(sqlite_pool: &SqlitePool) -> Result<LicenseSta
                     UPDATE _license_lease
                     SET last_verified_at = ?,
                         grace_expires_at = ?,
+                        license_expires_at = ?,
                         status = 'active',
                         monotonic_counter = ?
                     WHERE id = 1
@@ -298,11 +332,10 @@ pub async fn check_license_status(sqlite_pool: &SqlitePool) -> Result<LicenseSta
                 )
                 .bind(&now_str)
                 .bind(&new_grace_str)
+                .bind(&heartbeat_res.expires_at)
                 .bind(monotonic_counter + 1)
                 .execute(sqlite_pool)
                 .await;
-
-                let days_remaining = heartbeat_res.days_remaining;
 
                 return Ok(LicenseStatusResponse {
                     is_licensed: true,
@@ -311,8 +344,8 @@ pub async fn check_license_status(sqlite_pool: &SqlitePool) -> Result<LicenseSta
                     license_key: Some(license_key),
                     client_name: Some(client_name),
                     license_type: heartbeat_res.license_type,
-                    days_remaining,
-                    grace_days_remaining: Some(DEFAULT_GRACE_DAYS),
+                    days_remaining: heartbeat_res.days_remaining,
+                    grace_days_remaining: Some(grace_days),
                     is_offline_grace: false,
                     is_migration_grace: false,
                     device_hwid: hwid,
@@ -324,7 +357,50 @@ pub async fn check_license_status(sqlite_pool: &SqlitePool) -> Result<LicenseSta
         }
     }
 
-    // 7. Offline Mode: Evaluate Grace Expiry
+    // 7. Offline Mode: Evaluate Local Status, License Expiry, and Grace Expiry
+    if status == "blocked" || status == "revoked" {
+        return Ok(LicenseStatusResponse {
+            is_licensed: false,
+            is_blocked: true,
+            block_reason: Some("Access revoked by administrator.".to_string()),
+            license_key: Some(license_key),
+            client_name: Some(client_name),
+            license_type: None,
+            days_remaining: None,
+            grace_days_remaining: None,
+            is_offline_grace: true,
+            is_migration_grace: false,
+            device_hwid: hwid,
+        });
+    }
+
+    // Check if the time-bound license itself (e.g. 14-day trial) has expired while offline
+    let license_days_remaining = if let Some(ref exp_str) = license_expires_at_str {
+        if let Ok(dt) = DateTime::parse_from_rfc3339(exp_str) {
+            let exp_utc = dt.with_timezone(&Utc);
+            if now > exp_utc {
+                return Ok(LicenseStatusResponse {
+                    is_licensed: false,
+                    is_blocked: true,
+                    block_reason: Some("License validity period has expired. Please connect to internet or contact support to renew.".to_string()),
+                    license_key: Some(license_key),
+                    client_name: Some(client_name),
+                    license_type: None,
+                    days_remaining: Some(0),
+                    grace_days_remaining: Some(0),
+                    is_offline_grace: true,
+                    is_migration_grace: false,
+                    device_hwid: hwid,
+                });
+            }
+            Some((exp_utc - now).num_days().max(0))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     let grace_expires = DateTime::parse_from_rfc3339(&grace_expires_at_str)
         .map(|dt| dt.with_timezone(&Utc))
         .unwrap_or(now);
@@ -333,11 +409,11 @@ pub async fn check_license_status(sqlite_pool: &SqlitePool) -> Result<LicenseSta
         return Ok(LicenseStatusResponse {
             is_licensed: false,
             is_blocked: false,
-            block_reason: Some("7-Day offline grace period expired. Please connect to internet to verify license.".to_string()),
+            block_reason: Some("Offline grace period expired. Please connect to internet to verify license.".to_string()),
             license_key: Some(license_key),
             client_name: Some(client_name),
             license_type: None,
-            days_remaining: None,
+            days_remaining: license_days_remaining,
             grace_days_remaining: Some(0),
             is_offline_grace: true,
             is_migration_grace: false,
@@ -346,12 +422,6 @@ pub async fn check_license_status(sqlite_pool: &SqlitePool) -> Result<LicenseSta
     }
 
     let grace_days_remaining = (grace_expires - now).num_days().max(0);
-
-    let license_days_remaining = license_expires_at_str.and_then(|exp_str| {
-        DateTime::parse_from_rfc3339(&exp_str)
-            .map(|dt| (dt.with_timezone(&Utc) - now).num_days().max(0))
-            .ok()
-    });
 
     Ok(LicenseStatusResponse {
         is_licensed: true,
@@ -390,7 +460,8 @@ pub async fn activate_license(
         .await?;
 
     let now = Utc::now();
-    let grace_expires = now + chrono::Duration::days(DEFAULT_GRACE_DAYS);
+    let grace_days = act_res.offline_grace_days.max(1);
+    let grace_expires = now + chrono::Duration::days(grace_days);
     let lease_token = format!("{hwid}::{license_key}::{}", now.timestamp());
 
     // Upsert into local SQLite _license_lease
@@ -434,7 +505,7 @@ pub async fn activate_license(
         client_name: Some(act_res.client_name),
         license_type: Some(act_res.license_type),
         days_remaining: act_res.days_remaining,
-        grace_days_remaining: Some(DEFAULT_GRACE_DAYS),
+        grace_days_remaining: Some(grace_days),
         is_offline_grace: false,
         is_migration_grace: false,
         device_hwid: hwid,
@@ -559,5 +630,82 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(count.0, 0);
+    }
+
+    #[tokio::test]
+    async fn test_migration_grace_counts_down() {
+        let pool = create_test_db().await;
+        sqlx::query("CREATE TABLE companies (id TEXT PRIMARY KEY, name TEXT NOT NULL, deleted_at TEXT)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO companies (id, name) VALUES ('comp-1', 'Existing Merchant')")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        sqlx::query("CREATE TABLE _migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let six_days_ago = Utc::now() - chrono::Duration::days(6);
+        let six_days_ago_str = six_days_ago.format("%Y-%m-%d %H:%M:%S").to_string();
+        sqlx::query("INSERT INTO _migrations (version, name, applied_at) VALUES (22, '022_license_lease', ?)")
+            .bind(&six_days_ago_str)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        std::env::set_var("CORBEL_DISABLE_DEV_BYPASS", "1");
+
+        let status = check_license_status(&pool).await.unwrap();
+        assert!(status.is_licensed);
+        assert!(status.is_migration_grace);
+        assert_eq!(status.days_remaining, Some(7));
+        assert_eq!(status.grace_days_remaining, Some(7));
+
+        // Verify the lease was actually stored in _license_lease
+        let lease_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM _license_lease")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(lease_count.0, 1);
+
+        std::env::remove_var("CORBEL_DISABLE_DEV_BYPASS");
+    }
+
+    #[tokio::test]
+    async fn test_offline_14_day_trial_expiry_enforced() {
+        let pool = create_test_db().await;
+        let hwid = fingerprint::get_hardware_id();
+        let now = Utc::now();
+        // Offline heartbeat grace is still valid (+5 days), but the 14-day trial license expired 1 day ago
+        let grace_future = (now + chrono::Duration::days(5)).to_rfc3339();
+        let expired_license = (now - chrono::Duration::days(1)).to_rfc3339();
+
+        sqlx::query(
+            r#"
+            INSERT INTO _license_lease (
+                id, license_key, client_name, device_hwid, lease_token,
+                last_verified_at, grace_expires_at, license_expires_at, status, monotonic_counter
+            ) VALUES (1, 'CRBL-BETA-14DY', 'Beta Merchant', ?, 'token', ?, ?, ?, 'active', 1)
+            "#,
+        )
+        .bind(&hwid)
+        .bind(now.to_rfc3339())
+        .bind(&grace_future)
+        .bind(&expired_license)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        std::env::set_var("CORBEL_DISABLE_DEV_BYPASS", "1");
+
+        let status = check_license_status(&pool).await.unwrap();
+        assert!(!status.is_licensed);
+        assert!(status.is_blocked);
+        assert_eq!(status.days_remaining, Some(0));
+
+        std::env::remove_var("CORBEL_DISABLE_DEV_BYPASS");
     }
 }

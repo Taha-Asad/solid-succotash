@@ -86,7 +86,7 @@ export default function OnboardingCard({
       description: "Set your store name, NTN, phone and address for invoices",
       completed: hasCompanyDetails,
       actionLabel: "Configure",
-      module: "settings",
+      module: "settings:company",
       icon: <Building2 size={16} />,
     },
     {
@@ -113,7 +113,7 @@ export default function OnboardingCard({
       description: "Download a local backup to keep your accounts safe",
       completed: hasBackup,
       actionLabel: "Backup",
-      module: "settings",
+      module: "settings:backup",
       icon: <ShieldCheck size={16} />,
     },
   ];

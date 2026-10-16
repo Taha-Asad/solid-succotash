@@ -186,7 +186,7 @@ export default function DashboardHome({ user, onNavigate }: DashboardHomeProps) 
                   transition: "transform 0.15s ease",
                 }}
               >
-                + New Sale (POS)
+                New Sale (POS)
               </Button>
 
               <Button

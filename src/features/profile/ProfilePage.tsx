@@ -230,7 +230,7 @@ export default function ProfilePage({
           radius="md"
           mb="sm"
         >
-          ← Back to Workspace
+          Back to Workspace
         </Button>
 
         <Group justify="space-between" align="flex-end">

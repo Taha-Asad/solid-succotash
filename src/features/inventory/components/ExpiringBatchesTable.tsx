@@ -8,7 +8,7 @@ import {
   Table,
   Text,
 } from "@mantine/core";
-import { CalendarClock, CheckCircle2, Trash2 } from "lucide-react";
+import { ArrowLeft, CalendarClock, CheckCircle2, Trash2 } from "lucide-react";
 import type { PublicStockBatch } from "../../../types/backend";
 import {
   daysUntil,
@@ -44,8 +44,14 @@ export function ExpiringBatchesTable({
               Batches Expiring Within 30 Days ({batches.length})
             </Text>
           </Group>
-          <Button size="xs" variant="subtle" color="gray" onClick={onBackToAll}>
-            ← Back to All Products
+          <Button
+            size="xs"
+            variant="subtle"
+            color="gray"
+            leftSection={<ArrowLeft size={14} />}
+            onClick={onBackToAll}
+          >
+            Back to All Products
           </Button>
         </Group>
       </Box>

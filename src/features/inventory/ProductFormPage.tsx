@@ -719,7 +719,7 @@ export default function ProductFormPage({
                       }}
                       style={{ color: "var(--app-accent)", fontWeight: 600 }}
                     >
-                      + New Unit
+                      New Unit
                     </Button>
                   </Group>
                   <Select
@@ -765,7 +765,7 @@ export default function ProductFormPage({
                       }}
                       style={{ fontSize: 11 }}
                     >
-                      + New Category
+                      New Category
                     </Button>
                   </Group>
                   <Select
@@ -793,7 +793,7 @@ export default function ProductFormPage({
                       }}
                       style={{ fontSize: 11 }}
                     >
-                      + New Supplier
+                      New Supplier
                     </Button>
                   </Group>
                   <Select

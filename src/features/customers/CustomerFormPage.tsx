@@ -156,7 +156,7 @@ export default function CustomerFormPage({
             onClick={onBack}
             radius="md"
           >
-            ← Back to Customer Directory
+            Back to Customer Directory
           </Button>
 
           <Group gap="xs">

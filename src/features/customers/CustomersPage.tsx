@@ -176,7 +176,7 @@ export default function CustomersPage({ user }: { user: PublicUser }) {
               fontWeight: 600,
             }}
           >
-            + New Customer
+            New Customer
           </Button>
         </Group>
       </Group>

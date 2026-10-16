@@ -186,6 +186,15 @@ function PlatformShell({
     setColorScheme(scheme);
   }, [scheme, setColorScheme]);
 
+  useEffect(() => {
+    const el = document.getElementById("platform-content");
+    if (el) {
+      el.scrollTop = 0;
+      el.scrollTo({ top: 0, behavior: "instant" });
+    }
+    window.scrollTo({ top: 0, behavior: "instant" });
+  }, [view]);
+
   const variables = Object.fromEntries(
     Object.entries(SA).map(([key, value]) => [`--sa-${key}`, value]),
   ) as CSSProperties;
@@ -275,12 +284,12 @@ function PlatformShell({
         <div className="sa-sidebar-bottom">
           {/* Sovereign Engine Core Chip */}
           <Tooltip
-            label="Corbel Sovereign Engine v1.3.2 · Host: Linux"
+            label="Corbel Sovereign Engine v1.3.3 · Host: Linux"
             position="right"
             disabled={!collapsed}
             withinPortal
           >
-            <div className="sa-engine-chip" title="Corbel Sovereign Engine v1.3.2">
+            <div className="sa-engine-chip" title="Corbel Sovereign Engine v1.3.3">
               <div className="sa-engine-chip-icon">
                 <ShieldCheck size={16} />
               </div>
@@ -289,7 +298,7 @@ function PlatformShell({
                   Corbel Engine
                 </Text>
                 <Text size="xs" style={{ color: SA.muted, fontSize: 10 }}>
-                  v1.3.2 · Sovereign Node
+                  v1.3.3 · Sovereign Node
                 </Text>
               </div>
             </div>

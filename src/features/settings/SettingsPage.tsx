@@ -5,7 +5,7 @@
 // Master hub coordinating business configuration, invoicing rules,
 // branding, backup/restore, audit logs, and hardware printer presets.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Box,
   Button,
@@ -35,15 +35,41 @@ import { AuditLogTab } from "./tabs/AuditLogTab";
 interface SettingsPageProps {
   user: PublicUser;
   onLogout: () => Promise<void>;
+  initialSection?: SettingsSection | null;
+  onSectionChange?: (section: SettingsSection | null) => void;
 }
 
-export default function SettingsPage({ user, onLogout }: SettingsPageProps) {
+export default function SettingsPage({
+  user,
+  onLogout,
+  initialSection = null,
+  onSectionChange,
+}: SettingsPageProps) {
   const canEdit = user.role === "owner";
+  const isAdmin = user.role === "admin" || canEdit;
   const { t } = useI18n();
-  const [activeSection, setActiveSection] = useState<SettingsSection | null>(null);
+  const [activeSection, setActiveSection] = useState<SettingsSection | null>(initialSection);
+
+  useEffect(() => {
+    setActiveSection(initialSection);
+  }, [initialSection]);
+
+  useEffect(() => {
+    const el = document.querySelector<HTMLElement>('[data-tour="content"]');
+    if (el) {
+      el.scrollTop = 0;
+      el.scrollTo({ top: 0, behavior: "instant" });
+    }
+    window.scrollTo({ top: 0, behavior: "instant" });
+  }, [activeSection]);
+
+  function selectSection(sec: SettingsSection | null) {
+    setActiveSection(sec);
+    onSectionChange?.(sec);
+  }
 
   if (activeSection === null) {
-    return <SettingsHub user={user} onSelectSection={setActiveSection} />;
+    return <SettingsHub user={user} onSelectSection={selectSection} />;
   }
 
   // Handle direct full-page User Profile & Personal Appearance
@@ -51,7 +77,7 @@ export default function SettingsPage({ user, onLogout }: SettingsPageProps) {
     return (
       <ProfilePage
         user={user}
-        onBack={() => setActiveSection(null)}
+        onBack={() => selectSection(null)}
         onLogout={onLogout}
       />
     );
@@ -65,10 +91,10 @@ export default function SettingsPage({ user, onLogout }: SettingsPageProps) {
           color="gray"
           size="sm"
           leftSection={<ArrowLeft size={16} />}
-          onClick={() => setActiveSection(null)}
+          onClick={() => selectSection(null)}
           radius="md"
         >
-          ← All Settings
+          All Settings
         </Button>
       </Group>
 
@@ -175,7 +201,7 @@ export default function SettingsPage({ user, onLogout }: SettingsPageProps) {
       )}
 
       {/* Modules & Audit Log */}
-      {activeSection === "advanced" && canEdit && (
+      {activeSection === "advanced" && isAdmin && (
         <Stack gap="md">
           <Box>
             <Title order={4}>System Audit & Feature Modules</Title>
@@ -183,14 +209,16 @@ export default function SettingsPage({ user, onLogout }: SettingsPageProps) {
               Toggle optional business capabilities and review staff audit events.
             </Text>
           </Box>
-          <Tabs defaultValue="modules">
+          <Tabs defaultValue={canEdit ? "modules" : "audit"}>
             <Tabs.List mb="md">
-              <Tabs.Tab value="modules">Feature Modules</Tabs.Tab>
+              {canEdit && <Tabs.Tab value="modules">Feature Modules</Tabs.Tab>}
               <Tabs.Tab value="audit">{t("settings.tab.audit")}</Tabs.Tab>
             </Tabs.List>
-            <Tabs.Panel value="modules">
-              <ModulesTab companyId={user.companyId ?? ""} />
-            </Tabs.Panel>
+            {canEdit && (
+              <Tabs.Panel value="modules">
+                <ModulesTab companyId={user.companyId ?? ""} />
+              </Tabs.Panel>
+            )}
             <Tabs.Panel value="audit">
               <AuditLogTab />
             </Tabs.Panel>

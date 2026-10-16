@@ -3,10 +3,17 @@ import {
   Alert,
   Button,
   Card,
+  Group,
   Stack,
   Text,
   Title,
 } from "@mantine/core";
+import {
+  AlertTriangle,
+  DatabaseBackup,
+  FolderOpen,
+  Upload,
+} from "lucide-react";
 import {
   createBackup,
   getErrorMessage,
@@ -83,34 +90,50 @@ export function BackupRestoreTab({ onLogout }: BackupRestoreTabProps) {
   return (
     <Stack maw={600}>
       <Card withBorder padding="lg">
-        <Title order={5} mb="md">
-          💾 Backup
-        </Title>
+        <Group gap="xs" mb="md">
+          <DatabaseBackup size={18} />
+          <Title order={5}>Backup</Title>
+        </Group>
         <Text size="sm" c="dimmed" mb="md">
           Save a copy of your database to a location of your choice (USB drive,
           cloud folder, external hard drive).
         </Text>
-        <Button onClick={handleBackup} loading={backing}>
+        <Button
+          leftSection={<DatabaseBackup size={15} />}
+          onClick={handleBackup}
+          loading={backing}
+        >
           Create Backup...
         </Button>
       </Card>
 
       <Card withBorder padding="lg" style={{ borderColor: "#fd7e14" }}>
-        <Title order={5} mb="md">
-          📥 Restore
-        </Title>
+        <Group gap="xs" mb="md">
+          <Upload size={18} color="#fd7e14" />
+          <Title order={5}>Restore</Title>
+        </Group>
         <Text size="sm" c="dimmed" mb="md">
           Restore your database from a previous backup file. This will replace
           all current data. A safety backup of the current database is created
           automatically before restoring.
         </Text>
-        <Alert color="orange" variant="light" mb="md">
+        <Alert
+          color="orange"
+          variant="light"
+          icon={<AlertTriangle size={16} />}
+          mb="md"
+        >
           <Text size="sm" fw={500}>
-            ⚠️ Restoring will replace all current data. The app will log you out
+            Restoring will replace all current data. The app will log you out
             and you'll need to restart.
           </Text>
         </Alert>
-        <Button color="orange" onClick={handleSelectRestoreFile} loading={restoring}>
+        <Button
+          color="orange"
+          leftSection={<Upload size={15} />}
+          onClick={handleSelectRestoreFile}
+          loading={restoring}
+        >
           Restore from Backup...
         </Button>
       </Card>
@@ -127,9 +150,10 @@ export function BackupRestoreTab({ onLogout }: BackupRestoreTabProps) {
       )}
 
       <Card withBorder padding="lg">
-        <Title order={5} mb="md">
-          📁 Local Database Location
-        </Title>
+        <Group gap="xs" mb="md">
+          <FolderOpen size={18} />
+          <Title order={5}>Local Database Location</Title>
+        </Group>
         <Text size="sm" c="dimmed">
           Your active database is stored locally in SQLite WAL mode.
         </Text>

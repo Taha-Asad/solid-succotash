@@ -10,12 +10,14 @@ import {
   Title,
 } from "@mantine/core";
 import {
+  ArrowLeft,
   CheckCircle2,
   ChevronDown,
   MessageSquare,
   Printer,
   ReceiptText,
   Trash2,
+  Wallet,
   XCircle,
 } from "lucide-react";
 import type { InvoiceFbrStatus, PublicInvoice } from "../../../types/backend";
@@ -88,8 +90,12 @@ export function InvoiceDetailActions({
       {/* Header & Primary Actions */}
       <Group justify="space-between" wrap="wrap" gap="sm">
         <Group wrap="wrap" gap="xs">
-          <Button variant="subtle" onClick={onBack}>
-            ← Back
+          <Button
+            variant="subtle"
+            leftSection={<ArrowLeft size={16} />}
+            onClick={onBack}
+          >
+            Back
           </Button>
           <Title order={3}>{invoice.invoiceNumber}</Title>
           <Badge
@@ -197,14 +203,22 @@ export function InvoiceDetailActions({
           )}
 
           {isDraft && canFinalize && (
-            <Button color="green" onClick={onFinalize}>
-              ✓ Finalize Invoice
+            <Button
+              color="green"
+              leftSection={<CheckCircle2 size={15} />}
+              onClick={onFinalize}
+            >
+              Finalize Invoice
             </Button>
           )}
 
           {isFinalized && canEdit && (
-            <Button color="blue" onClick={onOpenPayment}>
-              💰 Record Payment
+            <Button
+              color="blue"
+              leftSection={<Wallet size={15} />}
+              onClick={onOpenPayment}
+            >
+              Record Payment
             </Button>
           )}
 
