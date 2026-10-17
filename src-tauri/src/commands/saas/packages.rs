@@ -46,14 +46,28 @@ pub async fn list_packages(
                 seen.insert(p.id.clone());
                 combined.push(p.clone());
 
-                // Cache to local SQLite so offline operations and foreign keys resolve smoothly
+                // Cache to local SQLite using ON CONFLICT DO UPDATE (never INSERT OR REPLACE,
+                // which triggers DELETE + INSERT and fails if company_subscriptions references id)
                 let _ = sqlx::query(
                     r#"
-                    INSERT OR REPLACE INTO packages (
+                    INSERT INTO packages (
                         id, name, description, price, billing_cycle,
                         module_limits, max_users, max_branches, max_storage_mb,
                         features, is_active, sort_order, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(NULLIF(?, ''), CURRENT_TIMESTAMP), COALESCE(NULLIF(?, ''), CURRENT_TIMESTAMP))
+                    ON CONFLICT (id) DO UPDATE SET
+                        name = excluded.name,
+                        description = excluded.description,
+                        price = excluded.price,
+                        billing_cycle = excluded.billing_cycle,
+                        module_limits = excluded.module_limits,
+                        max_users = excluded.max_users,
+                        max_branches = excluded.max_branches,
+                        max_storage_mb = excluded.max_storage_mb,
+                        features = excluded.features,
+                        is_active = excluded.is_active,
+                        sort_order = excluded.sort_order,
+                        updated_at = excluded.updated_at
                     "#,
                 )
                 .bind(&p.id)
@@ -66,7 +80,7 @@ pub async fn list_packages(
                 .bind(p.max_branches)
                 .bind(p.max_storage_mb)
                 .bind(serde_json::to_string(&p.features).unwrap_or_else(|_| "[]".to_string()))
-                .bind(p.is_active)
+                .bind(if p.is_active { 1 } else { 0 })
                 .bind(p.sort_order)
                 .bind(&p.created_at)
                 .bind(&p.updated_at)
@@ -76,6 +90,33 @@ pub async fn list_packages(
             for r in local_rows {
                 let p = r.to_public();
                 if !seen.contains(&p.id) {
+                    // Push local-only package to Neon so selecting it never fails cloud FK constraint
+                    if let Some(pg_pool) = cloud_db.pool() {
+                        let _ = sqlx::query(
+                            r#"
+                            INSERT INTO packages (
+                                id, name, description, price, billing_cycle, module_limits,
+                                max_users, max_branches, max_storage_mb, features, is_active, sort_order, updated_at
+                            )
+                            VALUES ($1, $2, $3, $4::float8::numeric, $5, $6::jsonb, $7, $8, $9, $10::jsonb, $11, $12, NOW())
+                            ON CONFLICT (id) DO NOTHING
+                            "#,
+                        )
+                        .bind(&r.id)
+                        .bind(&r.name)
+                        .bind(&r.description)
+                        .bind(r.price)
+                        .bind(&r.billing_cycle)
+                        .bind(&r.module_limits)
+                        .bind(r.max_users)
+                        .bind(r.max_branches)
+                        .bind(r.max_storage_mb)
+                        .bind(&r.features)
+                        .bind(r.is_active)
+                        .bind(r.sort_order)
+                        .execute(pg_pool)
+                        .await;
+                    }
                     seen.insert(p.id.clone());
                     combined.push(p);
                 }
@@ -325,12 +366,25 @@ pub async fn update_package(
 
     sqlx::query(
         r#"
-        INSERT OR REPLACE INTO packages (
+        INSERT INTO packages (
             id, name, description, price, billing_cycle,
             module_limits, max_users, max_branches, max_storage_mb,
             features, is_active, sort_order, created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(NULLIF(?, ''), CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
+        ON CONFLICT (id) DO UPDATE SET
+            name = excluded.name,
+            description = excluded.description,
+            price = excluded.price,
+            billing_cycle = excluded.billing_cycle,
+            module_limits = excluded.module_limits,
+            max_users = excluded.max_users,
+            max_branches = excluded.max_branches,
+            max_storage_mb = excluded.max_storage_mb,
+            features = excluded.features,
+            is_active = excluded.is_active,
+            sort_order = excluded.sort_order,
+            updated_at = CURRENT_TIMESTAMP
         "#,
     )
     .bind(&package_id)
@@ -343,7 +397,7 @@ pub async fn update_package(
     .bind(current.max_branches)
     .bind(current.max_storage_mb)
     .bind(&current.features)
-    .bind(current.is_active)
+    .bind(if current.is_active { 1 } else { 0 })
     .bind(current.sort_order)
     .bind(&current.created_at)
     .execute(pool.inner())

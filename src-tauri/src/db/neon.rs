@@ -755,22 +755,31 @@ impl NeonCloudDb {
         .await
         .map_err(|e| AppError::database(format!("Could not sync owner to cloud: {e}")))?;
 
-        // Attach default Starter subscription if not present
-        let sub_id = Uuid::new_v4().to_string();
-        sqlx::query(
-            r#"
-            INSERT INTO company_subscriptions (
-                id, company_id, package_id, status, trial_ends_at,
-                current_period_start, current_period_end, metadata
-            ) VALUES ($1, $2, 'pkg-starter', 'active', NULL, NOW(), NOW() + INTERVAL '30 days', '{}'::jsonb)
-            ON CONFLICT (id) DO NOTHING;
-            "#,
+        // Attach default subscription if not present, resolving an active package dynamically
+        let default_pkg_id: Option<String> = sqlx::query_scalar(
+            "SELECT id FROM packages WHERE deleted_at IS NULL ORDER BY sort_order ASC LIMIT 1"
         )
-        .bind(&sub_id)
-        .bind(&company.id)
-        .execute(&mut *tx)
+        .fetch_optional(&mut *tx)
         .await
-        .map_err(|e| AppError::database(format!("Could not create cloud subscription: {e}")))?;
+        .unwrap_or(None);
+
+        if let Some(pkg_id) = default_pkg_id {
+            let sub_id = Uuid::new_v4().to_string();
+            let _ = sqlx::query(
+                r#"
+                INSERT INTO company_subscriptions (
+                    id, company_id, package_id, status, trial_ends_at,
+                    current_period_start, current_period_end, metadata
+                ) VALUES ($1, $2, $3, 'active', NULL, NOW(), NOW() + INTERVAL '30 days', '{}'::jsonb)
+                ON CONFLICT (id) DO NOTHING;
+                "#,
+            )
+            .bind(&sub_id)
+            .bind(&company.id)
+            .bind(&pkg_id)
+            .execute(&mut *tx)
+            .await;
+        }
 
         tx.commit()
             .await
@@ -1071,6 +1080,57 @@ impl NeonCloudDb {
             None => return,
         };
 
+        // 0. Sync all local SQLite packages up to Neon first so foreign keys on company_subscriptions never fail
+        if let Ok(local_pkgs) = sqlx::query_as::<_, PackageRow>(
+            r#"
+            SELECT id, name, description, price, billing_cycle, module_limits,
+                   max_users, max_branches, max_storage_mb, features,
+                   is_active, sort_order, created_at, updated_at
+            FROM packages
+            WHERE deleted_at IS NULL
+            "#,
+        )
+        .fetch_all(sqlite_pool)
+        .await
+        {
+            for pkg in local_pkgs {
+                let limits_json = if serde_json::from_str::<serde_json::Value>(&pkg.module_limits).is_ok() {
+                    pkg.module_limits.clone()
+                } else {
+                    "{}".to_string()
+                };
+                let features_json = if serde_json::from_str::<serde_json::Value>(&pkg.features).is_ok() {
+                    pkg.features.clone()
+                } else {
+                    "[]".to_string()
+                };
+                let _ = sqlx::query(
+                    r#"
+                    INSERT INTO packages (
+                        id, name, description, price, billing_cycle, module_limits,
+                        max_users, max_branches, max_storage_mb, features, is_active, sort_order, updated_at
+                    )
+                    VALUES ($1, $2, $3, $4::float8::numeric, $5, $6::jsonb, $7, $8, $9, $10::jsonb, $11, $12, NOW())
+                    ON CONFLICT (id) DO NOTHING
+                    "#,
+                )
+                .bind(&pkg.id)
+                .bind(&pkg.name)
+                .bind(&pkg.description)
+                .bind(pkg.price)
+                .bind(&pkg.billing_cycle)
+                .bind(&limits_json)
+                .bind(pkg.max_users)
+                .bind(pkg.max_branches)
+                .bind(pkg.max_storage_mb)
+                .bind(&features_json)
+                .bind(pkg.is_active)
+                .bind(pkg.sort_order)
+                .execute(pg_pool)
+                .await;
+            }
+        }
+
         // 1. Sync all local non-deleted companies up to Neon
         let local_companies = match sqlx::query_as::<_, PublicCompany>(
             r#"
@@ -1090,6 +1150,13 @@ impl NeonCloudDb {
                 return;
             }
         };
+
+        let default_pkg_id: Option<String> = sqlx::query_scalar(
+            "SELECT id FROM packages WHERE deleted_at IS NULL ORDER BY sort_order ASC LIMIT 1"
+        )
+        .fetch_optional(pg_pool)
+        .await
+        .unwrap_or(None);
 
         for company in local_companies {
             // Check if company already exists in Neon
@@ -1132,20 +1199,23 @@ impl NeonCloudDb {
                 .await;
 
                 // Ensure subscription exists in Neon
-                let sub_id = Uuid::new_v4().to_string();
-                let _ = sqlx::query(
-                    r#"
-                    INSERT INTO company_subscriptions (
-                        id, company_id, package_id, status, trial_ends_at,
-                        current_period_start, current_period_end, metadata
-                    ) VALUES ($1, $2, 'pkg-starter', 'active', NULL, NOW(), NOW() + INTERVAL '30 days', '{}'::jsonb)
-                    ON CONFLICT (id) DO NOTHING;
-                    "#,
-                )
-                .bind(&sub_id)
-                .bind(&company.id)
-                .execute(pg_pool)
-                .await;
+                if let Some(ref pkg_id) = default_pkg_id {
+                    let sub_id = Uuid::new_v4().to_string();
+                    let _ = sqlx::query(
+                        r#"
+                        INSERT INTO company_subscriptions (
+                            id, company_id, package_id, status, trial_ends_at,
+                            current_period_start, current_period_end, metadata
+                        ) VALUES ($1, $2, $3, 'active', NULL, NOW(), NOW() + INTERVAL '30 days', '{}'::jsonb)
+                        ON CONFLICT (id) DO NOTHING;
+                        "#,
+                    )
+                    .bind(&sub_id)
+                    .bind(&company.id)
+                    .bind(pkg_id)
+                    .execute(pg_pool)
+                    .await;
+                }
             }
         }
 
@@ -1201,16 +1271,30 @@ impl NeonCloudDb {
             .await;
         }
 
-        // 3. Sync packages from Neon down into local SQLite so offline & local checks work smoothly
+        // 3. Sync packages from Neon down into local SQLite using ON CONFLICT DO UPDATE
+        // (never INSERT OR REPLACE, which fails if company_subscriptions references the package)
         if let Ok(cloud_pkgs) = self.list_packages(true).await {
             for p in cloud_pkgs {
                 let _ = sqlx::query(
                     r#"
-                    INSERT OR REPLACE INTO packages (
+                    INSERT INTO packages (
                         id, name, description, price, billing_cycle,
                         module_limits, max_users, max_branches, max_storage_mb,
                         features, is_active, sort_order, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(NULLIF(?, ''), CURRENT_TIMESTAMP), COALESCE(NULLIF(?, ''), CURRENT_TIMESTAMP))
+                    ON CONFLICT (id) DO UPDATE SET
+                        name = excluded.name,
+                        description = excluded.description,
+                        price = excluded.price,
+                        billing_cycle = excluded.billing_cycle,
+                        module_limits = excluded.module_limits,
+                        max_users = excluded.max_users,
+                        max_branches = excluded.max_branches,
+                        max_storage_mb = excluded.max_storage_mb,
+                        features = excluded.features,
+                        is_active = excluded.is_active,
+                        sort_order = excluded.sort_order,
+                        updated_at = excluded.updated_at
                     "#,
                 )
                 .bind(&p.id)
@@ -1223,7 +1307,7 @@ impl NeonCloudDb {
                 .bind(p.max_branches)
                 .bind(p.max_storage_mb)
                 .bind(serde_json::to_string(&p.features).unwrap_or_else(|_| "[]".to_string()))
-                .bind(p.is_active)
+                .bind(if p.is_active { 1 } else { 0 })
                 .bind(p.sort_order)
                 .bind(&p.created_at)
                 .bind(&p.updated_at)

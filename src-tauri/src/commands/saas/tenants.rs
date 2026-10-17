@@ -200,7 +200,7 @@ pub async fn register_tenant(
 
     let cloud_db = crate::db::neon::NeonCloudDb::global();
     if cloud_db.is_connected() {
-        return cloud_db
+        let res = cloud_db
             .register_tenant(
                 &company_name,
                 &admin_full_name,
@@ -215,7 +215,49 @@ pub async fn register_tenant(
                 strn.as_deref(),
                 province.as_deref(),
             )
-            .await;
+            .await?;
+
+        // Cache company and subscription into local SQLite so subsequent plan assignments work seamlessly
+        let _ = sqlx::query(
+            r#"
+            INSERT OR IGNORE INTO companies (
+                id, name, email, phone, address, tax_number, currency_code,
+                is_active, ntn, strn, province, version
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, 1)
+            "#,
+        )
+        .bind(&res.company.id)
+        .bind(&res.company.name)
+        .bind(&res.company.email)
+        .bind(&res.company.phone)
+        .bind(&res.company.address)
+        .bind(&res.company.tax_number)
+        .bind(&res.company.currency_code)
+        .bind(&res.company.ntn)
+        .bind(&res.company.strn)
+        .bind(&res.company.province)
+        .execute(pool.inner())
+        .await;
+
+        let _ = sqlx::query(
+            r#"
+            INSERT OR IGNORE INTO company_subscriptions (
+                id, company_id, package_id, status, trial_ends_at,
+                current_period_start, current_period_end, metadata
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, '{}')
+            "#,
+        )
+        .bind(&res.subscription.id)
+        .bind(&res.company.id)
+        .bind(&res.subscription.package_id)
+        .bind(&res.subscription.status)
+        .bind(&res.subscription.trial_ends_at)
+        .bind(&res.subscription.current_period_start)
+        .bind(&res.subscription.current_period_end)
+        .execute(pool.inner())
+        .await;
+
+        return Ok(res);
     }
 
     let company_id = Uuid::new_v4().to_string();

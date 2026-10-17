@@ -132,14 +132,14 @@ export function ChangeSubscriptionModal({
             onChange={(val) => val && setStatus(val)}
             data={[
               { value: "active", label: "Active (Standard Operations)" },
-              { value: "trialing", label: "Trialing (Grace / Evaluation)" },
+              { value: "trial", label: "Trial (Grace / Evaluation)" },
               { value: "past_due", label: "Past Due (Payment Overdue)" },
-              { value: "canceled", label: "Canceled (Terminated)" },
+              { value: "cancelled", label: "Cancelled (Terminated)" },
             ]}
             disabled={submitting}
           />
 
-          {status === "trialing" && (
+          {status === "trial" && (
             <NumberInput
               label="Evaluation Trial Days"
               min={1}

@@ -2,7 +2,7 @@ use super::types::*;
 use crate::commands::audit::log_audit;
 use crate::commands::auth::{require_current_user, PublicUser, SessionState};
 use crate::error::AppError;
-use sqlx::SqlitePool;
+use sqlx::{Row, SqlitePool};
 use uuid::Uuid;
 
 // ==========================================
@@ -98,12 +98,135 @@ pub const PACKAGE_SELECT: &str = "
 
 pub async fn fetch_package(pool: &SqlitePool, package_id: &str) -> Result<PackageRow, AppError> {
     let sql = format!("{PACKAGE_SELECT} WHERE id = ? AND deleted_at IS NULL");
-    sqlx::query_as::<_, PackageRow>(sqlx::AssertSqlSafe(&*sql))
+    let local_opt = sqlx::query_as::<_, PackageRow>(sqlx::AssertSqlSafe(&*sql))
         .bind(package_id)
         .fetch_optional(pool)
         .await
-        .map_err(|error| format!("Database error: {error}"))?
-        .ok_or_else(|| AppError::internal("Package not found".to_string()))
+        .map_err(|error| format!("Database error: {error}"))?;
+
+    let cloud_db = crate::db::neon::NeonCloudDb::global();
+
+    if let Some(pkg) = local_opt {
+        // Ensure this local package also exists in Neon Cloud so foreign key constraints on company_subscriptions never fail
+        if let Some(pg_pool) = cloud_db.pool() {
+            let limits_json = if serde_json::from_str::<serde_json::Value>(&pkg.module_limits).is_ok() {
+                pkg.module_limits.clone()
+            } else {
+                "{}".to_string()
+            };
+            let features_json = if serde_json::from_str::<serde_json::Value>(&pkg.features).is_ok() {
+                pkg.features.clone()
+            } else {
+                "[]".to_string()
+            };
+            let _ = sqlx::query(
+                r#"
+                INSERT INTO packages (
+                    id, name, description, price, billing_cycle, module_limits,
+                    max_users, max_branches, max_storage_mb, features, is_active, sort_order, updated_at
+                )
+                VALUES ($1, $2, $3, $4::float8::numeric, $5, $6::jsonb, $7, $8, $9, $10::jsonb, $11, $12, NOW())
+                ON CONFLICT (id) DO NOTHING
+                "#,
+            )
+            .bind(&pkg.id)
+            .bind(&pkg.name)
+            .bind(&pkg.description)
+            .bind(pkg.price)
+            .bind(&pkg.billing_cycle)
+            .bind(&limits_json)
+            .bind(pkg.max_users)
+            .bind(pkg.max_branches)
+            .bind(pkg.max_storage_mb)
+            .bind(&features_json)
+            .bind(pkg.is_active)
+            .bind(pkg.sort_order)
+            .execute(pg_pool)
+            .await;
+        }
+        return Ok(pkg);
+    }
+
+    // If not in local SQLite, try fetching from Neon Cloud and caching locally
+    if let Some(pg_pool) = cloud_db.pool() {
+        let pg_row = sqlx::query(
+            r#"
+            SELECT id, name, description, price::float8 as price, billing_cycle,
+                   module_limits::text as module_limits, max_users, max_branches,
+                   max_storage_mb, features::text as features, is_active, sort_order,
+                   COALESCE(TO_CHAR(created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), CURRENT_TIMESTAMP::text) AS created_at,
+                   COALESCE(TO_CHAR(updated_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), CURRENT_TIMESTAMP::text) AS updated_at
+            FROM packages
+            WHERE id = $1 AND deleted_at IS NULL
+            "#,
+        )
+        .bind(package_id)
+        .fetch_optional(pg_pool)
+        .await
+        .map_err(|e| AppError::database(format!("Cloud DB error fetching package: {e}")))?;
+
+        if let Some(pr) = pg_row {
+            let pkg = PackageRow {
+                id: pr.get("id"),
+                name: pr.get("name"),
+                description: pr.get("description"),
+                price: pr.get("price"),
+                billing_cycle: pr.get("billing_cycle"),
+                module_limits: pr.get("module_limits"),
+                max_users: pr.get("max_users"),
+                max_branches: pr.get("max_branches"),
+                max_storage_mb: pr.get("max_storage_mb"),
+                features: pr.get("features"),
+                is_active: pr.get("is_active"),
+                sort_order: pr.get("sort_order"),
+                created_at: pr.get("created_at"),
+                updated_at: pr.get("updated_at"),
+            };
+
+            let _ = sqlx::query(
+                r#"
+                INSERT INTO packages (
+                    id, name, description, price, billing_cycle,
+                    module_limits, max_users, max_branches, max_storage_mb,
+                    features, is_active, sort_order, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(NULLIF(?, ''), CURRENT_TIMESTAMP), COALESCE(NULLIF(?, ''), CURRENT_TIMESTAMP))
+                ON CONFLICT (id) DO UPDATE SET
+                    name = excluded.name,
+                    description = excluded.description,
+                    price = excluded.price,
+                    billing_cycle = excluded.billing_cycle,
+                    module_limits = excluded.module_limits,
+                    max_users = excluded.max_users,
+                    max_branches = excluded.max_branches,
+                    max_storage_mb = excluded.max_storage_mb,
+                    features = excluded.features,
+                    is_active = excluded.is_active,
+                    sort_order = excluded.sort_order,
+                    updated_at = excluded.updated_at
+                "#,
+            )
+            .bind(&pkg.id)
+            .bind(&pkg.name)
+            .bind(&pkg.description)
+            .bind(pkg.price)
+            .bind(&pkg.billing_cycle)
+            .bind(&pkg.module_limits)
+            .bind(pkg.max_users)
+            .bind(pkg.max_branches)
+            .bind(pkg.max_storage_mb)
+            .bind(&pkg.features)
+            .bind(if pkg.is_active { 1 } else { 0 })
+            .bind(pkg.sort_order)
+            .bind(&pkg.created_at)
+            .bind(&pkg.updated_at)
+            .execute(pool)
+            .await;
+
+            return Ok(pkg);
+        }
+    }
+
+    Err(AppError::internal("Package not found".to_string()))
 }
 
 pub async fn fetch_subscription_for_company(

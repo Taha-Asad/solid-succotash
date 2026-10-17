@@ -49,20 +49,55 @@ pub async fn assign_company_subscription(
 ) -> Result<PublicSubscription, AppError> {
     let actor = require_super_admin(pool.inner(), session.inner()).await?;
 
-    // Ensure package + company exist.
+    // Ensure package + company exist (fetch_package bidirectionally syncs between SQLite and Neon).
     fetch_package(pool.inner(), &package_id).await?;
-    let company_exists = sqlx::query_scalar::<_, i64>(
+    let mut company_exists = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM companies WHERE id = ? AND deleted_at IS NULL",
     )
     .bind(&company_id)
     .fetch_one(pool.inner())
     .await
     .map_err(|error| format!("Database error: {error}"))?;
+
+    let cloud_db = crate::db::neon::NeonCloudDb::global();
+    if company_exists == 0 && cloud_db.is_connected() {
+        if let Ok(detail) = cloud_db.get_tenant_company_detail(&company_id).await {
+            let c = &detail.company;
+            let _ = sqlx::query(
+                r#"
+                INSERT OR IGNORE INTO companies (
+                    id, name, email, phone, address, tax_number, currency_code,
+                    is_active, ntn, strn, province, version
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                "#,
+            )
+            .bind(&c.id)
+            .bind(&c.name)
+            .bind(&c.email)
+            .bind(&c.phone)
+            .bind(&c.address)
+            .bind(&c.tax_number)
+            .bind(&c.currency_code)
+            .bind(if c.is_active { 1 } else { 0 })
+            .bind(&c.ntn)
+            .bind(&c.strn)
+            .bind(&c.province)
+            .execute(pool.inner())
+            .await;
+            company_exists = 1;
+        }
+    }
+
     if company_exists == 0 {
         return Err(AppError::internal("Company not found".to_string()));
     }
 
-    let status = status.unwrap_or_else(|| "active".to_string());
+    let raw_status = status.unwrap_or_else(|| "active".to_string());
+    let status = match raw_status.trim().to_lowercase().as_str() {
+        "trialing" => "trial".to_string(),
+        "canceled" => "cancelled".to_string(),
+        other => other.to_string(),
+    };
     if !["active", "trial", "past_due", "suspended", "cancelled", "ended"].contains(&status.as_str())
     {
         return Err(AppError::internal("Invalid subscription status".to_string()));
@@ -135,7 +170,7 @@ pub async fn assign_company_subscription(
 
     let cloud_db = crate::db::neon::NeonCloudDb::global();
     if cloud_db.is_connected() {
-        let _ = cloud_db
+        cloud_db
             .assign_company_subscription(
                 &company_id,
                 &package_id,
@@ -144,7 +179,7 @@ pub async fn assign_company_subscription(
                 &start,
                 &period_end,
             )
-            .await;
+            .await?;
     }
 
     // Synchronize company_modules with new package limits
