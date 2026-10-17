@@ -31,6 +31,7 @@ import { RetentionTab } from "./tabs/RetentionTab";
 import { FbrSettingsTab } from "./tabs/FbrSettingsTab";
 import { ModulesTab } from "./tabs/ModulesTab";
 import { AuditLogTab } from "./tabs/AuditLogTab";
+import { SupportTicketsTab } from "./tabs/SupportTicketsTab";
 
 interface SettingsPageProps {
   user: PublicUser;
@@ -223,6 +224,19 @@ export default function SettingsPage({
               <AuditLogTab />
             </Tabs.Panel>
           </Tabs>
+        </Stack>
+      )}
+
+      {/* Subscription & Support Tickets */}
+      {activeSection === "support" && (
+        <Stack gap="md">
+          <Box>
+            <Title order={4}>Subscription Plan & Support Tickets</Title>
+            <Text size="sm" c="dimmed">
+              Manage your Corbel ERP commercial plan, contact Taha Asadullah, or open a support ticket.
+            </Text>
+          </Box>
+          <SupportTicketsTab />
         </Stack>
       )}
     </Stack>

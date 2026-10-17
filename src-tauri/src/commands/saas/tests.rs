@@ -30,7 +30,7 @@
     #[tokio::test]
     async fn seeded_packages_are_listed_for_logged_in_users() {
         // Input: seeded database, any logged-in user.
-        // Expected: the 3 default active packages are returned (spec §14.1.6).
+        // Expected: the 3 canonical active packages are returned (spec v5.2 §4.3).
         let app = setup_app().await;
         login_super_admin(&app).await;
 
@@ -38,9 +38,21 @@
             .await
             .expect("list packages");
         assert_eq!(packages.len(), 3);
-        assert!(packages.iter().any(|p| p.id == "pkg-basic"));
-        assert!(packages.iter().any(|p| p.id == "pkg-standard"));
-        assert!(packages.iter().any(|p| p.id == "pkg-premium"));
+        let basic = packages.iter().find(|p| p.id == "pkg-basic").expect("pkg-basic");
+        let standard = packages.iter().find(|p| p.id == "pkg-standard").expect("pkg-standard");
+        let premium = packages.iter().find(|p| p.id == "pkg-premium").expect("pkg-premium");
+
+        assert_eq!(basic.price, 3400.0);
+        assert_eq!(basic.max_users, 5);
+        assert_eq!(basic.max_branches, 1);
+
+        assert_eq!(standard.price, 4200.0);
+        assert_eq!(standard.max_users, 15);
+        assert_eq!(standard.max_branches, 3);
+
+        assert_eq!(premium.price, 6000.0);
+        assert_eq!(premium.max_users, 100);
+        assert_eq!(premium.max_branches, 10);
     }
 
     // ---------------------------------------------------------------
@@ -387,7 +399,7 @@
             .expect("analytics before");
         assert_eq!(before.total_tenants, 0);
 
-        // Register two tenants on pkg-standard (1499/month) and one on pkg-basic.
+        // Register two tenants on pkg-standard (4200/month) and one on pkg-basic (3400/month).
         for email in ["admin@one.com", "admin@two.com"] {
             register_tenant(
                 state_of(&app),
@@ -433,7 +445,7 @@
         assert_eq!(after.total_tenants, 3);
         assert_eq!(after.active_tenants, 3);
         assert_eq!(after.total_users, 4); // 3 tenant admins + the super admin
-        assert_eq!(after.mrr, 1499.0 * 2.0);
+        assert_eq!(after.mrr, 4200.0 * 2.0 + 3400.0);
 
         let by_pkg = after.tenants_by_package;
         let standard = by_pkg.iter().find(|p| p.package_id == "pkg-standard").unwrap();
@@ -694,3 +706,225 @@
         assert!(detail.subscription.is_some());
         assert!(!detail.modules.is_empty());
     }
+
+    #[tokio::test]
+    async fn expired_trial_enforces_read_only_mode_blocking_writes_allowing_reads() {
+        let app = setup_app().await;
+        register_owner(&app, "owner@readonly.test").await;
+        let pool = state_of::<SqlitePool>(&app);
+
+        let company_id: String = sqlx::query_scalar("SELECT id FROM companies LIMIT 1")
+            .fetch_one(&*pool)
+            .await
+            .expect("company_id");
+
+        // During active 14-day trial, both view and create succeed
+        crate::commands::permissions::check_permission(&*pool, "owner", "invoices", "view")
+            .await
+            .expect("view allowed during active trial");
+        crate::commands::permissions::check_permission(&*pool, "owner", "invoices", "create")
+            .await
+            .expect("create allowed during active trial");
+
+        // Backdate trial_ends_at and current_period_end to simulate Day 15 (expired trial)
+        sqlx::query(
+            "UPDATE company_subscriptions
+             SET trial_ends_at = datetime('now', '-1 day'),
+                 current_period_end = datetime('now', '-1 day')
+             WHERE company_id = ?1",
+        )
+        .bind(&company_id)
+        .execute(&*pool)
+        .await
+        .expect("backdate trial");
+
+        // Read-only permissions (view, export) MUST still succeed on Day 15+
+        crate::commands::permissions::check_permission(&*pool, "owner", "invoices", "view")
+            .await
+            .expect("view still allowed in Read-Only mode");
+        crate::commands::permissions::check_permission(&*pool, "owner", "invoices", "export")
+            .await
+            .expect("export still allowed in Read-Only mode");
+
+        // Write permissions (create, edit, delete, import) MUST be blocked with Read-Only mode message
+        let err = crate::commands::permissions::check_permission(&*pool, "owner", "invoices", "create")
+            .await
+            .expect_err("create blocked in Read-Only mode");
+        assert!(
+            err.contains("Read-Only mode"),
+            "Expected Read-Only mode message, got: {err}"
+        );
+
+        // Verify subscription status automatically transitioned from 'trial' to 'ended'
+        let new_status: String = sqlx::query_scalar(
+            "SELECT status FROM company_subscriptions WHERE company_id = ?1",
+        )
+        .bind(&company_id)
+        .fetch_one(&*pool)
+        .await
+        .expect("fetch status");
+        assert_eq!(new_status, "ended");
+    }
+
+    #[tokio::test]
+    async fn support_ticket_lifecycle_create_reply_resolve_and_expired_trial_access() {
+        let app = setup_app().await;
+        let owner = register_owner(&app, "owner@tickets.test").await;
+        let pool = state_of::<SqlitePool>(&app);
+
+        let company_id = owner.company_id.clone().expect("owner company_id");
+
+        // Backdate trial so tenant is in Day-15 Read-Only mode
+        sqlx::query(
+            "UPDATE company_subscriptions
+             SET status = 'ended',
+                 trial_ends_at = datetime('now', '-2 days'),
+                 current_period_end = datetime('now', '-2 days')
+             WHERE company_id = ?1",
+        )
+        .bind(&company_id)
+        .execute(&*pool)
+        .await
+        .expect("expire trial");
+
+        // Tenant in Read-Only mode CAN still create a support/billing ticket (§9.2)
+        let created = create_ticket(
+            state_of(&app),
+            state_of(&app),
+            "Upgrade to Standard Plan (4,200 PKR)".to_string(),
+            Some("billing".to_string()),
+            Some("high".to_string()),
+            "Our 14-day trial ended. Please upgrade us to Standard.".to_string(),
+            None,
+        )
+        .await
+        .expect("create_ticket in Read-Only mode");
+
+        assert_eq!(created.ticket.company_id, company_id);
+        assert_eq!(created.ticket.category, "billing");
+        assert_eq!(created.ticket.priority, "high");
+        assert_eq!(created.ticket.status, "open");
+        assert_eq!(created.ticket.message_count, 1);
+        assert_eq!(created.messages.len(), 1);
+        assert_eq!(created.messages[0].sender_role, "owner");
+
+        // Switch to Super Admin and inspect inbox
+        login_super_admin(&app).await;
+        let all_tickets = list_tickets(state_of(&app), state_of(&app), None, None)
+            .await
+            .expect("super_admin list_tickets");
+        assert_eq!(all_tickets.len(), 1);
+        assert_eq!(all_tickets[0].id, created.ticket.id);
+
+        // Super Admin replies -> auto-transitions status from 'open' to 'in_progress'
+        let after_reply = reply_ticket(
+            state_of(&app),
+            state_of(&app),
+            created.ticket.id.clone(),
+            "Upgraded your account to Standard (4,200 PKR/mo). Welcome aboard!".to_string(),
+        )
+        .await
+        .expect("super_admin reply_ticket");
+
+        assert_eq!(after_reply.ticket.status, "in_progress");
+        assert_eq!(after_reply.messages.len(), 2);
+        assert_eq!(after_reply.messages[1].sender_role, "super_admin");
+
+        // Super Admin resolves the ticket -> sets resolved_at
+        let resolved = update_ticket_status(
+            state_of(&app),
+            state_of(&app),
+            created.ticket.id.clone(),
+            "resolved".to_string(),
+        )
+        .await
+        .expect("resolve ticket");
+
+        assert_eq!(resolved.status, "resolved");
+        assert!(resolved.resolved_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn support_ticket_enforces_tenant_isolation() {
+        let app = setup_app().await;
+        login_super_admin(&app).await;
+
+        let tenant_a = register_tenant(
+            state_of(&app),
+            state_of(&app),
+            "Alpha Traders".to_string(),
+            "Alpha Owner".to_string(),
+            "alpha@tenant.test".to_string(),
+            "StrongPass!1".to_string(),
+            "pkg-basic".to_string(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("register tenant A");
+
+        let tenant_b = register_tenant(
+            state_of(&app),
+            state_of(&app),
+            "Beta Traders".to_string(),
+            "Beta Owner".to_string(),
+            "beta@tenant.test".to_string(),
+            "StrongPass!1".to_string(),
+            "pkg-basic".to_string(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("register tenant B");
+
+        // Sign in as Tenant A and create a ticket
+        set_session_user(&app, tenant_a.admin_user.clone()).await;
+        let ticket_a = create_ticket(
+            state_of(&app),
+            state_of(&app),
+            "Alpha private billing inquiry".to_string(),
+            Some("billing".to_string()),
+            Some("normal".to_string()),
+            "Confidential message from Alpha".to_string(),
+            None,
+        )
+        .await
+        .expect("tenant A create ticket");
+
+        // Sign in as Tenant B and verify Tenant B cannot read or reply to Tenant A's ticket
+        set_session_user(&app, tenant_b.admin_user.clone()).await;
+        let b_list = list_tickets(state_of(&app), state_of(&app), None, None)
+            .await
+            .expect("tenant B list own tickets");
+        assert!(b_list.is_empty());
+
+        let detail_err = get_ticket_detail(
+            state_of(&app),
+            state_of(&app),
+            ticket_a.ticket.id.clone(),
+        )
+        .await
+        .expect_err("tenant B must not read tenant A ticket");
+        assert!(detail_err.message.contains("permission"));
+
+        let reply_err = reply_ticket(
+            state_of(&app),
+            state_of(&app),
+            ticket_a.ticket.id.clone(),
+            "Intruder reply".to_string(),
+        )
+        .await
+        .expect_err("tenant B must not reply to tenant A ticket");
+        assert!(reply_err.message.contains("permission"));
+    }
+

@@ -20,6 +20,7 @@ import {
   Printer,
   Sparkles,
   Database,
+  LifeBuoy,
 } from "lucide-react";
 import type { PublicUser } from "../../types/backend";
 
@@ -31,7 +32,8 @@ export type SettingsSection =
   | "invoicing"
   | "branding"
   | "backup"
-  | "advanced";
+  | "advanced"
+  | "support";
 
 interface SettingsHubProps {
   user: PublicUser;
@@ -435,6 +437,44 @@ export default function SettingsHub({ user, onSelectSection }: SettingsHubProps)
               </Group>
             </Card>
           )}
+
+          {/* Subscription Plan & Support Tickets */}
+          <Card
+            withBorder
+            padding="lg"
+            radius="md"
+            className="floating-card floating-card-interactive"
+            onClick={() => onSelectSection("support")}
+            style={{
+              cursor: "pointer",
+              background: "var(--app-surface)",
+              borderColor: "var(--app-border)",
+            }}
+          >
+            <Group justify="space-between" mb="xs">
+              <ThemeIcon size={40} radius="md" color="teal" variant="light">
+                <LifeBuoy size={20} />
+              </ThemeIcon>
+              <Badge variant="light" color="teal" size="sm">
+                Billing & Support
+              </Badge>
+            </Group>
+            <Text fw={700} size="md" mb={2}>
+              Subscription & Support Tickets
+            </Text>
+            <Text size="xs" fw={600} c="dimmed" mb="xs">
+              Plans (3,400 / 4,200 / 6,000 PKR) & Helpdesk
+            </Text>
+            <Text size="xs" c="dimmed" style={{ lineHeight: 1.45, flex: 1 }}>
+              View your active subscription tier or 14-day trial status, contact Taha Asadullah directly, and open or reply to support tickets.
+            </Text>
+            <Group justify="flex-end" mt="md" gap={4}>
+              <Text size="xs" fw={700} c="teal">
+                Open Support
+              </Text>
+              <ChevronRight size={14} color="var(--mantine-color-teal-6)" />
+            </Group>
+          </Card>
         </SimpleGrid>
       </Box>
     </Stack>

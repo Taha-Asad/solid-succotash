@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import { activateLicense, getDeviceIdentity, getErrorMessage } from "../../api/backend";
 import { CorbelSquircle } from "../../components/CorbelLogo";
+import SupportContactCard from "../../components/SupportContactCard";
 import type { DeviceIdentity, LicenseStatusResponse } from "../../types/backend";
 
 interface ActivationScreenProps {
@@ -276,15 +277,12 @@ export default function ActivationScreen({
             </Stack>
           </form>
 
-          {/* Footer Note */}
-          <Text size="xs" ta="center" c="dimmed" style={{ lineHeight: 1.5 }}>
-            Each binary is bound to physical hardware to protect intellectual property.
-            <br />
-            Need an activation key? Contact{" "}
-            <span style={{ color: "#E0725F", fontWeight: 500 }}>
-              Taha Asadullah (@thefoolishcrow)
-            </span>
-          </Text>
+          {/* Direct Support & Licensing Contact */}
+          <SupportContactCard
+            variant="dark"
+            compact
+            contextNote="Copy your HWID above and send it to Taha Asadullah to receive your activation key or upgrade your plan."
+          />
         </Stack>
       </Card>
     </Center>

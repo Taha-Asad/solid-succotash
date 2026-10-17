@@ -91,6 +91,9 @@ import type {
   PublicDeviceActivation,
   IssueLicenseInput,
   ResetTenantPasswordResult,
+  PublicTicket,
+  TicketDetail,
+  CreateTicketInput,
 } from "../types/backend";
 
 // ==========================================
@@ -1353,6 +1356,49 @@ export function saasExtendLicense(
 ): Promise<void> {
   return invoke<void>("saas_extend_license", { licenseId, additionalDays });
 }
+
+// ==========================================
+// SUPPORT TICKETS & THREADED MESSAGES (§3.4)
+// ==========================================
+
+export function createTicket(input: CreateTicketInput): Promise<TicketDetail> {
+  return invoke<TicketDetail>("create_ticket", {
+    subject: input.subject,
+    category: input.category ?? "issue",
+    priority: input.priority ?? "normal",
+    message: input.message,
+    companyId: input.companyId ?? null,
+  });
+}
+
+export function listTickets(input?: {
+  companyId?: string;
+  status?: string;
+}): Promise<PublicTicket[]> {
+  return invoke<PublicTicket[]>("list_tickets", {
+    companyId: input?.companyId ?? null,
+    status: input?.status ?? null,
+  });
+}
+
+export function getTicketDetail(ticketId: string): Promise<TicketDetail> {
+  return invoke<TicketDetail>("get_ticket_detail", { ticketId });
+}
+
+export function replyTicket(input: {
+  ticketId: string;
+  message: string;
+}): Promise<TicketDetail> {
+  return invoke<TicketDetail>("reply_ticket", input);
+}
+
+export function updateTicketStatus(input: {
+  ticketId: string;
+  status: string;
+}): Promise<PublicTicket> {
+  return invoke<PublicTicket>("update_ticket_status", input);
+}
+
 
 // ==========================================
 // ERROR HELPER

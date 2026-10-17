@@ -234,6 +234,68 @@ pub async fn register_company(
     .await
     .map_err(map_user_write_error)?;
 
+    // Automatically provision a 14-day trial subscription on pkg-basic (SAAS_SPECIFICATION v5.2 §3.2 / §9.1)
+    let subscription_id = Uuid::new_v4().to_string();
+    let now = crate::commands::saas::helpers::now_iso();
+    let trial_end = (chrono::Utc::now() + chrono::Duration::days(14))
+        .format("%Y-%m-%d %H:%M:%S")
+        .to_string();
+
+    sqlx::query(
+        r#"
+        INSERT INTO company_subscriptions (
+            id, company_id, package_id, status, trial_ends_at,
+            current_period_start, current_period_end, metadata
+        )
+        VALUES (?, ?, 'pkg-basic', 'trial', ?, ?, ?, '{}')
+        "#,
+    )
+    .bind(&subscription_id)
+    .bind(&company_id)
+    .bind(&trial_end)
+    .bind(&now)
+    .bind(&trial_end)
+    .execute(&mut *transaction)
+    .await
+    .map_err(|error| format!("Could not create initial trial subscription: {error}"))?;
+
+    let pkg_limits: Option<String> = sqlx::query_scalar(
+        "SELECT module_limits FROM packages WHERE id = 'pkg-basic' AND deleted_at IS NULL",
+    )
+    .fetch_optional(&mut *transaction)
+    .await
+    .unwrap_or(None);
+
+    let module_keys = crate::commands::saas::helpers::default_modules_from_package(
+        pkg_limits.as_deref().unwrap_or("{}"),
+    );
+    for module_key in &module_keys {
+        sqlx::query(
+            r#"
+            INSERT INTO company_modules (id, company_id, module_key, is_enabled, settings)
+            VALUES (?, ?, ?, 1, '{}')
+            "#,
+        )
+        .bind(Uuid::new_v4().to_string())
+        .bind(&company_id)
+        .bind(module_key)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| format!("Could not enable module {module_key}: {error}"))?;
+    }
+
+    sqlx::query(
+        r#"
+        INSERT INTO company_storage_usage (id, company_id)
+        VALUES (?, ?)
+        "#,
+    )
+    .bind(Uuid::new_v4().to_string())
+    .bind(&company_id)
+    .execute(&mut *transaction)
+    .await
+    .map_err(|error| format!("Could not create storage usage row: {error}"))?;
+
     let company = sqlx::query_as::<_, PublicCompany>(
         r#"
         SELECT
@@ -868,6 +930,7 @@ mod tests {
     async fn register_creates_company_and_owner_and_logs_in() {
         // Input: valid company details.
         // Expected: Ok(company + user); role "owner"; currency "PKR";
+        // 14-day trial subscription on pkg-basic; default modules;
         // session is set (current_user works); an audit row is written.
         let app = setup_app().await;
         let result = register(&app).await;
@@ -881,10 +944,22 @@ mod tests {
             .expect("owner logged in after registration");
         assert_eq!(current.email, "owner@test.com");
 
+        let pool = state_of::<SqlitePool>(&app);
+        let sub = crate::commands::saas::helpers::fetch_subscription_for_company(
+            &*pool,
+            &result.company.id,
+        )
+        .await
+        .expect("fetch subscription")
+        .expect("trial subscription created");
+        assert_eq!(sub.package_id, "pkg-basic");
+        assert_eq!(sub.status, "trial");
+        assert!(sub.trial_ends_at.is_some());
+
         let count: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM audit_logs WHERE action = 'create' AND resource = 'company'",
         )
-        .fetch_one(&*state_of::<SqlitePool>(&app))
+        .fetch_one(&*pool)
         .await
         .unwrap();
         assert_eq!(count, 1, "registration must be audited");

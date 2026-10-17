@@ -160,6 +160,16 @@ fn get_embedded_migrations() -> Vec<(i64, &'static str, &'static str)> {
             "022_license_lease",
             include_str!("../../migrations/sqlite/022_license_lease.sql"),
         ),
+        (
+            23,
+            "023_canonical_packages",
+            include_str!("../../migrations/sqlite/023_canonical_packages.sql"),
+        ),
+        (
+            24,
+            "024_support_tickets",
+            include_str!("../../migrations/sqlite/024_support_tickets.sql"),
+        ),
     ]
 }
 

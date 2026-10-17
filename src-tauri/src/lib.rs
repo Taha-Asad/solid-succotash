@@ -356,6 +356,12 @@ pub async fn run() {
             commands::saas::saas_revoke_device,
             commands::saas::saas_unblock_device,
             commands::saas::saas_extend_license,
+            // ---- Support Tickets & Threaded Messages (§3.4) ----
+            commands::saas::create_ticket,
+            commands::saas::list_tickets,
+            commands::saas::get_ticket_detail,
+            commands::saas::reply_ticket,
+            commands::saas::update_ticket_status,
         ])
         .run(tauri::generate_context!())
         .expect("Error while running Tauri application");

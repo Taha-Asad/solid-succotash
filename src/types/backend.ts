@@ -1089,3 +1089,60 @@ export type ResetTenantPasswordResult = {
   companyId: string;
 };
 
+// ==========================================
+// SUPPORT TICKETS & THREADED MESSAGES (§3.4)
+// ==========================================
+
+export type TicketCategory =
+  | "complaint"
+  | "recommendation"
+  | "issue"
+  | "feature_request"
+  | "billing"
+  | "other";
+
+export type TicketPriority = "low" | "normal" | "high" | "urgent";
+
+export type TicketStatus = "open" | "in_progress" | "resolved" | "closed";
+
+export type PublicTicket = {
+  id: string;
+  companyId: string;
+  companyName?: string | null;
+  createdBy: string;
+  subject: string;
+  category: TicketCategory | string;
+  priority: TicketPriority | string;
+  status: TicketStatus | string;
+  assignedTo?: string | null;
+  messageCount: number;
+  createdAt: string;
+  updatedAt: string;
+  resolvedAt?: string | null;
+};
+
+export type PublicTicketMessage = {
+  id: string;
+  ticketId: string;
+  userId: string;
+  senderName: string;
+  senderRole: string;
+  message: string;
+  attachments: unknown[];
+  createdAt: string;
+};
+
+export type TicketDetail = {
+  ticket: PublicTicket;
+  messages: PublicTicketMessage[];
+};
+
+export type CreateTicketInput = {
+  subject: string;
+  category?: TicketCategory | string;
+  priority?: TicketPriority | string;
+  message: string;
+  companyId?: string;
+};
+
+

@@ -415,3 +415,107 @@ pub async fn audit_for(
     )
     .await;
 }
+
+fn parse_utc_timestamp(raw: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    let trimmed = raw.trim();
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(trimmed) {
+        return Some(dt.with_timezone(&chrono::Utc));
+    }
+    if let Ok(ndt) = chrono::NaiveDateTime::parse_from_str(trimmed, "%Y-%m-%d %H:%M:%S") {
+        return Some(chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(
+            ndt,
+            chrono::Utc,
+        ));
+    }
+    if let Ok(ndt) = chrono::NaiveDateTime::parse_from_str(trimmed, "%Y-%m-%dT%H:%M:%SZ") {
+        return Some(chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(
+            ndt,
+            chrono::Utc,
+        ));
+    }
+    None
+}
+
+/// Enforces Day-15 Read-Only + Support Access on Subscription/Trial Expiry (SAAS_SPECIFICATION v5.2 §9.2).
+/// - Returns `Ok(())` when the company's subscription is `active` or `trial` and within its valid period
+///   (or when no subscription row exists yet in low-level unit tests).
+/// - Automatically transitions expired `trial` rows to `ended` and expired `active` rows to `past_due`.
+/// - Returns a descriptive Read-Only mode error when the trial or subscription has expired or been suspended.
+pub async fn require_active_subscription(
+    pool: &SqlitePool,
+    company_id: &str,
+) -> Result<(), AppError> {
+    let sub_opt = sqlx::query_as::<_, SubscriptionRow>(
+        r#"
+        SELECT id, company_id, package_id, status, trial_ends_at,
+               current_period_start, current_period_end, canceled_at, ended_at,
+               metadata, created_at, updated_at
+        FROM company_subscriptions
+        WHERE company_id = ?
+        ORDER BY created_at DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(company_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| AppError::database(format!("Subscription check error: {e}")))?;
+
+    let Some(sub) = sub_opt else {
+        // Low-level unit tests that insert raw companies without a subscription row remain unrestricted.
+        return Ok(());
+    };
+
+    let readonly_err = || {
+        AppError::validation(
+            "Subscription or 14-day trial expired — your workspace is in Read-Only mode. You can view and export existing records or contact Taha Asadullah (tahaasad709@gmail.com) to renew your plan.",
+        )
+    };
+
+    let status = sub.status.trim().to_lowercase();
+    if matches!(
+        status.as_str(),
+        "past_due" | "suspended" | "cancelled" | "canceled" | "ended"
+    ) {
+        return Err(readonly_err());
+    }
+
+    let now = chrono::Utc::now();
+
+    if status == "trial" {
+        let expiry_str = sub
+            .trial_ends_at
+            .as_deref()
+            .unwrap_or(&sub.current_period_end);
+        if let Some(exp_dt) = parse_utc_timestamp(expiry_str) {
+            if now > exp_dt {
+                let _ = sqlx::query(
+                    "UPDATE company_subscriptions SET status = 'ended', ended_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                )
+                .bind(&sub.id)
+                .execute(pool)
+                .await;
+                return Err(readonly_err());
+            }
+        }
+        return Ok(());
+    }
+
+    if status == "active" {
+        if let Some(exp_dt) = parse_utc_timestamp(&sub.current_period_end) {
+            if now > exp_dt {
+                let _ = sqlx::query(
+                    "UPDATE company_subscriptions SET status = 'past_due', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                )
+                .bind(&sub.id)
+                .execute(pool)
+                .await;
+                return Err(readonly_err());
+            }
+        }
+        return Ok(());
+    }
+
+    Ok(())
+}
+

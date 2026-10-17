@@ -241,3 +241,110 @@ impl FeatureFlagRow {
         }
     }
 }
+
+// ==========================================
+// SUPPORT TICKETS & THREADED MESSAGES (§3.4)
+// ==========================================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PublicTicket {
+    pub id: String,
+    pub company_id: String,
+    pub company_name: Option<String>,
+    pub created_by: String,
+    pub subject: String,
+    pub category: String,
+    pub priority: String,
+    pub status: String,
+    pub assigned_to: Option<String>,
+    pub message_count: i64,
+    pub created_at: String,
+    pub updated_at: String,
+    pub resolved_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PublicTicketMessage {
+    pub id: String,
+    pub ticket_id: String,
+    pub user_id: String,
+    pub sender_name: String,
+    pub sender_role: String,
+    pub message: String,
+    pub attachments: serde_json::Value,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TicketDetail {
+    pub ticket: PublicTicket,
+    pub messages: Vec<PublicTicketMessage>,
+}
+
+#[derive(Debug, FromRow)]
+pub struct TicketRow {
+    pub id: String,
+    pub company_id: String,
+    pub company_name: Option<String>,
+    pub created_by: String,
+    pub subject: String,
+    pub category: String,
+    pub priority: String,
+    pub status: String,
+    pub assigned_to: Option<String>,
+    pub message_count: i64,
+    pub created_at: String,
+    pub updated_at: String,
+    pub resolved_at: Option<String>,
+}
+
+impl TicketRow {
+    pub fn to_public(&self) -> PublicTicket {
+        PublicTicket {
+            id: self.id.clone(),
+            company_id: self.company_id.clone(),
+            company_name: self.company_name.clone(),
+            created_by: self.created_by.clone(),
+            subject: self.subject.clone(),
+            category: self.category.clone(),
+            priority: self.priority.clone(),
+            status: self.status.clone(),
+            assigned_to: self.assigned_to.clone(),
+            message_count: self.message_count,
+            created_at: self.created_at.clone(),
+            updated_at: self.updated_at.clone(),
+            resolved_at: self.resolved_at.clone(),
+        }
+    }
+}
+
+#[derive(Debug, FromRow)]
+pub struct TicketMessageRow {
+    pub id: String,
+    pub ticket_id: String,
+    pub user_id: String,
+    pub sender_name: String,
+    pub sender_role: String,
+    pub message: String,
+    pub attachments: String,
+    pub created_at: String,
+}
+
+impl TicketMessageRow {
+    pub fn to_public(&self) -> PublicTicketMessage {
+        PublicTicketMessage {
+            id: self.id.clone(),
+            ticket_id: self.ticket_id.clone(),
+            user_id: self.user_id.clone(),
+            sender_name: self.sender_name.clone(),
+            sender_role: self.sender_role.clone(),
+            message: self.message.clone(),
+            attachments: serde_json::from_str(&self.attachments).unwrap_or_else(|_| serde_json::json!([])),
+            created_at: self.created_at.clone(),
+        }
+    }
+}
+

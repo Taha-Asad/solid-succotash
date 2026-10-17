@@ -4,7 +4,7 @@
 **Studio**: The Foolish Crow Studio (Taha Asadullah)  
 **Target Platform**: Cross-Platform Desktop Application (Windows, Linux, macOS via Tauri + Webview)  
 **Architecture**: Local-First SQLite Engine + Neon Cloud PostgreSQL Control Plane  
-**Document Purpose**: Complete product, workflow, screen, data-field, and state specification for redesigning the entire Corbel ERP interface from the ground up.
+**Repository Copy**: [`ijazandcompany/docs/DESIGNER_HANDOFF_SPECIFICATION.md`](file:///run/media/thefoolishcrow/New%20Volume/Obsidian/TheFallenCrow/ijazandcompany/docs/DESIGNER_HANDOFF_SPECIFICATION.md)
 
 ---
 
@@ -86,18 +86,21 @@ When a new prospect installs Corbel ERP, or when a trial expires or a device is 
     - Primary CTA: **Activate Workstation** (`activate_license`).
     - Secondary CTA: **Re-Check Connection / Retry Verification** (`check_license_status`).
 
-### Component 1.2: 14-Day Migration Grace Top Banner & Inline Activation Modal
-When an existing merchant upgrades or runs under the automatic **14-day transition grace period** (`is_migration_grace = true`), they are **not** locked out. Instead:
-* **Top Banner (Persistent above the App Shell)**:
+### Component 1.2: 14-Day Trial / Grace Top Banner, Day-15 Read-Only Mode & Inline Activation Modal
+When a new company registers via `SetupPage`, or an existing merchant runs under the automatic **14-day evaluation trial** (`license_type = 'trial'` or `is_migration_grace = true`), they are **not** locked out:
+* **Active 14-Day Trial Top Banner (Days 1–14)**:
   - High-visibility amber bar across the top of the window.
-  - Copy: *"Software License Notice: Your system is running under a 14-day transition grace lease."*
+  - Copy: *"14-Day Free Trial: Evaluate Corbel ERP with full access."*
   - Badge: **`[X] days remaining`** (counts down from 14 to 1).
-  - Action Button: **Enter License Key** (opens the Inline Activation Modal).
-* **Inline Activation Modal**:
-  - Overlay modal allowing the merchant to paste their `CRBL-XXXX-XXXX-XXXX` key, view their `HWID`, and activate immediately without logging out or losing unsaved work.
+  - Actions: **Contact Taha Asadullah** (`mailto:tahaasad709@gmail.com`) and **Enter License Key** (opens the Inline Activation Modal).
+* **Day-15+ Expired Trial / Subscription Read-Only Banner (`daysRemaining <= 0`)**:
+  - Persistent crimson banner across the top of the workspace: *"Read-Only Mode (14-Day Trial Expired): Your 14-day evaluation period has ended. You can still view and export all existing invoices, inventory, ledger, and reports, or open Support Tickets, but creating or editing records is locked until you upgrade."*
+  - Backend enforcement (`require_active_subscription`): All `view` and `export` actions and `tickets` commands remain open; mutating commands (`create`, `edit`, `delete`, `import`) are blocked until upgraded.
+* **Direct Contact Card (`SupportContactCard`)**:
+  - Reusable card displayed on `SetupPage`, `LoginPage`, `ActivationScreen`, `LicenseLockedScreen`, `ModuleLockedView`, and `SupportTicketsTab` with direct contact details for **Taha Asadullah (The Foolish Crow Studio — `tahaasad709@gmail.com`)**.
 
-### Screen 1.3: First-Run Company Setup Screen
-Shown only once when the local SQLite database has zero registered companies.
+### Screen 1.3: First-Run Company Setup Screen (`SetupPage`)
+Shown automatically on first launch when `is_company_setup()` is `false` (no company in local SQLite yet).
 * **Form Fields**:
   - `Company Name` (required)
   - `Company Email`, `Phone Number`, `Business Address`
@@ -105,7 +108,8 @@ Shown only once when the local SQLite database has zero registered companies.
   - `Owner Full Name` (required)
   - `Owner Email` (required — becomes the primary login email)
   - `Owner Password` (required, minimum 8 characters)
-* **Primary CTA**: **Create Company & Continue to Login**.
+* **Primary CTA**: **Create Company & Start 14-Day Free Trial** (provisions a 14-day `trial` subscription on `pkg-basic` (`3,400 PKR`), seeds default modules, and syncs to Neon Cloud).
+* **Secondary Navigation**: **"Already have an account? Sign in"** button to switch to `LoginPage`, plus `SupportContactCard` footer.
 
 ### Screen 1.4: Login Screen & Screen 1.5: Forced Password Reset (Temp OTP)
 * **Screen 1.4 (Login)**:
@@ -113,11 +117,13 @@ Shown only once when the local SQLite database has zero registered companies.
   - `Password` input with show/hide toggle.
   - `Remember Session on This Workstation` checkbox.
   - Primary CTA: **Sign In**.
+  - Secondary CTA: **"New to Corbel ERP? Start your 14-Day Free Trial"** button to switch to `SetupPage`, plus `SupportContactCard` footer.
   - Rate-limit lockout notice area (displays remaining lockout seconds if 5 failed attempts occur).
 * **Screen 1.5 (Forced Password Change — `must_change_password = true`)**:
   - Triggered immediately after login when the Super Admin has reset a tenant user's password via a Temporary OTP.
   - Fields: `Current (Temporary) Password`, `New Password`, `Confirm New Password`.
   - Actions: **Update Password & Enter Workspace** or **Sign Out**.
+
 
 ---
 
@@ -334,6 +340,7 @@ Designed as a clean **Settings Hub Grid** (cards for each category) or a **Left-
 | **8. Multi-Currency** (`currency`) | Owner / Admin (`multi_currency` module) | Base currency display, live/cached exchange rates table (`USD`, `EUR`, `GBP`, `AED`, `SAR`, `CNY` to `PKR`), **Fetch Latest Rates** button, and rate history log. |
 | **9. Appearance & Branding** (`appearance`) | All Roles | Theme Mode (`Light`, `Dark`), Primary Brand Accent Color picker, Font Scale (`Compact`, `Standard`, `Comfortable` for accessibility), and Custom Company Logo upload (printed on invoices). |
 | **10. Advanced & Data Retention** (`advanced`) | Owner / Admin | Workstation License Status card (`License Key`, `HWID`, `Days Remaining`, **Deactivate Workstation** button), Software Updater check, and **Data Retention Archiver** (archive old audit logs/cancelled drafts). |
+| **11. Subscription & Support Tickets** (`support`) | All Tenant Roles (including Day-15 Read-Only Mode) | Active commercial tier overview (`Basic 3,400 PKR`, `Standard 4,200 PKR`, `Premium 6,000 PKR`), direct contact card for **Taha Asadullah**, **Open Support / Billing Ticket** modal (`billing`, `issue`, `feature_request`, `recommendation`, `complaint`, `other`), and threaded ticket conversation view (`SupportTicketsTab`). |
 
 ---
 
@@ -343,10 +350,11 @@ When Taha signs in as the Platform Super Administrator (`is_super_admin = true`)
 
 ### Navigation Structure (Super Admin Sidebar)
 1. **Overview Dashboard** (`overview`)
-2. **Fleet & Licensing** (`licensing`)
-3. **Tenants Directory** (`tenants`)
-4. **Subscription Packages** (`packages`)
-5. **Switch to Merchant Business Mode** (top/bottom action button)
+2. **Tenants Directory** (`tenants`)
+3. **Fleet & Licensing** (`licensing`)
+4. **Support Tickets Helpdesk** (`tickets`)
+5. **Subscription Packages** (`packages`)
+6. **Platform Analytics & Settings** (`analytics` / `settings`)
 
 ---
 
@@ -354,11 +362,11 @@ When Taha signs in as the Platform Super Administrator (`is_super_admin = true`)
 * **Top KPI Cards**:
   - `Monthly Recurring Revenue (MRR)` & `Annual Recurring Revenue (ARR)` (in PKR).
   - `Total Registered Tenants` (`Active` vs. `Suspended/Archived`).
-  - `Active Subscriptions` (`Trial` vs. `Active Paid` vs. `Past Due`).
+  - `Active Subscriptions` (`Trial` vs. `Active Paid` vs. `Past Due` vs. `Ended`).
   - `Total Platform Users`.
 * **Charts**:
   - **Tenant Onboarding Growth by Month** (Area/Bar chart).
-  - **Subscription Distribution by Package Tier** (`Starter`, `Professional`, `Enterprise`).
+  - **Subscription Distribution by Package Tier** (`Basic — 3,400 PKR`, `Standard — 4,200 PKR`, `Premium — 6,000 PKR`).
   - **Subscription Status Breakdown**.
 
 ---
@@ -369,14 +377,13 @@ The core DRM and commercial control center for Corbel ERP.
   - `Total Issued Keys`, `Active Keys`, `Bound Hardware Devices (HWIDs)`, `Blocked / Revoked Devices`.
 * **Primary Action — Issue New License Key Modal**:
   - `Client / Company Name` (required, e.g. *"Ijaz & Company"*).
-  - `License Tier`: `Trial / Beta`, `Starter`, `Professional`, `Enterprise`, `Perpetual`.
+  - `License Tier`: `Trial (14 Days)`, `Basic (3,400 PKR)`, `Standard (4,200 PKR)`, `Premium (6,000 PKR)`, `Perpetual`.
   - `Validity Duration`:
-    - **14 Days (Standard Beta / Trial Period)** *(Default)*
+    - **14 Days (Standard Evaluation Trial Period)** *(Default)*
     - 30 Days (1 Month)
     - 90 Days (Quarterly)
     - 365 Days (1 Year)
     - Perpetual (Never Expires)
-    - Custom Days input
   - `Max Allowed Devices (Seats)`: e.g. `1`, `2`, `5`, `10`.
   - `Offline Heartbeat Grace Period`: `3 Days`, **`7 Days (Default)`**, `14 Days`, `30 Days`.
   - `Internal Admin Notes`.
@@ -398,7 +405,7 @@ The core DRM and commercial control center for Corbel ERP.
 * **Provision New Tenant Modal**:
   - Creates a new tenant company, owner user account, and initial package subscription in one step, and displays the generated credentials to copy.
 * **Tenants Table Columns**:
-  - `Company Name`, `Contact Email & Phone`, `Assigned Package` (`Starter`, `Professional`, `Enterprise`), `Subscription Status`, `Users Count`, `Created Date`, `Status Badge` (`Active` / `Suspended`), `Manage` (opens the 360° Tenant Detail Drawer).
+  - `Company Name`, `Contact Email & Phone`, `Assigned Package` (`Basic`, `Standard`, `Premium`), `Subscription Status`, `Users Count`, `Created Date`, `Status Badge` (`Active` / `Suspended`), `Manage` (opens the 360° Tenant Detail Drawer).
 
 ### Component 4.4: Tenant 360° Detail Drawer (`TenantDetailDrawer`)
 A slide-over inspection and control drawer when clicking any tenant in the directory, organized into **4 Tabs**:
@@ -406,18 +413,10 @@ A slide-over inspection and control drawer when clicking any tenant in the direc
    - Edit `Company Name`, `Email`, `Phone`, `Address`, `NTN`, `STRN`, `Province`.
    - **Suspend / Archive Tenant** or **Activate Tenant** toggle button.
 2. **Tab 2 — Subscription & Package Assignment**:
-   - View current subscription period and status (`Active`, `Trial`, `Past Due`, `Canceled`).
-   - Change assigned SaaS Package (`Starter` / `Professional` / `Enterprise`).
+   - View current subscription period and status (`Active`, `Trial`, `Past Due`, `Ended`, `Canceled`).
+   - Change assigned SaaS Package (`Basic — 3,400 PKR` / `Standard — 4,200 PKR` / `Premium — 6,000 PKR`).
 3. **Tab 3 — Module & Feature Flag Overrides**:
-   - Granular per-tenant switches that override package defaults:
-     - `inventory` (Inventory & Stock)
-     - `invoicing` (Sales & POS)
-     - `customers` (Customer Directory)
-     - `reports` (Financial Reports)
-     - `fbr` (FBR PRAL Digital Invoicing)
-     - `multi_currency` (Multi-Currency & Exchange Rates)
-     - `custom_roles` (Custom RBAC Role Builder)
-     - `audit_trail` (Security Audit Log)
+   - Granular per-tenant switches that override package defaults (`inventory`, `invoices`, `customers`, `reports`, `purchase_orders`, `pos`, `ledger`, `fbr`, `import`).
 4. **Tab 4 — Support & Emergency Temp-OTP Reset**:
    - Lists users belonging to this tenant.
    - **Generate Temporary Password (OTP)**: Resets a locked-out merchant's password to a temporary code (`CRBL-XXXX-...`) and sets `must_change_password = true` so they are forced to choose a new password upon signing in.
@@ -425,12 +424,21 @@ A slide-over inspection and control drawer when clicking any tenant in the direc
 ---
 
 ### Screen 4.5: Subscription Packages & Pricing Tiers (`packages`)
-Allows the Super Admin to create and edit commercial SaaS tiers synced to all clients:
-* Default seeded tiers:
-  1. **Starter (`PKR 2,500 / mo`)**: 3 Users, 1 Branch, 512 MB — Core POS, Inventory, Customers, Basic Reports.
-  2. **Professional (`PKR 6,500 / mo`)**: 10 Users, 3 Branches, 2 GB — Adds FBR Real-Time Integration, Multi-Currency, Advanced Ledger.
-  3. **Enterprise (`PKR 15,000 / mo`)**: 50 Users, 10 Branches, 10 GB — Adds Custom Roles, Full Security Audit Trail, Priority Support.
+Allows the Super Admin to create and edit commercial SaaS tiers synced across both local SQLite and Neon Cloud PostgreSQL (`SAAS_SPECIFICATION.md` v5.2 §4.3):
+* Canonical seeded tiers:
+  1. **Basic (`pkg-basic` — `PKR 3,400 / mo`)**: 5 Users, 1 Branch, 512 MB — Single branch, core ERP modules (`dashboard`, `inventory`, `sales`/`invoices`, `purchases`, `reports`, `employees`).
+  2. **Standard (`pkg-standard` — `PKR 4,200 / mo`)**: 15 Users, 3 Branches, 2,048 MB — Adds Historical Data Import (`import` / `data_import`), multi-branch support, and invoice customization.
+  3. **Premium (`pkg-premium` — `PKR 6,000 / mo`)**: 100 Users, 10 Branches, 10,240 MB — Adds FBR PRAL Digital Invoicing (`fbr`), full enterprise scale, and priority support.
 * **Package Editor Modal**: Edit `Name`, `Description`, `Price`, `Billing Cycle` (`monthly`/`yearly`), `Max Users`, `Max Branches`, `Storage MB`, and `Included Module Toggles`.
+
+---
+
+### Screen 4.6: Support Tickets & Upgrade Helpdesk (`tickets` — `SupportTicketsPage`)
+Cross-tenant helpdesk inbox allowing Super Admin (Taha Asadullah) to manage tenant support, billing, and Day-15 trial upgrade requests:
+* **Status Segmented Filter**: `All`, `Open`, `In Progress`, `Resolved`, `Closed`.
+* **Two-Column Split Layout**:
+  - **Left Column (Ticket Inbox List)**: Cards showing `Subject`, `Status Badge`, `Tenant Company Name`, `Category Badge` (`billing`, `issue`, `feature_request`, `recommendation`, `complaint`, `other`), `Priority Badge` (`low`, `normal`, `high`, `urgent`), `Message Count`, and `Last Updated`.
+  - **Right Column (Conversation Thread & Governance)**: Chronological message thread distinguishing Tenant vs. Super Admin replies, quick status action buttons (`In Progress`, `Resolve`, `Close`), and reply composer (sending a Super Admin reply to an `open` ticket automatically transitions it to `in_progress`).
 
 ---
 
@@ -448,6 +456,7 @@ The designer should account for how the interface adapts across the **5 Merchant
 | **Financial Reports & CSV/PDF Export** | Full | Full | Full | Full | Hidden |
 | **Settings: Company, Users, FBR** | Full | Full | View Only | View Only | Hidden |
 | **Settings: Custom Roles & Backup/Restore** | **Owner Only** | Hidden/Locked | Hidden | Hidden | Hidden |
+| **Settings: Subscription & Support Tickets** | Full (even in Read-Only mode) | Full | View & Create Ticket | View & Create Ticket | View & Create Ticket |
 
 ---
 
@@ -455,12 +464,13 @@ The designer should account for how the interface adapts across the **5 Merchant
 
 To ensure a frictionless handoff back to engineering, the designer should deliver:
 1. **Design Tokens & Foundation Sheet**:
-   - Color system (Light Mode + Dark Mode + Super Admin Command Center palette), semantic status colors (`Success`, `Warning/14-Day Grace`, `Danger/Kill-Switch Blocked`, `Info`).
+   - Color system (Light Mode + Dark Mode + Super Admin Command Center palette), semantic status colors (`Success`, `Warning/14-Day Trial`, `Danger/Read-Only Expired or Kill-Switch Blocked`, `Info`).
    - Typography scale (Primary UI sans-serif + Tabular Monospace for currency, SKUs, and license keys).
    - Spacing, border-radius, and elevation/border tokens.
 2. **Component Library**:
-   - Buttons (single-icon rule: never combine a leading icon with a text symbol like `+` or `←`), Inputs, Select Dropdowns, Data Tables (with sticky headers, right-aligned numeric columns, pagination, and empty states), Status Badges, Modals, and Slide-Over Drawers.
+   - Buttons (single-icon rule: never combine a leading icon with a text symbol like `+` or `←`), Inputs, Select Dropdowns, Data Tables (with sticky headers, right-aligned numeric columns, pagination, and empty states), Status Badges, Modals, Slide-Over Drawers, and `SupportContactCard`.
 3. **High-Fidelity Screen Designs**:
-   - **Pre-Workspace Gates** (Screens 1.1 – 1.5, including the 3 states of the License Activation / Kill-Switch screen and the 14-Day Migration Grace banner).
-   - **Merchant Business Mode** (Screens 3.1 – 3.8, with special focus on the keyboard-driven POS Invoice screen and the 80mm / A4 print layouts).
-   - **Super Admin Control Plane** (Screens 4.1 – 4.5, especially the Fleet & Hardware Licensing console and Tenant 360° Drawer).
+   - **Pre-Workspace Gates** (Screens 1.1 – 1.5, including the 3 states of the License Activation / Kill-Switch screen, the 14-Day Trial / Day-15 Read-Only top banner, and `SupportContactCard`).
+   - **Merchant Business Mode** (Screens 3.1 – 3.8, including the keyboard-driven POS Invoice screen, 80mm / A4 print layouts, and `SupportTicketsTab`).
+   - **Super Admin Control Plane** (Screens 4.1 – 4.6, including Fleet & Hardware Licensing, Tenant 360° Drawer, Canonical 3,400/4,200/6,000 PKR Packages, and `SupportTicketsPage`).
+

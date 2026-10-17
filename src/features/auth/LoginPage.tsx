@@ -32,6 +32,7 @@ import { INK } from "../../theme";
 import { useI18n } from "../../i18n/I18nProvider";
 import LanguageMenu from "../../components/LanguageMenu";
 import { CorbelSquircle } from "../../components/CorbelLogo";
+import SupportContactCard from "../../components/SupportContactCard";
 
 // ---- Props ----
 
@@ -58,7 +59,7 @@ const FEATURES = [
   },
 ];
 
-export default function LoginPage({ onLogin }: LoginPageProps) {
+export default function LoginPage({ onLogin, onSwitchToSetup }: LoginPageProps) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -239,6 +240,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
           alignItems: "center",
           padding: "32px 40px",
           background: INK.paper,
+          overflowY: "auto",
         }}
       >
         <div style={{ position: "absolute", top: 20, insetInlineEnd: 20, zIndex: 10 }}>
@@ -248,7 +250,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
           initial={{ opacity: 0, y: 30 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.55, delay: 0.2, ease: [0.22, 1, 0.36, 1] }}
-          style={{ width: "100%", maxWidth: 400 }}
+          style={{ width: "100%", maxWidth: 420 }}
         >
           <Card withBorder shadow="lg" p="xl" data-tour="login-form">
             <Stack gap="xs" mb="lg">
@@ -262,6 +264,46 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
                 {t("login.signinSubtitle")}
               </Text>
             </Stack>
+
+            {onSwitchToSetup && (
+              <div
+                style={{
+                  background: "linear-gradient(135deg, rgba(201, 149, 42, 0.1), rgba(16, 185, 129, 0.08))",
+                  border: "1px solid rgba(201, 149, 42, 0.28)",
+                  borderRadius: 12,
+                  padding: "10px 14px",
+                  marginBottom: 16,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 10,
+                }}
+              >
+                <div>
+                  <Text size="xs" fw={700} style={{ color: "#0F172A" }}>
+                    New installation on this PC?
+                  </Text>
+                  <Text size="xs" style={{ color: "#64748B" }}>
+                    Set up your company &amp; start a 14-day free trial.
+                  </Text>
+                </div>
+                <Button
+                  variant="filled"
+                  size="xs"
+                  radius="md"
+                  color="dark"
+                  onClick={onSwitchToSetup}
+                  styles={{
+                    root: {
+                      fontWeight: 700,
+                      flexShrink: 0,
+                    },
+                  }}
+                >
+                  Start Trial →
+                </Button>
+              </div>
+            )}
 
             <form onSubmit={handleSubmit}>
               <Stack gap="md">
@@ -313,9 +355,11 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
                     {t("login.signIn")}
                   </Button>
                 </motion.div>
-                <Text size="xs" c="dimmed" ta="center" mt="xs">
-                  Accounts are provisioned by your system administrator.
-                </Text>
+
+                <SupportContactCard
+                  compact
+                  contextNote="Need an account, password reset, or subscription plan (Basic 3,400 / Standard 4,200 / Premium 6,000 PKR)?"
+                />
               </Stack>
             </form>
           </Card>

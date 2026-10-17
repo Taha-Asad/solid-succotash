@@ -755,37 +755,81 @@ impl NeonCloudDb {
         .await
         .map_err(|e| AppError::database(format!("Could not sync owner to cloud: {e}")))?;
 
-        // Attach default subscription if not present, resolving an active package dynamically
-        let default_pkg_id: Option<String> = sqlx::query_scalar(
-            "SELECT id FROM packages WHERE deleted_at IS NULL ORDER BY sort_order ASC LIMIT 1"
+        // Attach 14-day trial subscription on pkg-basic if no subscription exists yet for this company
+        let existing_sub_count: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM company_subscriptions WHERE company_id = $1",
         )
-        .fetch_optional(&mut *tx)
+        .bind(&company.id)
+        .fetch_one(&mut *tx)
         .await
-        .unwrap_or(None);
+        .unwrap_or((0,));
 
-        if let Some(pkg_id) = default_pkg_id {
-            let sub_id = Uuid::new_v4().to_string();
-            let _ = sqlx::query(
-                r#"
-                INSERT INTO company_subscriptions (
-                    id, company_id, package_id, status, trial_ends_at,
-                    current_period_start, current_period_end, metadata
-                ) VALUES ($1, $2, $3, 'active', NULL, NOW(), NOW() + INTERVAL '30 days', '{}'::jsonb)
-                ON CONFLICT (id) DO NOTHING;
-                "#,
+        if existing_sub_count.0 == 0 {
+            let default_pkg_id: Option<String> = sqlx::query_scalar(
+                "SELECT id FROM packages WHERE id = 'pkg-basic' AND deleted_at IS NULL LIMIT 1",
             )
-            .bind(&sub_id)
-            .bind(&company.id)
-            .bind(&pkg_id)
-            .execute(&mut *tx)
-            .await;
+            .fetch_optional(&mut *tx)
+            .await
+            .unwrap_or(None)
+            .or(
+                sqlx::query_scalar(
+                    "SELECT id FROM packages WHERE deleted_at IS NULL ORDER BY sort_order ASC LIMIT 1",
+                )
+                .fetch_optional(&mut *tx)
+                .await
+                .unwrap_or(None),
+            );
+
+            if let Some(pkg_id) = default_pkg_id {
+                let sub_id = Uuid::new_v4().to_string();
+                let _ = sqlx::query(
+                    r#"
+                    INSERT INTO company_subscriptions (
+                        id, company_id, package_id, status, trial_ends_at,
+                        current_period_start, current_period_end, metadata
+                    ) VALUES (
+                        $1, $2, $3, 'trial',
+                        NOW() + INTERVAL '14 days',
+                        NOW(),
+                        NOW() + INTERVAL '14 days',
+                        '{}'::jsonb
+                    )
+                    ON CONFLICT (id) DO NOTHING;
+                    "#,
+                )
+                .bind(&sub_id)
+                .bind(&company.id)
+                .bind(&pkg_id)
+                .execute(&mut *tx)
+                .await;
+            }
         }
+
+        // Link this machine's auto-trial license (if any) to the newly registered company
+        let identity = crate::licensing::get_device_identity();
+        let _ = sqlx::query(
+            r#"
+            UPDATE tenant_licenses
+            SET company_id = $1,
+                client_name = $2,
+                updated_at = NOW()
+            WHERE company_id IS NULL
+              AND id IN (
+                  SELECT license_id FROM device_activations WHERE device_hwid = $3
+              )
+            "#,
+        )
+        .bind(&company.id)
+        .bind(&company.name)
+        .bind(&identity.hwid)
+        .execute(&mut *tx)
+        .await;
 
         tx.commit()
             .await
             .map_err(|e| AppError::database(format!("Could not commit cloud sync: {e}")))?;
 
-        info!("Successfully synced company '{}' to Neon PostgreSQL", company.name);
+        info!("Successfully synced company '{}' (14-day trial) to Neon PostgreSQL", company.name);
         Ok(())
     }
 
@@ -2080,6 +2124,44 @@ pub async fn run_neon_migrations(pool: &PgPool) -> Result<(), sqlx::Error> {
         .execute(pool)
         .await;
 
+    // 9. Support Tickets & Threaded Messages (SAAS_SPECIFICATION.md v5.2 §3.4)
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS tickets (
+            id VARCHAR(64) PRIMARY KEY,
+            company_id VARCHAR(64) NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+            created_by VARCHAR(64) NOT NULL,
+            subject TEXT NOT NULL,
+            category VARCHAR(32) NOT NULL DEFAULT 'issue',
+            priority VARCHAR(32) NOT NULL DEFAULT 'normal',
+            status VARCHAR(32) NOT NULL DEFAULT 'open',
+            assigned_to VARCHAR(64),
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            resolved_at TIMESTAMPTZ
+        )
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS ticket_messages (
+            id VARCHAR(64) PRIMARY KEY,
+            ticket_id VARCHAR(64) NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+            user_id VARCHAR(64) NOT NULL,
+            sender_name VARCHAR(255) NOT NULL DEFAULT '',
+            sender_role VARCHAR(64) NOT NULL DEFAULT '',
+            message TEXT NOT NULL,
+            attachments JSONB NOT NULL DEFAULT '[]'::jsonb,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
     // Seed default packages if empty
     seed_default_packages(pool).await?;
 
@@ -2091,55 +2173,47 @@ pub async fn run_neon_migrations(pool: &PgPool) -> Result<(), sqlx::Error> {
 }
 
 async fn seed_default_packages(pool: &PgPool) -> Result<(), sqlx::Error> {
-    let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM packages")
-        .fetch_one(pool)
-        .await?;
-
-    if count.0 > 0 {
-        return Ok(());
-    }
-
-    info!("Seeding default SaaS packages in Neon PostgreSQL...");
+    info!("Ensuring canonical SaaS packages in Neon PostgreSQL (pkg-basic, pkg-standard, pkg-premium)...");
 
     let packages = [
         (
-            "pkg-starter",
-            "Starter",
-            "Ideal for single shops and small retailers",
-            2500.00,
+            "pkg-basic",
+            "Basic",
+            "Single branch, 5 users, core ERP modules.",
+            3400.00_f64,
             "monthly",
-            r#"{"inventory": true, "invoicing": true, "reports": true, "customers": true}"#,
-            3,
-            1,
-            512,
-            r#"["Point of Sale", "Thermal Receipts", "Basic Reports", "Offline First"]"#,
-            1,
+            r#"{"dashboard":1,"inventory":1,"sales":1,"purchases":1,"reports":1,"employees":1,"branches":0,"invoices":1,"import":0}"#,
+            5_i32,
+            1_i32,
+            512_i32,
+            r#"{"fbr":false,"data_import":false}"#,
+            1_i32,
         ),
         (
-            "pkg-pro",
-            "Professional",
-            "Perfect for growing businesses with FBR fiscalization",
-            6500.00,
+            "pkg-standard",
+            "Standard",
+            "Up to 3 branches, 15 users, import + invoice customization.",
+            4200.00_f64,
             "monthly",
-            r#"{"inventory": true, "invoicing": true, "reports": true, "customers": true, "fbr": true, "multi_currency": true}"#,
-            10,
-            3,
-            2048,
-            r#"["Everything in Starter", "FBR Real-Time Integration", "Multi-Currency", "Advanced Ledger", "Role Permissions"]"#,
-            2,
+            r#"{"dashboard":1,"inventory":1,"sales":1,"purchases":1,"reports":1,"employees":1,"branches":1,"invoices":1,"import":1,"data_import":1}"#,
+            15_i32,
+            3_i32,
+            2048_i32,
+            r#"{"fbr":false,"data_import":true}"#,
+            2_i32,
         ),
         (
-            "pkg-enterprise",
-            "Enterprise",
-            "Full-scale ERP for multi-branch distribution & wholesale",
-            15000.00,
+            "pkg-premium",
+            "Premium",
+            "Up to 10 branches, 100 users, FBR compliance, priority support.",
+            6000.00_f64,
             "monthly",
-            r#"{"inventory": true, "invoicing": true, "reports": true, "customers": true, "fbr": true, "multi_currency": true, "custom_roles": true, "audit_trail": true}"#,
-            50,
-            10,
-            10240,
-            r#"["Everything in Pro", "Unlimited Branches", "Full Audit Trail", "Custom Roles", "Priority SRE Support"]"#,
-            3,
+            r#"{"dashboard":1,"inventory":1,"sales":1,"purchases":1,"reports":1,"employees":1,"branches":1,"invoices":1,"import":1,"data_import":1}"#,
+            100_i32,
+            10_i32,
+            10240_i32,
+            r#"{"fbr":true,"data_import":true}"#,
+            3_i32,
         ),
     ];
 
@@ -2150,7 +2224,19 @@ async fn seed_default_packages(pool: &PgPool) -> Result<(), sqlx::Error> {
                 id, name, description, price, billing_cycle, module_limits,
                 max_users, max_branches, max_storage_mb, features, is_active, sort_order
             ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10::jsonb, TRUE, $11)
-            ON CONFLICT (id) DO NOTHING;
+            ON CONFLICT (id) DO UPDATE SET
+                name = EXCLUDED.name,
+                description = EXCLUDED.description,
+                price = EXCLUDED.price,
+                billing_cycle = EXCLUDED.billing_cycle,
+                module_limits = EXCLUDED.module_limits,
+                max_users = EXCLUDED.max_users,
+                max_branches = EXCLUDED.max_branches,
+                max_storage_mb = EXCLUDED.max_storage_mb,
+                features = EXCLUDED.features,
+                is_active = TRUE,
+                sort_order = EXCLUDED.sort_order,
+                updated_at = NOW();
             "#,
         )
         .bind(pkg.0)
@@ -2167,6 +2253,19 @@ async fn seed_default_packages(pool: &PgPool) -> Result<(), sqlx::Error> {
         .execute(pool)
         .await?;
     }
+
+    // Soft-deactivate legacy starter/pro/enterprise IDs if no subscription references them
+    let _ = sqlx::query(
+        r#"
+        UPDATE packages
+        SET is_active = FALSE,
+            updated_at = NOW()
+        WHERE id IN ('pkg-starter', 'pkg-pro', 'pkg-enterprise')
+          AND id NOT IN (SELECT DISTINCT package_id FROM company_subscriptions)
+        "#,
+    )
+    .execute(pool)
+    .await;
 
     Ok(())
 }

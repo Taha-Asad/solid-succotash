@@ -37,6 +37,7 @@ import { INK } from "../../theme";
 import { useI18n } from "../../i18n/I18nProvider";
 import LanguageMenu from "../../components/LanguageMenu";
 import { CorbelSquircle } from "../../components/CorbelLogo";
+import SupportContactCard from "../../components/SupportContactCard";
 
 // ---- Props ----
 
@@ -251,7 +252,7 @@ export default function SetupPage({
           <Card withBorder shadow="lg" p="xl">
             <Stack gap="xs" mb="md">
               <Text size="xs" fw={700} style={{ color: INK.gold, letterSpacing: 1.5, textTransform: "uppercase" }}>
-                {t("setup.firstLaunch")}
+                {t("setup.firstLaunch")} • 14-DAY FREE TRIAL
               </Text>
               <Text fw={800} size="xl" style={{ color: INK.text, letterSpacing: -0.4 }}>
                 {t("setup.createWorkspace")}
@@ -406,6 +407,11 @@ export default function SetupPage({
                     {t("setup.createCompany")}
                   </Button>
                 </motion.div>
+
+                <SupportContactCard
+                  compact
+                  contextNote="Your 14-day Basic trial starts automatically. Need a full license key or plan upgrade (3,400 / 4,200 / 6,000 PKR)?"
+                />
               </Stack>
             </form>
           </Card>

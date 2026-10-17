@@ -32,6 +32,7 @@ import {
   checkLicenseStatus,
   getCurrentUser,
   getErrorMessage,
+  isCompanySetup,
   logoutUser,
   loadSavedSession,
   saveSession,
@@ -80,10 +81,7 @@ function App() {
 
   async function checkCompanyAndSession() {
     try {
-      // Enterprise Provisioning: Companies are provisioned by the Super Admin.
-      // Tenants authenticate with email and one-time password provided by Admin.
-
-      // Question 2: Is someone already logged in?
+      // Question 1: Is someone already logged in?
       try {
         const currentUser = await getCurrentUser();
         setUser(currentUser);
@@ -95,7 +93,7 @@ function App() {
         // No in-memory session — continue
       }
 
-      // Question 3: Try to restore saved session from SQLite
+      // Question 2: Try to restore saved session from SQLite
       try {
         const savedUser = await loadSavedSession();
         setUser(savedUser);
@@ -104,10 +102,13 @@ function App() {
         );
         return;
       } catch {
-        // No saved session — show login
+        // No saved session — check if local company is set up
       }
 
-      setScreen("login");
+      // Question 3: Dual Onboarding (SAAS_SPECIFICATION v5.2 §5.2)
+      // If no company exists locally yet, open First-Launch Self-Setup (with a "Sign In" toggle for cloud-provisioned tenants).
+      const hasCompany = await isCompanySetup();
+      setScreen(hasCompany ? "login" : "setup");
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
       setScreen("fatal-error");

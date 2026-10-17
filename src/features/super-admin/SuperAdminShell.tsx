@@ -8,6 +8,7 @@ import {
   Home,
   KeyRound,
   Languages,
+  LifeBuoy,
   LogOut,
   Moon,
   PanelLeftClose,
@@ -28,6 +29,7 @@ import PlatformAnalyticsPage from "./PlatformAnalyticsPage";
 import TenantsPage from "./TenantsPage";
 import FleetLicensingPage from "./FleetLicensingPage";
 import PackagesPage from "./PackagesPage";
+import SupportTicketsPage from "./SupportTicketsPage";
 import PlatformSettingsPage from "./PlatformSettingsPage";
 import RegisterTenantDrawer from "./RegisterTenantDrawer";
 import TenantDetailDrawer from "./TenantDetailDrawer";
@@ -36,7 +38,14 @@ import DevProfileDrawer from "./DevProfileDrawer";
 import { CockpitCustomizerModal } from "./CockpitCustomizerModal";
 import "./admin.css";
 
-export type SaView = "overview" | "tenants" | "licensing" | "packages" | "analytics" | "settings";
+export type SaView =
+  | "overview"
+  | "tenants"
+  | "licensing"
+  | "packages"
+  | "tickets"
+  | "analytics"
+  | "settings";
 
 interface NavItem {
   id: SaView;
@@ -57,6 +66,7 @@ const navSections: NavSection[] = [
       { id: "overview", icon: Home, label: "sa.nav.overview" },
       { id: "tenants", icon: Building2, label: "sa.nav.tenants" },
       { id: "licensing", icon: KeyRound, label: "sa.nav.licensing" },
+      { id: "tickets", icon: LifeBuoy, label: "Support Tickets" },
     ],
   },
   {
@@ -468,6 +478,7 @@ function PlatformShell({
           {view === "tenants" && <TenantsPage key={refreshKey} />}
           {view === "licensing" && <FleetLicensingPage />}
           {view === "packages" && <PackagesPage />}
+          {view === "tickets" && <SupportTicketsPage />}
           {view === "analytics" && <PlatformAnalyticsPage />}
           {view === "settings" && (
             <PlatformSettingsPage

@@ -7,6 +7,7 @@
 
 import { Box, Button, Card, Group, Stack, Text, ThemeIcon, Title } from "@mantine/core";
 import { ArrowLeft, Lock, ShieldAlert } from "lucide-react";
+import SupportContactCard from "./SupportContactCard";
 
 interface ModuleLockedViewProps {
   moduleKey: string;
@@ -96,10 +97,15 @@ export default function ModuleLockedView({
             </Group>
             <Text size="xs" c="dimmed">
               This feature is not part of your active plan or has been disabled by platform
-              administration. Contact your enterprise Super Administrator to upgrade your
-              subscription tier and unlock this capability.
+              administration. Upgrade to Standard (4,200 PKR/mo) or Premium (6,000 PKR/mo) to
+              unlock this module.
             </Text>
           </Box>
+
+          <SupportContactCard
+            compact
+            contextNote="Contact Taha Asadullah directly to upgrade your subscription tier and unlock this module."
+          />
 
           <Button
             leftSection={<ArrowLeft size={16} />}

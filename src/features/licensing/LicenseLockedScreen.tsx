@@ -25,6 +25,7 @@ import {
   getErrorMessage,
 } from "../../api/backend";
 import { CorbelSquircle } from "../../components/CorbelLogo";
+import SupportContactCard from "../../components/SupportContactCard";
 import type { LicenseStatusResponse } from "../../types/backend";
 
 interface LicenseLockedScreenProps {
@@ -204,14 +205,12 @@ export default function LicenseLockedScreen({
             </Button>
           </Stack>
 
-          {/* Support Notice */}
-          <Text size="xs" c="dimmed" style={{ lineHeight: 1.5 }}>
-            To restore access or extend your trial, forward your HWID to
-            <br />
-            <span style={{ color: "#E0725F", fontWeight: 500 }}>
-              Taha Asadullah (@thefoolishcrow)
-            </span>
-          </Text>
+          {/* Direct Support & Licensing Contact */}
+          <SupportContactCard
+            variant="dark"
+            compact
+            contextNote="To restore access, renew your subscription, or extend your trial, forward your HWID above to Taha Asadullah."
+          />
         </Stack>
       </Card>
     </Center>

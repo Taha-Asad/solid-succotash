@@ -10,7 +10,8 @@
 use crate::error::AppError;
 use sqlx::SqlitePool;
 
-/// Checks if a user's role has a specific permission.
+/// Checks if a user's role has a specific permission, and enforces Day-15 Read-Only mode
+/// for mutating actions (`create`, `edit`, `delete`, `import`) when a tenant's trial or subscription has expired.
 /// Returns Ok(()) if allowed, Err(message) if denied.
 pub async fn check_permission(
     pool: &SqlitePool,
@@ -18,7 +19,25 @@ pub async fn check_permission(
     module: &str,
     permission: &str,
 ) -> Result<(), AppError> {
-    // Owner always has all permissions
+    let is_read_only_action = matches!(permission, "view" | "export");
+
+    // Enforce Day-15 Read-Only + Support Access on Subscription/Trial Expiry (§9.2)
+    // for all mutating operations by non-super-admin roles (including company owner).
+    if !is_read_only_action && role != "super_admin" {
+        let sub_company_ids: Vec<String> = sqlx::query_scalar(
+            "SELECT company_id FROM company_subscriptions",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default();
+
+        if sub_company_ids.len() == 1 {
+            crate::commands::saas::helpers::require_active_subscription(pool, &sub_company_ids[0])
+                .await?;
+        }
+    }
+
+    // Owner always has all role permissions (when subscription is active)
     if role == "owner" {
         return Ok(());
     }
