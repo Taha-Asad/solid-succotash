@@ -1733,6 +1733,113 @@ impl NeonCloudDb {
             offline_grace_days,
         })
     }
+
+    /// Ensures a first-launch workstation automatically receives a hardware-bound 14-day trial
+    /// in Neon Cloud and registers in the Super Admin Device Fleet directory.
+    /// If this HWID already has a trial license in Neon, re-uses that existing record so
+    /// deleting the local SQLite file cannot reset the 14-day clock or bypass a block.
+    pub async fn ensure_auto_trial_device(
+        &self,
+        hwid: &str,
+        device_name: &str,
+        os_info: &str,
+        app_version: &str,
+    ) -> Result<(String, CloudHeartbeatResult), AppError> {
+        let pool = self
+            .pool()
+            .ok_or_else(|| AppError::internal("Cloud database not connected".to_string()))?;
+
+        // 1. Check if this HWID already activated any license in Neon Cloud
+        let existing_key: Option<String> = sqlx::query_scalar(
+            r#"
+            SELECT l.license_key
+            FROM device_activations d
+            JOIN tenant_licenses l ON l.id = d.license_id
+            WHERE d.device_hwid = $1
+            ORDER BY d.first_activated_at DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(hwid)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| AppError::internal(format!("Failed to query existing device trial: {e}")))?;
+
+        let license_key = if let Some(key) = existing_key {
+            key
+        } else {
+            // Generate deterministic trial key for this HWID so concurrent calls never duplicate
+            let clean_hex: String = hwid
+                .chars()
+                .filter(|c| c.is_ascii_hexdigit())
+                .collect::<String>()
+                .to_uppercase();
+            let padded = format!("{clean_hex:0<8}");
+            let key = format!("CRBL-TR14-{}-{}", &padded[0..4], &padded[4..8]);
+            let lic_id = Uuid::new_v4().to_string();
+            let client_label = format!("Auto Trial ({device_name})");
+
+            sqlx::query(
+                r#"
+                INSERT INTO tenant_licenses (
+                    id, license_key, client_name, license_type, status,
+                    max_devices, offline_grace_days, expires_at, notes,
+                    issued_by, created_at, updated_at
+                ) VALUES (
+                    $1, $2, $3, 'trial', 'active',
+                    1, 14, NOW() + INTERVAL '14 days',
+                    'Automatic 14-day first-launch evaluation trial',
+                    'Auto-Trial Gate', NOW(), NOW()
+                )
+                ON CONFLICT (license_key) DO NOTHING
+                "#,
+            )
+            .bind(&lic_id)
+            .bind(&key)
+            .bind(&client_label)
+            .execute(pool)
+            .await
+            .map_err(|e| AppError::internal(format!("Failed to provision auto-trial license: {e}")))?;
+
+            let actual_lic_id: String = sqlx::query_scalar(
+                "SELECT id FROM tenant_licenses WHERE license_key = $1",
+            )
+            .bind(&key)
+            .fetch_one(pool)
+            .await
+            .map_err(|e| AppError::internal(format!("Failed to fetch auto-trial license id: {e}")))?;
+
+            let dev_id = Uuid::new_v4().to_string();
+            sqlx::query(
+                r#"
+                INSERT INTO device_activations (
+                    id, license_id, device_hwid, device_name, os_info,
+                    app_version, first_activated_at, last_heartbeat_at, is_blocked
+                ) VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW(), FALSE)
+                ON CONFLICT (license_id, device_hwid) DO UPDATE SET
+                    device_name = EXCLUDED.device_name,
+                    os_info = EXCLUDED.os_info,
+                    app_version = EXCLUDED.app_version,
+                    last_heartbeat_at = NOW(),
+                    updated_at = NOW()
+                "#,
+            )
+            .bind(&dev_id)
+            .bind(&actual_lic_id)
+            .bind(hwid)
+            .bind(device_name)
+            .bind(os_info)
+            .bind(app_version)
+            .execute(pool)
+            .await
+            .map_err(|e| AppError::internal(format!("Failed to register auto-trial device: {e}")))?;
+
+            key
+        };
+
+        let hb = self.cloud_heartbeat(&license_key, hwid, app_version).await?;
+        Ok((license_key, hb))
+    }
 }
 
 pub const DEFAULT_NEON_DATABASE_URL: &str =

@@ -22,7 +22,6 @@ import {
 } from "lucide-react";
 import {
   checkLicenseStatus,
-  deactivateLicense,
   getErrorMessage,
 } from "../../api/backend";
 import { CorbelSquircle } from "../../components/CorbelLogo";
@@ -59,12 +58,7 @@ export default function LicenseLockedScreen({
     }
   };
 
-  const handleClearAndNewKey = async () => {
-    try {
-      await deactivateLicense();
-    } catch (err) {
-      console.warn("Error clearing local lease:", err);
-    }
+  const handleClearAndNewKey = () => {
     onEnterNewKey();
   };
 
